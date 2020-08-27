@@ -13,7 +13,7 @@ namespace Python.Runtime
         private IntPtr _pyType = IntPtr.Zero;
         private IntPtr _pyValue = IntPtr.Zero;
         private IntPtr _pyTB = IntPtr.Zero;
-        private string _tb = "";
+        private PyList _tb = null;
         private string _message = "";
         private string _pythonTypeName = "";
         private bool disposed = false;
@@ -50,7 +50,7 @@ namespace Python.Runtime
                     Runtime.XIncref(_pyTB);
                     using (var pyTB = new PyObject(_pyTB))
                     {
-                        _tb = tb_module.InvokeMethod("format_tb", pyTB).ToString();
+                        _tb = new PyList(tb_module.InvokeMethod("format_tb", pyTB));
                     }
                 }
             }
@@ -135,7 +135,15 @@ namespace Python.Runtime
         /// </remarks>
         public override string StackTrace
         {
-            get { return _tb + base.StackTrace; }
+            get {
+                string pythonTb = string.Empty;
+                if (_tb != null)
+                {
+                    foreach (PyObject item in _tb)
+                        pythonTb += item.ToString();
+                }
+                return pythonTb + base.StackTrace;
+            }
         }
 
         /// <summary>
