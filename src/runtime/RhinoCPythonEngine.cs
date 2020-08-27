@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -267,12 +268,29 @@ namespace Python.Runtime
             scope.Set("__file__", pythonScript);
 
             // execute
-            using (scope)
+            try
             {
-                using (Py.GIL())
-                    scope.Exec(
-                        File.ReadAllText(pythonScript, encoding: Encoding.UTF8)
+                PyObject codeObj = PythonEngine.Compile(
+                    code: File.ReadAllText(pythonScript, encoding: Encoding.UTF8),
+                    filename: pythonScript,
+                    mode: RunFlagType.File
                     );
+
+                using (Py.GIL())
+                    scope.Execute(codeObj);
+            }
+            catch (PythonException pyEx){
+                throw new Exception(
+                    message: string.Join(
+                        Environment.NewLine,
+                        new string[] { pyEx.Message , pyEx.StackTrace}
+                        ),
+                    innerException: pyEx
+                    );
+            }
+            finally
+            {
+                scope.Dispose();
             }
         }
     }
