@@ -259,31 +259,46 @@ namespace Python.Runtime
         public void ClearStdIO() => SetStdIO(null, null);
         #endregion
 
+        #region Execution
+        private Dictionary<string, PyObject> _cache = new Dictionary<string, PyObject>();
+
         public void RunScope(string scopeName,
-                             string pythonScript,
-                             IDictionary<string, object> locals)
+                             string pythonFile,
+                             IDictionary<string, object> locals,
+                             bool useCache = true)
         {
             // TODO: implement and test locals
             PyScope scope = Py.CreateScope(scopeName);
-            scope.Set("__file__", pythonScript);
+            scope.Set("__file__", pythonFile);
 
             // execute
             try
             {
-                PyObject codeObj = PythonEngine.Compile(
-                    code: File.ReadAllText(pythonScript, encoding: Encoding.UTF8),
-                    filename: pythonScript,
-                    mode: RunFlagType.File
-                    );
+                PyObject codeObj;
+                if (useCache && _cache.ContainsKey(pythonFile))
+                {
+                    codeObj = _cache[pythonFile];
+                }
+                else
+                {
+                    codeObj = PythonEngine.Compile(
+                        code: File.ReadAllText(pythonFile, encoding: Encoding.UTF8),
+                        filename: pythonFile,
+                        mode: RunFlagType.File
+                        );
+                    // cache the compiled code object
+                    _cache[pythonFile] = codeObj;
+                }
 
                 using (Py.GIL())
                     scope.Execute(codeObj);
             }
-            catch (PythonException pyEx){
+            catch (PythonException pyEx)
+            {
                 throw new Exception(
                     message: string.Join(
                         Environment.NewLine,
-                        new string[] { pyEx.Message , pyEx.StackTrace}
+                        new string[] { pyEx.Message, pyEx.StackTrace }
                         ),
                     innerException: pyEx
                     );
@@ -293,5 +308,8 @@ namespace Python.Runtime
                 scope.Dispose();
             }
         }
+
+        public void ClearCache() => _cache.Clear();
     }
+    #endregion
 }
