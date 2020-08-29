@@ -28,11 +28,11 @@
   <PropertyGroup Condition=" '$(Platform)' == 'x64'">
     <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>-->
-  <PropertyGroup Condition=" '$(Configuration)' == 'ReleaseWinPY2'">
-    <DefineConstants Condition="'$(DefineConstants)' == ''">PYTHON2;PYTHON27;UCS2</DefineConstants>
-    <Optimize>true</Optimize>
+  <PropertyGroup Condition="'$(Configuration)' == 'DebugWinPY37'">
+    <OutputPath>..\..\..\..\..\build\cpython-38-amd64\</OutputPath>
+    <DefineConstants>TRACE;DEBUG;PYTHON3;PYTHON38;UCS2</DefineConstants>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DebugType>pdbonly</DebugType>
-    <OutputPath>..\..\..\..\..\build\cpython-27-amd64</OutputPath>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'ReleaseWinPY37'">
     <DefineConstants Condition="'$(DefineConstants)' == ''">PYTHON3;PYTHON37;UCS2</DefineConstants>
@@ -40,11 +40,18 @@
     <DebugType>pdbonly</DebugType>
     <OutputPath>..\..\..\..\..\build\cpython-37-amd64</OutputPath>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'DebugWinPY38'">
+    <OutputPath>..\..\..\..\..\build\cpython-38-amd64\</OutputPath>
+    <DefineConstants>TRACE;DEBUG;PYTHON3;PYTHON38;UCS2</DefineConstants>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DebugType>pdbonly</DebugType>
+  </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'ReleaseWinPY38'">
     <DefineConstants Condition="'$(DefineConstants)' == ''">PYTHON3;PYTHON38;UCS2</DefineConstants>
     <Optimize>true</Optimize>
     <DebugType>pdbonly</DebugType>
     <OutputPath>..\..\..\..\..\build\cpython-38-amd64</OutputPath>
+    <DefineConstants>TRACE;PYTHON3;PYTHON38;UCS2</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System" />
