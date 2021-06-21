@@ -1,5 +1,6 @@
 using System;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace Python.Runtime.Platform
@@ -109,9 +110,12 @@ namespace Python.Runtime.Platform
         private const string NativeDll = "/usr/lib/libSystem.dylib";
         private static IntPtr RTLD_DEFAULT = new IntPtr(-2);
 
+        public static string PythonDLL { get; set; } = null;
+
         public IntPtr Load(string dllToLoad)
         {
-            var filename = $"lib{dllToLoad}.dylib";
+            var filename = PythonDLL ?? $"lib{dllToLoad}.dylib";
+            Debug.WriteLine($"Darwin Load: {filename}");
             ClearError();
             var res = dlopen(filename, RTLD_NOW | RTLD_GLOBAL);
             if (res == IntPtr.Zero)

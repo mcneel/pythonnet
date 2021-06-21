@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
+
+using Python.Runtime.Platform;
 
 namespace Python.Runtime
 {
@@ -14,6 +17,17 @@ namespace Python.Runtime
         #region Initialization
         public RhinoCPythonEngine(Version version)
         {
+            Debug.WriteLine($"LD_LIBRARY_PATH: {Environment.GetEnvironmentVariable("LD_LIBRARY_PATH")}");
+            Debug.WriteLine($"DYLD_LIBRARY_PATH: {Environment.GetEnvironmentVariable("DYLD_LIBRARY_PATH")}");
+            Debug.WriteLine($"DYLD_FALLBACK_LIBRARY_PATH: {Environment.GetEnvironmentVariable("DYLD_FALLBACK_LIBRARY_PATH")}");
+            Debug.WriteLine($"DYLD_FRAMEWORK_PATH: {Environment.GetEnvironmentVariable("DYLD_FRAMEWORK_PATH")}");
+            Debug.WriteLine($"DYLD_FALLBACK_FRAMEWORK_PATH: {Environment.GetEnvironmentVariable("DYLD_FALLBACK_FRAMEWORK_PATH")}");
+
+            var enigneRoot = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            var pylibName = $"libpython{version.Major}.{version.Minor}.dylib";
+            var pylibPath = Path.Combine(enigneRoot, pylibName);
+            DarwinLoader.PythonDLL = pylibPath;
+
             Version = version;
 
             // start cpython runtime
@@ -294,7 +308,6 @@ namespace Python.Runtime
 
         public void RunScope(string scopeName,
                              string pythonFile,
-                             IDictionary<string, object> locals,
                              bool useCache = true)
         {
             // TODO: implement and test locals
