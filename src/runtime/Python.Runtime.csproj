@@ -32,12 +32,5 @@
     </EmbeddedResource>
   </ItemGroup>
 
-  <ItemGroup></ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="3.9.0" />
-    <PackageReference Include="Microsoft.CodeAnalysis.VisualBasic" Version="3.9.0" />
-    <PackageReference Include="System.Runtime.InteropServices.RuntimeInformation" Version="4.3.0" ExcludeAssets="all" />
-    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.0" PrivateAssets="all" />
-  </ItemGroup>
+  <Import Condition="$([MSBuild]::IsOSPlatform('OSX'))" Project="..\..\..\..\Xamarin.Mac.targets" />
 </Project>
