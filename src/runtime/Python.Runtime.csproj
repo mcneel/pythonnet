@@ -5,7 +5,6 @@
 
   <!-- Project Setup: macOS -->
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
-    <UseXamarinMac>True</UseXamarinMac>
     <OutputPath>..\..\..\..\..\build\xammac2\MockRhino.app\Contents\Frameworks\PythonNet38.framework</OutputPath>
     <DefineConstants>UCS4;MONO_OSX</DefineConstants>
   </PropertyGroup>
@@ -31,6 +30,4 @@
       <LogicalName>clr.py</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
-
-  <Import Condition="$([MSBuild]::IsOSPlatform('OSX'))" Project="..\..\..\..\Xamarin.Mac.targets" />
 </Project>
