@@ -1,12 +1,11 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <!-- Project Setup: Windows -->
-  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
-  </PropertyGroup>
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))"></PropertyGroup>
 
   <!-- Project Setup: macOS -->
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
     <UseXamarinMac>True</UseXamarinMac>
-    <OutputPath>..\..\..\..\..\build\xammac2\MockRhino.app\Contents\Frameworks\PythonNet38.framework</OutputPath>
+    <OutputPath>..\..\..\..\..\..\..\..\bin\$(Configuration)\Frameworks\PythonNet38.framework</OutputPath>
     <DefineConstants>UCS4;MONO_OSX</DefineConstants>
   </PropertyGroup>
 
