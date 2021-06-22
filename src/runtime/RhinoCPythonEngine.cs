@@ -24,8 +24,10 @@ namespace Python.Runtime
             Debug.WriteLine($"DYLD_FALLBACK_FRAMEWORK_PATH: {Environment.GetEnvironmentVariable("DYLD_FALLBACK_FRAMEWORK_PATH")}");
 
             var enigneRoot = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            Debug.WriteLine($"RhinoCPythonEngine assembly path: {enigneRoot}");
             var pylibName = $"libpython{version.Major}.{version.Minor}.dylib";
             var pylibPath = Path.Combine(enigneRoot, pylibName);
+            Debug.WriteLine($"RhinoCPythonEngine pylibPath: {pylibPath}");
             DarwinLoader.PythonDLL = pylibPath;
 
             Version = version;
