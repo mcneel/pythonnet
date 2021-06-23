@@ -97,8 +97,18 @@ namespace Python.Runtime
         private static void AssemblyLoadHandler(object ob, AssemblyLoadEventArgs args)
         {
             Assembly assembly = args.LoadedAssembly;
-            assemblies.Enqueue(assembly);
-            ScanAssembly(assembly);
+            if (!assembly.ReflectionOnly)
+            {
+                try
+                {
+                    ScanAssembly(assembly);
+                    assemblies.Enqueue(assembly);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine("Error scanning assembly {0}. {1}", assembly, ex);
+                }
+            }
         }
 
 
