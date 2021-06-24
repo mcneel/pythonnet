@@ -6,6 +6,8 @@ using System.Security;
 using System.Text;
 using System.Threading;
 using System.Collections.Generic;
+using System.Diagnostics;
+
 using Python.Runtime.Platform;
 
 namespace Python.Runtime
@@ -92,8 +94,6 @@ namespace Python.Runtime
         // C# compiler copies constants to the assemblies that references this library.
         // We needs to replace all public constants to static readonly fields to allow
         // binary substitution of different Python.Runtime.dll builds in a target application.
-
-        public static readonly string PythonDLL = _PythonDll;
 
 #if PYTHON_WITHOUT_ENABLE_SHARED && !NETSTANDARD
         internal const string _PythonDll = "__Internal";
@@ -361,6 +361,7 @@ namespace Python.Runtime
             fn = PyObject_GetAttrString(platformModule, "system");
             op = PyObject_Call(fn, emptyTuple, IntPtr.Zero);
             string operatingSystemName = GetManagedString(op);
+            Debug.WriteLine($"CPython platform.System() -> {operatingSystemName}");
             XDecref(op);
             XDecref(fn);
 

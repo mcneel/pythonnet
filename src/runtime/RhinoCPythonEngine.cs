@@ -17,6 +17,7 @@ namespace Python.Runtime
         #region Initialization
         public RhinoCPythonEngine(Version version)
         {
+#if MONO_OSX
             Debug.WriteLine($"LD_LIBRARY_PATH: {Environment.GetEnvironmentVariable("LD_LIBRARY_PATH")}");
             Debug.WriteLine($"DYLD_LIBRARY_PATH: {Environment.GetEnvironmentVariable("DYLD_LIBRARY_PATH")}");
             Debug.WriteLine($"DYLD_FALLBACK_LIBRARY_PATH: {Environment.GetEnvironmentVariable("DYLD_FALLBACK_LIBRARY_PATH")}");
@@ -29,6 +30,11 @@ namespace Python.Runtime
             var pylibPath = Path.Combine(enigneRoot, pylibName);
             Debug.WriteLine($"RhinoCPythonEngine pylibPath: {pylibPath}");
             DarwinLoader.PythonDLL = pylibPath;
+#else
+            var enigneRoot = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            Debug.WriteLine($"RhinoCPythonEngine assembly path: {enigneRoot}");
+            Debug.WriteLine($"RhinoCPythonEngine pylibPath: {Runtime._PythonDll}");
+#endif
 
             Version = version;
 
@@ -40,9 +46,9 @@ namespace Python.Runtime
         }
 
         public void Initialize() => PythonEngine.Initialize();
-        #endregion
+#endregion
 
-        #region Search Paths
+#region Search Paths
         private List<string> _sysPaths = new List<string>();
 
         public void SetSearchPaths(IEnumerable<string> searchPaths)
@@ -127,9 +133,9 @@ namespace Python.Runtime
                 sys.SetAttr("path", sysPaths);
             }
         }
-        #endregion
+#endregion
 
-        #region Engine Globals (Builtins)
+#region Engine Globals (Builtins)
         private List<string> _builtinKeys = new List<string>();
 
         public void SetBuiltins(IDictionary<string, object> builtins)
@@ -166,9 +172,9 @@ namespace Python.Runtime
                 }
             }
         }
-        #endregion
+#endregion
 
-        #region Input Arguments
+#region Input Arguments
         public void SetSysArgs(IEnumerable<string> args)
         {
             using (Py.GIL())
@@ -197,9 +203,9 @@ namespace Python.Runtime
                 sys.SetAttr("argv", new PyList());
             }
         }
-        #endregion
+#endregion
 
-        #region Debugging
+#region Debugging
         public static int TraceFunc(object frame, object evnt, object arg)
         {
             return 0;
@@ -236,9 +242,9 @@ namespace Python.Runtime
             //PyObject sys = PythonEngine.ImportModule("sys");
             //sys.InvokeMethod("settrace", PyObject.FromManagedObject(null));
         }
-        #endregion
+#endregion
 
-        #region Standard IO
+#region Standard IO
         internal class RhinoCPythonEngineStandardIO : Stream, IDisposable
         {
             private Stream _stdin = null;
@@ -303,9 +309,9 @@ namespace Python.Runtime
         }
 
         public void ClearStdIO() => SetStdIO(null, null);
-        #endregion
+#endregion
 
-        #region Execution
+#region Execution
         private Dictionary<string, PyObject> _cache = new Dictionary<string, PyObject>();
 
         public void RunScope(string scopeName,
@@ -358,5 +364,5 @@ namespace Python.Runtime
 
         public void ClearCache() => _cache.Clear();
     }
-    #endregion
+#endregion
 }

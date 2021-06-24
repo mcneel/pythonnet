@@ -1,22 +1,28 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <!-- Project Setup: Windows -->
-  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))"></PropertyGroup>
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <OutputPath>..\..\..\..\..\..\..\..\bin\$(Configuration)\Plug-ins\RhinoCode\cpython-38-amd64</OutputPath>
+    <DefineConstants>$(DefineConstants);</DefineConstants>
+  </PropertyGroup>
 
   <!-- Project Setup: macOS -->
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
     <OutputPath>..\..\..\..\..\..\..\..\bin\$(Configuration)\Frameworks\PythonNet38.framework</OutputPath>
-    <DefineConstants>UCS4;MONO_OSX</DefineConstants>
+    <DefineConstants>$(DefineConstants);UCS4;MONO_OSX</DefineConstants>
   </PropertyGroup>
 
   <!-- Project Setup: shared -->
   <PropertyGroup>
     <OutputType>Library</OutputType>
     <TargetFramework>net48</TargetFramework>
-    <!-- <LangVersion>7.3</LangVersion> -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <DefineConstants>$(DefineConstants);XPLAT;TRACE;DEBUG;PYTHON3;PYTHON38;UCS2</DefineConstants>
+    <DefineConstants>$(DefineConstants);PYTHON3;PYTHON38;UCS2;</DefineConstants>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'">
+    <DefineConstants>$(DefineConstants);TRACE;DEBUG;</DefineConstants>
   </PropertyGroup>
 
   <PropertyGroup>
