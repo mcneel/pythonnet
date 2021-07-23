@@ -1,20 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- Project Setup: Windows -->
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
-    <OutputPath>..\..\..\..\..\build\wpf\cpython-38-amd64</OutputPath>
     <DefineConstants>$(DefineConstants);</DefineConstants>
   </PropertyGroup>
 
   <!-- Project Setup: macOS -->
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
-    <OutputPath>..\..\..\..\..\build\xammac2\MockRhino.app\Contents\Frameworks\PythonNet38.framework</OutputPath>
     <DefineConstants>$(DefineConstants);UCS4;MONO_OSX</DefineConstants>
   </PropertyGroup>
 
   <!-- Project Setup: shared -->
   <PropertyGroup>
     <OutputType>Library</OutputType>
-    <AssemblyName>McNeel.Python.Runtime</AssemblyName>
+    <AssemblyName>McNeel.Python38.Runtime</AssemblyName>
     <TargetFramework>net48</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DefineConstants>$(DefineConstants);PYTHON3;PYTHON38;UCS2;</DefineConstants>

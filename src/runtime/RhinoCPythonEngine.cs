@@ -17,6 +17,10 @@ namespace Python.Runtime
         #region Initialization
         public RhinoCPythonEngine(Version version)
         {
+            var enigneRoot = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            // Environment.SetEnvironmentVariable("PYTHONHOME", enigneRoot);
+            Debug.WriteLine($"PYTHONHOME: {Environment.GetEnvironmentVariable("PYTHONHOME")}");
+
 #if MONO_OSX
             Debug.WriteLine($"LD_LIBRARY_PATH: {Environment.GetEnvironmentVariable("LD_LIBRARY_PATH")}");
             Debug.WriteLine($"DYLD_LIBRARY_PATH: {Environment.GetEnvironmentVariable("DYLD_LIBRARY_PATH")}");
@@ -24,14 +28,12 @@ namespace Python.Runtime
             Debug.WriteLine($"DYLD_FRAMEWORK_PATH: {Environment.GetEnvironmentVariable("DYLD_FRAMEWORK_PATH")}");
             Debug.WriteLine($"DYLD_FALLBACK_FRAMEWORK_PATH: {Environment.GetEnvironmentVariable("DYLD_FALLBACK_FRAMEWORK_PATH")}");
 
-            var enigneRoot = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
             Debug.WriteLine($"RhinoCPythonEngine assembly path: {enigneRoot}");
             var pylibName = $"libpython{version.Major}.{version.Minor}.dylib";
             var pylibPath = Path.Combine(enigneRoot, pylibName);
             Debug.WriteLine($"RhinoCPythonEngine pylibPath: {pylibPath}");
             DarwinLoader.PythonDLL = pylibPath;
 #else
-            var enigneRoot = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
             Debug.WriteLine($"RhinoCPythonEngine assembly path: {enigneRoot}");
             Debug.WriteLine($"RhinoCPythonEngine pylibPath: {Runtime._PythonDll}");
 #endif
