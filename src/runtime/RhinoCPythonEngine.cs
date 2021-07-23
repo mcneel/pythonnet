@@ -262,6 +262,8 @@ namespace Python.Runtime
             public override long Seek(long offset, SeekOrigin origin) => throw new NotImplementedException();
             public override void SetLength(long value) => throw new NotImplementedException();
             public override void Flush() { }
+        
+            public bool isatty() => false;
 
             // python read method
             public string read(int size = -1) => readline(size);
