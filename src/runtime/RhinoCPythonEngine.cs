@@ -15,25 +15,37 @@ namespace Python.Runtime
         public Version Version { get; private set; }
 
         #region Initialization
-        public RhinoCPythonEngine(Version version)
+        public RhinoCPythonEngine(string enigneRoot, Version version)
         {
-            var enigneRoot = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-            // Environment.SetEnvironmentVariable("PYTHONHOME", enigneRoot);
-            Debug.WriteLine($"PYTHONHOME: {Environment.GetEnvironmentVariable("PYTHONHOME")}");
+            Debug.WriteLine($"CPython engine path: {enigneRoot}");
 
-#if MONO_OSX
+            // setup python env vars
+            // set python home to the location of native python shared lib
+            // this will correctly setup the default sys.paths
+            Environment.SetEnvironmentVariable("PYTHONHOME", enigneRoot);
+            Debug.WriteLine($"PYTHONHOME: {Environment.GetEnvironmentVariable("PYTHONHOME")}");
+            Debug.WriteLine($"PYTHONPATH: {Environment.GetEnvironmentVariable("PYTHONPATH")}");
+
+#if MACOS
+            // setup dllimport env vars
             Debug.WriteLine($"LD_LIBRARY_PATH: {Environment.GetEnvironmentVariable("LD_LIBRARY_PATH")}");
+
+            // add location of native python shared lib to DYLD_LIBRARY_PATH so Python.Runtime.Runtime can bind to it
+            var dyldLibPath = Environment.GetEnvironmentVariable("DYLD_LIBRARY_PATH");
+            Environment.SetEnvironmentVariable("DYLD_LIBRARY_PATH", $"{dyldLibPath};{enigneRoot}");
             Debug.WriteLine($"DYLD_LIBRARY_PATH: {Environment.GetEnvironmentVariable("DYLD_LIBRARY_PATH")}");
+
             Debug.WriteLine($"DYLD_FALLBACK_LIBRARY_PATH: {Environment.GetEnvironmentVariable("DYLD_FALLBACK_LIBRARY_PATH")}");
             Debug.WriteLine($"DYLD_FRAMEWORK_PATH: {Environment.GetEnvironmentVariable("DYLD_FRAMEWORK_PATH")}");
             Debug.WriteLine($"DYLD_FALLBACK_FRAMEWORK_PATH: {Environment.GetEnvironmentVariable("DYLD_FALLBACK_FRAMEWORK_PATH")}");
 
-            Debug.WriteLine($"RhinoCPythonEngine assembly path: {enigneRoot}");
-            var pylibName = $"libpython{version.Major}.{version.Minor}.dylib";
-            var pylibPath = Path.Combine(enigneRoot, pylibName);
-            Debug.WriteLine($"RhinoCPythonEngine pylibPath: {pylibPath}");
-            DarwinLoader.PythonDLL = pylibPath;
-#else
+            // setup the darwin loader manually so it can find the native python shared lib
+            // this is so less code changes are done the pythonnet source
+            var dylibName = $"libpython{version.Major}.{version.Minor}.dylib";
+            DarwinLoader.PythonDLL = Path.Combine(enigneRoot, dylibName);
+            Debug.WriteLine($"RhinoCPythonEngine DarwinLoader.PythonDLL: {DarwinLoader.PythonDLL}");
+            Debug.WriteLine($"RhinoCPythonEngine Runtime._PythonDll: {Runtime._PythonDll}");
+#elif WINDOWS
             Debug.WriteLine($"RhinoCPythonEngine assembly path: {enigneRoot}");
             Debug.WriteLine($"RhinoCPythonEngine pylibPath: {Runtime._PythonDll}");
 #endif
@@ -42,15 +54,17 @@ namespace Python.Runtime
 
             // start cpython runtime
             Initialize();
+            Debug.WriteLine($"Initialized PythonEngine");
 
             // store the default search paths for resetting the engine later
             StoreSearchPaths();
+            Debug.WriteLine($"Setup default search paths");
         }
 
         public void Initialize() => PythonEngine.Initialize();
-#endregion
+        #endregion
 
-#region Search Paths
+        #region Search Paths
         private List<string> _sysPaths = new List<string>();
 
         public void SetSearchPaths(IEnumerable<string> searchPaths)
@@ -135,9 +149,9 @@ namespace Python.Runtime
                 sys.SetAttr("path", sysPaths);
             }
         }
-#endregion
+        #endregion
 
-#region Engine Globals (Builtins)
+        #region Engine Globals (Builtins)
         private List<string> _builtinKeys = new List<string>();
 
         public void SetBuiltins(IDictionary<string, object> builtins)
@@ -174,9 +188,9 @@ namespace Python.Runtime
                 }
             }
         }
-#endregion
+        #endregion
 
-#region Input Arguments
+        #region Input Arguments
         public void SetSysArgs(IEnumerable<string> args)
         {
             using (Py.GIL())
@@ -205,9 +219,9 @@ namespace Python.Runtime
                 sys.SetAttr("argv", new PyList());
             }
         }
-#endregion
+        #endregion
 
-#region Debugging
+        #region Debugging
         public static int TraceFunc(object frame, object evnt, object arg)
         {
             return 0;
@@ -244,9 +258,9 @@ namespace Python.Runtime
             //PyObject sys = PythonEngine.ImportModule("sys");
             //sys.InvokeMethod("settrace", PyObject.FromManagedObject(null));
         }
-#endregion
+        #endregion
 
-#region Standard IO
+        #region Standard IO
         internal class RhinoCPythonEngineStandardIO : Stream, IDisposable
         {
             private Stream _stdin = null;
@@ -264,7 +278,7 @@ namespace Python.Runtime
             public override long Seek(long offset, SeekOrigin origin) => throw new NotImplementedException();
             public override void SetLength(long value) => throw new NotImplementedException();
             public override void Flush() { }
-        
+
             public bool isatty() => false;
 
             // python read method
@@ -313,9 +327,9 @@ namespace Python.Runtime
         }
 
         public void ClearStdIO() => SetStdIO(null, null);
-#endregion
+        #endregion
 
-#region Execution
+        #region Execution
         private Dictionary<string, PyObject> _cache = new Dictionary<string, PyObject>();
 
         public void RunScope(string scopeName,
@@ -368,5 +382,5 @@ namespace Python.Runtime
 
         public void ClearCache() => _cache.Clear();
     }
-#endregion
+    #endregion
 }

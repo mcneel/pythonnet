@@ -1,12 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- Project Setup: Windows -->
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
-    <DefineConstants>$(DefineConstants);</DefineConstants>
+    <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
   </PropertyGroup>
 
   <!-- Project Setup: macOS -->
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
-    <DefineConstants>$(DefineConstants);UCS4;MONO_OSX</DefineConstants>
+    <DefineConstants>$(DefineConstants);UCS4;MONO_OSX;MACOS</DefineConstants>
   </PropertyGroup>
 
   <!-- Project Setup: shared -->
