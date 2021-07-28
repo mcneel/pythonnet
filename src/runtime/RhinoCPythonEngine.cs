@@ -18,27 +18,7 @@ namespace Python.Runtime
         public RhinoCPythonEngine(string enigneRoot, Version version)
         {
             Debug.WriteLine($"CPython engine path: {enigneRoot}");
-
-            // setup python env vars
-            // set python home to the location of native python shared lib
-            // this will correctly setup the default sys.paths
-            Environment.SetEnvironmentVariable("PYTHONHOME", enigneRoot);
-            Debug.WriteLine($"PYTHONHOME: {Environment.GetEnvironmentVariable("PYTHONHOME")}");
-            Debug.WriteLine($"PYTHONPATH: {Environment.GetEnvironmentVariable("PYTHONPATH")}");
-
 #if MACOS
-            // setup dllimport env vars
-            Debug.WriteLine($"LD_LIBRARY_PATH: {Environment.GetEnvironmentVariable("LD_LIBRARY_PATH")}");
-
-            // add location of native python shared lib to DYLD_LIBRARY_PATH so Python.Runtime.Runtime can bind to it
-            var dyldLibPath = Environment.GetEnvironmentVariable("DYLD_LIBRARY_PATH");
-            // Environment.SetEnvironmentVariable("DYLD_LIBRARY_PATH", $"{dyldLibPath};{enigneRoot}");
-            Debug.WriteLine($"DYLD_LIBRARY_PATH: {Environment.GetEnvironmentVariable("DYLD_LIBRARY_PATH")}");
-
-            Debug.WriteLine($"DYLD_FALLBACK_LIBRARY_PATH: {Environment.GetEnvironmentVariable("DYLD_FALLBACK_LIBRARY_PATH")}");
-            Debug.WriteLine($"DYLD_FRAMEWORK_PATH: {Environment.GetEnvironmentVariable("DYLD_FRAMEWORK_PATH")}");
-            Debug.WriteLine($"DYLD_FALLBACK_FRAMEWORK_PATH: {Environment.GetEnvironmentVariable("DYLD_FALLBACK_FRAMEWORK_PATH")}");
-
             // setup the darwin loader manually so it can find the native python shared lib
             // this is so less code changes are done the pythonnet source
             var dylibName = $"libpython{version.Major}.{version.Minor}.dylib";
