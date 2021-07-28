@@ -5,6 +5,13 @@ project adheres to [Semantic Versioning][].
 
 This document follows the conventions laid out in [Keep a CHANGELOG][].
 
+
+## Unreleased
+
+### Fixed
+-   Fix `object[]` parameters taking precedence when should not in overload resolution
+-   Empty parameter names (as can be generated from F#) do not cause crashes
+
 ## [2.5.1][] - 2020-06-18
 
 Bugfix release.
