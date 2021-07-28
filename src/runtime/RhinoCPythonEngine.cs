@@ -32,7 +32,7 @@ namespace Python.Runtime
 
             // add location of native python shared lib to DYLD_LIBRARY_PATH so Python.Runtime.Runtime can bind to it
             var dyldLibPath = Environment.GetEnvironmentVariable("DYLD_LIBRARY_PATH");
-            Environment.SetEnvironmentVariable("DYLD_LIBRARY_PATH", $"{dyldLibPath};{enigneRoot}");
+            // Environment.SetEnvironmentVariable("DYLD_LIBRARY_PATH", $"{dyldLibPath};{enigneRoot}");
             Debug.WriteLine($"DYLD_LIBRARY_PATH: {Environment.GetEnvironmentVariable("DYLD_LIBRARY_PATH")}");
 
             Debug.WriteLine($"DYLD_FALLBACK_LIBRARY_PATH: {Environment.GetEnvironmentVariable("DYLD_FALLBACK_LIBRARY_PATH")}");

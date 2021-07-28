@@ -12,10 +12,10 @@
   <!-- Project Setup: shared -->
   <PropertyGroup>
     <OutputType>Library</OutputType>
-    <AssemblyName>McNeel.Python38.Runtime</AssemblyName>
+    <AssemblyName>McNeel.Python39.Runtime</AssemblyName>
     <TargetFramework>net48</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <DefineConstants>$(DefineConstants);PYTHON3;PYTHON38;UCS2;</DefineConstants>
+    <DefineConstants>$(DefineConstants);PYTHON3;PYTHON39;UCS2;</DefineConstants>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
   </PropertyGroup>
