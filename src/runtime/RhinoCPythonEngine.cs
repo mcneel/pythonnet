@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using System.Text;
 
 using Python.Runtime.Platform;
@@ -241,57 +241,6 @@ namespace Python.Runtime
         #endregion
 
         #region Standard IO
-        internal class RhinoCPythonEngineStandardIO : Stream, IDisposable
-        {
-            private Stream _stdin = null;
-            private Stream _stdout = null;
-
-            public RhinoCPythonEngineStandardIO(Stream stdin, Stream stdout) { _stdin = stdin; _stdout = stdout; }
-
-            public Encoding OutputEncoding { get; set; } = Encoding.UTF8;
-
-            public override bool CanRead => true;
-            public override bool CanWrite => true;
-            public override bool CanSeek => false;
-            public override long Length => throw new NotImplementedException();
-            public override long Position { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
-            public override long Seek(long offset, SeekOrigin origin) => throw new NotImplementedException();
-            public override void SetLength(long value) => throw new NotImplementedException();
-            public override void Flush() { }
-
-            public bool isatty() => false;
-
-            // python read method
-            public string read(int size = -1) => readline(size);
-            public string readline(int size = -1)
-            {
-                var buffer = new byte[1024];
-                // we know how read works so don't need to read size until
-                // zero and make multiple calls
-                Read(buffer, 0, 1024);
-                // second call to clear the flag
-                Read(buffer, 0, 1024);
-                return OutputEncoding.GetString(buffer);
-            }
-
-            // python write method
-            public void write(string content)
-            {
-                var buffer = OutputEncoding.GetBytes(content);
-                Write(buffer, 0, buffer.Length);
-            }
-
-            public override int Read(byte[] buffer, int offset, int count)
-            {
-                return _stdin != null ? _stdin.Read(buffer, offset, count) : 0;
-            }
-
-            public override void Write(byte[] buffer, int offset, int count)
-            {
-                _stdout?.Write(buffer, offset, count);
-            }
-        }
-
         public void SetStdIO(Stream stdin, Stream stdout)
         {
             var pythonIO = new RhinoCPythonEngineStandardIO(stdin, stdout);
@@ -361,6 +310,66 @@ namespace Python.Runtime
         }
 
         public void ClearCache() => _cache.Clear();
+        #endregion
     }
-    #endregion
+
+    [SuppressMessage("Python.Runtime", "IDE1006")]
+    public class RhinoCPythonEngineStandardIO : Stream, IDisposable
+    {
+        private readonly Stream _stdin = null;
+        private readonly Stream _stdout = null;
+
+        public RhinoCPythonEngineStandardIO(Stream stdin, Stream stdout) { _stdin = stdin; _stdout = stdout; }
+
+        public Encoding OutputEncoding { get; set; } = Encoding.UTF8;
+
+        public override bool CanRead => true;
+        public override bool CanWrite => true;
+        public override bool CanSeek => false;
+        public override long Length => throw new NotImplementedException();
+        public override long Position { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotImplementedException();
+        public override void SetLength(long value) => throw new NotImplementedException();
+        public override void Flush() { }
+
+        public bool isatty()
+        {
+            return false;
+        }
+
+        public void flush()
+        {
+            Flush();
+        }
+
+        // python read method
+        public string read(int size = -1) => readline(size);
+        public string readline(int size = -1)
+        {
+            var buffer = new byte[1024];
+            // we know how read works so don't need to read size until
+            // zero and make multiple calls
+            Read(buffer, 0, 1024);
+            // second call to clear the flag
+            Read(buffer, 0, 1024);
+            return OutputEncoding.GetString(buffer);
+        }
+
+        // python write method
+        public void write(string content)
+        {
+            var buffer = OutputEncoding.GetBytes(content);
+            Write(buffer, 0, buffer.Length);
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            return _stdin != null ? _stdin.Read(buffer, offset, count) : 0;
+        }
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            _stdout?.Write(buffer, offset, count);
+        }
+    }
 }
