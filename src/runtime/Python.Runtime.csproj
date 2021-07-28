@@ -7,7 +7,7 @@
 
   <!-- Project Setup: macOS -->
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
-    <OutputPath>..\..\..\..\..\..\..\..\bin\$(Configuration)\Frameworks\PythonNet38.framework</OutputPath>
+    <OutputPath>..\..\..\..\..\..\..\..\bin\$(Configuration)\Plug-ins\RhinoCode</OutputPath>
     <DefineConstants>$(DefineConstants);UCS4;MONO_OSX;MACOS</DefineConstants>
   </PropertyGroup>
 
