@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- Project Setup: Windows -->
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
-    <OutputPath>..\..\..\..\..\..\..\..\bin\$(Configuration)\Plug-ins\RhinoCode\cpython-38-amd64</OutputPath>
+    <OutputPath>..\..\..\..\..\..\..\..\bin\$(Configuration)\Plug-ins\RhinoCode</OutputPath>
     <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
   </PropertyGroup>
 
