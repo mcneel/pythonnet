@@ -20,6 +20,7 @@
     <DefineConstants>$(DefineConstants);PYTHON3;PYTHON39;UCS2;</DefineConstants>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <NoWarn>CS0105;CS3021;CS0618;CS0067;CS0649</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)'=='Debug'">
