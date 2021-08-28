@@ -1,10 +1,12 @@
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using System.Net.Sockets;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 using Python.Runtime.Platform;
 
@@ -41,11 +43,29 @@ namespace Python.Runtime
             Debug.WriteLine($"Setup default search paths");
         }
 
-        public void Initialize() => PythonEngine.Initialize();
+        public void Initialize()
+        {
+            PythonEngine.Initialize();
+            _mainstate = Runtime.PyThreadState_Get();
+        }
         #endregion
 
         #region Search Paths
         private List<string> _sysPaths = new List<string>();
+
+        bool _mainInterpThreadState = true;
+        public bool MainInterpretter
+        {
+            get => _mainInterpThreadState;
+            set
+            {
+                _mainInterpThreadState = value;
+                if (_mainInterpThreadState)
+                    Runtime.PyEval_AcquireThread(_mainstate);
+                else
+                    Runtime.PyEval_ReleaseThread(_mainstate);
+            }
+        }
 
         public void SetSearchPaths(IEnumerable<string> searchPaths)
         {
@@ -272,6 +292,7 @@ namespace Python.Runtime
             // execute
             using (Py.GIL())
             {
+
                 try
                 {
                     PyObject codeObj;
@@ -307,6 +328,54 @@ namespace Python.Runtime
                     scope.Dispose();
                 }
             }
+        }
+
+
+        IntPtr _mainstate = IntPtr.Zero;
+        IntPtr _gilstate = IntPtr.Zero;
+        public void RunBackgroundScope(string scopeName, string pythonFile)
+        {
+            Runtime.PyEval_ReleaseThread(_mainstate);
+            _gilstate = Runtime.PyGILState_Ensure();
+
+            {
+                Runtime.PyGILState_Release(_gilstate);
+                Runtime.PyThreadState_Swap(IntPtr.Zero);
+                {
+                    Task.Run(() =>
+                    {
+                        IntPtr gilstate = Runtime.PyGILState_Ensure();
+                        IntPtr ts = Runtime.PyThreadState_Get();
+
+                        IntPtr substate = Runtime.Py_NewInterpreter();
+                        IntPtr newTs = Runtime.PyThreadState_Get();
+
+                        Debug.WriteLine($"new python interpretter thread state: {newTs}");
+                        string code = File.ReadAllText(pythonFile, encoding: Encoding.UTF8);
+                        Runtime.PyRun_SimpleString(code);
+
+                        Runtime.Py_EndInterpreter(substate);
+
+                        Runtime.PyThreadState_Swap(ts);
+                        Runtime.PyGILState_Release(gilstate);
+                    }
+                    );
+                }
+            }
+        }
+
+        public void StopBackgroundScope()
+        {
+            Runtime.PyThreadState_Swap(_mainstate);
+            _gilstate = Runtime.PyGILState_Ensure();
+
+            Runtime.PyGILState_Release(_gilstate);
+            Runtime.PyEval_RestoreThread(_mainstate);
+
+            var c = new TcpClient("localhost", 8002);
+            var d = Encoding.ASCII.GetBytes("GET /end HTTP/1.1");
+            c.GetStream().Write(d, 0, d.Length);
+            c.Close();
         }
 
         public void ClearCache() => _cache.Clear();
