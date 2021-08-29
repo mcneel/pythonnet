@@ -289,6 +289,13 @@ namespace Python.Runtime
             PyScope scope = Py.CreateScope(scopeName);
             scope.Set("__file__", pythonFile);
 
+            // add default references
+            string code =
+                "import clr\n" +
+                "clr.AddReference(\"System\")\n" +
+                "clr.AddReference(\"RhinoCommon\")\n";
+            scope.Exec(code);
+
             // execute
             using (Py.GIL())
             {
