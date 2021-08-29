@@ -1,13 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- Project Setup: Windows -->
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
-    <OutputPath>..\..\..\..\..\..\..\..\bin\$(Configuration)\Plug-ins\RhinoCode</OutputPath>
     <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
   </PropertyGroup>
 
   <!-- Project Setup: macOS -->
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
-    <OutputPath>..\..\..\..\..\..\..\..\bin\$(Configuration)\Plug-ins\RhinoCode</OutputPath>
     <DefineConstants>$(DefineConstants);UCS4;MONO_OSX;MACOS</DefineConstants>
   </PropertyGroup>
 
