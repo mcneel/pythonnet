@@ -281,13 +281,11 @@ namespace Python.Runtime
         #region Execution
         private Dictionary<string, PyObject> _cache = new Dictionary<string, PyObject>();
 
-        public void RunScope(string scopeName,
-                             string pythonFile,
-                             bool useCache = true)
+        public void RunScope(string scopeName, string pythonFile, bool tempFile = false, bool useCache = true)
         {
             // TODO: implement and test locals
             PyScope scope = Py.CreateScope(scopeName);
-            scope.Set("__file__", pythonFile);
+            scope.Set("__file__", tempFile ? string.Empty : pythonFile);
 
             // add default references
             string code =
