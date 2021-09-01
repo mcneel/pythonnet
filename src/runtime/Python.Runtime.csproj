@@ -1,32 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Project Setup: Windows -->
-  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
-    <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
-  </PropertyGroup>
-
-  <!-- Project Setup: macOS -->
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
-    <DefineConstants>$(DefineConstants);UCS4;MONO_OSX;MACOS</DefineConstants>
+    <DefineConstants>$(DefineConstants);UCS4;MONO_OSX</DefineConstants>
   </PropertyGroup>
 
   <!-- Project Setup: shared -->
   <PropertyGroup>
     <OutputType>Library</OutputType>
     <AssemblyName>McNeel.Python39.Runtime</AssemblyName>
-    <TargetFramework>net48</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DefineConstants>$(DefineConstants);PYTHON3;PYTHON39;UCS2;</DefineConstants>
-    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <NoWarn>CS0105;CS3021;CS0618;CS0067;CS0649</NoWarn>
-  </PropertyGroup>
-
-  <PropertyGroup Condition="'$(Configuration)'=='Debug'">
-    <DefineConstants>$(DefineConstants);TRACE;DEBUG;</DefineConstants>
-  </PropertyGroup>
-
-  <PropertyGroup>
-    <DefaultItemExcludes>.DS_Store</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
