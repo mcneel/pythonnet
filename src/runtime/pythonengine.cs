@@ -176,6 +176,7 @@ namespace Python.Runtime
                 // during an initial "import clr", and the world ends shortly thereafter.
                 // This is probably masking some bad mojo happening somewhere in Runtime.Initialize().
                 delegateManager = new DelegateManager();
+                PythonHome = Environment.GetEnvironmentVariable("PYTHONHOME");
                 Runtime.Initialize(initSigs);
                 initialized = true;
                 Exceptions.Clear();
