@@ -598,7 +598,7 @@ namespace Python.Runtime
                 }
                 else
                 {
-                    assemblyBuilder = domain.DefineDynamicAssembly(new AssemblyName(assemblyName),
+                    assemblyBuilder = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName(assemblyName),
                         AssemblyBuilderAccess.Run);
                     assemblyBuilders[assemblyName] = assemblyBuilder;
                 }

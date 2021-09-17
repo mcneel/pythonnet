@@ -66,7 +66,7 @@ namespace Python.Runtime
             var aname = new AssemblyName { Name = "e__NativeCall_Assembly" };
             var aa = AssemblyBuilderAccess.Run;
 
-            aBuilder = Thread.GetDomain().DefineDynamicAssembly(aname, aa);
+            aBuilder = AssemblyBuilder.DefineDynamicAssembly(aname, aa);
             mBuilder = aBuilder.DefineDynamicModule("e__NativeCall_Module");
 
             var ta = TypeAttributes.Public;

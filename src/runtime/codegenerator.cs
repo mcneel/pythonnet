@@ -21,7 +21,7 @@ namespace Python.Runtime
             var aname = new AssemblyName { Name = "__CodeGenerator_Assembly" };
             var aa = AssemblyBuilderAccess.Run;
 
-            aBuilder = Thread.GetDomain().DefineDynamicAssembly(aname, aa);
+            aBuilder = AssemblyBuilder.DefineDynamicAssembly(aname, aa);
             mBuilder = aBuilder.DefineDynamicModule("__CodeGenerator_Module");
         }
 

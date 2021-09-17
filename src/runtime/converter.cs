@@ -169,10 +169,10 @@ namespace Python.Runtime
                 return ClassDerivedObject.ToPython(pyderived);
                 #else
                 // if object is remote don't do this
-                if (!System.Runtime.Remoting.RemotingServices.IsTransparentProxy(pyderived))
-                {
-                    return ClassDerivedObject.ToPython(pyderived);
-                }
+                // if (!System.Runtime.Remoting.RemotingServices.IsTransparentProxy(pyderived))
+                // {
+                //     return ClassDerivedObject.ToPython(pyderived);
+                // }
                 #endif
             }
 
