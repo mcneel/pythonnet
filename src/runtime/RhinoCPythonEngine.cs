@@ -354,10 +354,15 @@ namespace Python.Runtime
 
                         IntPtr substate = Runtime.Py_NewInterpreter();
                         IntPtr newTs = Runtime.PyThreadState_Get();
+                        Runtime.Initialize();
+                        PythonEngine.LoadCLR();
 
-                        Debug.WriteLine($"new python interpretter thread state: {newTs}");
+                        Debug.WriteLine($"subinterp: new python interpretter thread state: {newTs}");
                         string code = File.ReadAllText(pythonFile, encoding: Encoding.UTF8);
                         Runtime.PyRun_SimpleString(code);
+
+                        if (Runtime.PyErr_Occurred() != IntPtr.Zero)
+                            Debug.WriteLine($"subinterp: {new PythonException().Message}");
 
                         Runtime.Py_EndInterpreter(substate);
 
@@ -377,10 +382,10 @@ namespace Python.Runtime
             Runtime.PyGILState_Release(_gilstate);
             Runtime.PyEval_RestoreThread(_mainstate);
 
-            var c = new TcpClient("localhost", 8002);
-            var d = Encoding.ASCII.GetBytes("GET /end HTTP/1.1");
-            c.GetStream().Write(d, 0, d.Length);
-            c.Close();
+            // var c = new TcpClient("localhost", 8002);
+            // var d = Encoding.ASCII.GetBytes("GET /end HTTP/1.1");
+            // c.GetStream().Write(d, 0, d.Length);
+            // c.Close();
         }
 
         public void ClearCache() => _cache.Clear();

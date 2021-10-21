@@ -204,46 +204,52 @@ namespace Python.Runtime
                     "atexit.register(clr._AtExit)\n";
                 PythonEngine.Exec(code);
 
-                // Load the clr.py resource into the clr module
-                IntPtr clr = Python.Runtime.ImportHook.GetCLRModule();
-                IntPtr clr_dict = Runtime.PyModule_GetDict(clr);
+                LoadCLR();
+            }
+        }
 
-                var locals = new PyDict();
-                try
+        public static void LoadCLR()
+        {
+            // Load the clr.py resource into the clr module
+            IntPtr clr = Python.Runtime.ImportHook.GetCLRModule();
+            IntPtr clr_dict = Runtime.PyModule_GetDict(clr);
+
+            var locals = new PyDict();
+            try
+            {
+                IntPtr module = Runtime.PyImport_AddModule("clr._extras");
+                IntPtr module_globals = Runtime.PyModule_GetDict(module);
+                IntPtr builtins = Runtime.PyEval_GetBuiltins();
+                Runtime.PyDict_SetItemString(module_globals, "__builtins__", builtins);
+
+                Assembly assembly = Assembly.GetExecutingAssembly();
+                using (Stream stream = assembly.GetManifestResourceStream("clr.py"))
+                using (var reader = new StreamReader(stream))
                 {
-                    IntPtr module = Runtime.PyImport_AddModule("clr._extras");
-                    IntPtr module_globals = Runtime.PyModule_GetDict(module);
-                    IntPtr builtins = Runtime.PyEval_GetBuiltins();
-                    Runtime.PyDict_SetItemString(module_globals, "__builtins__", builtins);
-
-                    Assembly assembly = Assembly.GetExecutingAssembly();
-                    using (Stream stream = assembly.GetManifestResourceStream("clr.py"))
-                    using (var reader = new StreamReader(stream))
-                    {
-                        // add the contents of clr.py to the module
-                        string clr_py = reader.ReadToEnd();
-                        Exec(clr_py, module_globals, locals.Handle);
-                    }
-
-                    // add the imported module to the clr module, and copy the API functions
-                    // and decorators into the main clr module.
-                    Runtime.PyDict_SetItemString(clr_dict, "_extras", module);
-                    foreach (PyObject key in locals.Keys())
-                    {
-                        if (!key.ToString().StartsWith("_") || key.ToString().Equals("__version__"))
-                        {
-                            PyObject value = locals[key];
-                            Runtime.PyDict_SetItem(clr_dict, key.Handle, value.Handle);
-                            value.Dispose();
-                        }
-                        key.Dispose();
-                    }
+                    // add the contents of clr.py to the module
+                    string clr_py = reader.ReadToEnd();
+                    Exec(clr_py, module_globals, locals.Handle);
                 }
-                finally
+
+                // add the imported module to the clr module, and copy the API functions
+                // and decorators into the main clr module.
+                Runtime.PyDict_SetItemString(clr_dict, "_extras", module);
+                foreach (PyObject key in locals.Keys())
                 {
-                    locals.Dispose();
+                    if (!key.ToString().StartsWith("_") || key.ToString().Equals("__version__"))
+                    {
+                        PyObject value = locals[key];
+                        Runtime.PyDict_SetItem(clr_dict, key.Handle, value.Handle);
+                        value.Dispose();
+                    }
+                    key.Dispose();
                 }
             }
+            finally
+            {
+                locals.Dispose();
+            }
+
         }
 
         static void OnDomainUnload(object _, EventArgs __)
