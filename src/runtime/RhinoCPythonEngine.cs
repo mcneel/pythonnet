@@ -358,8 +358,17 @@ namespace Python.Runtime
                         PythonEngine.LoadCLR();
 
                         Debug.WriteLine($"subinterp: new python interpretter thread state: {newTs}");
-                        string code = File.ReadAllText(pythonFile, encoding: Encoding.UTF8);
-                        Runtime.PyRun_SimpleString(code);
+
+                        PyScope scope = Py.CreateScope(scopeName);
+                        scope.Set("__file__", pythonFile);
+
+                        PyObject codeObj = PythonEngine.Compile(
+                            code: File.ReadAllText(pythonFile, encoding: Encoding.UTF8),
+                            filename: pythonFile,
+                            mode: RunFlagType.File
+                            );
+
+                        scope.Execute(codeObj);
 
                         if (Runtime.PyErr_Occurred() != IntPtr.Zero)
                             Debug.WriteLine($"subinterp: {new PythonException().Message}");
