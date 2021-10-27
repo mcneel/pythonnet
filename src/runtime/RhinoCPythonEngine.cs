@@ -354,10 +354,9 @@ namespace Python.Runtime
 
                         IntPtr substate = Runtime.Py_NewInterpreter();
                         IntPtr newTs = Runtime.PyThreadState_Get();
+                        Debug.WriteLine($"subinterp: new python interpretter thread state: {newTs}");
                         Runtime.Initialize();
                         PythonEngine.LoadCLR();
-
-                        Debug.WriteLine($"subinterp: new python interpretter thread state: {newTs}");
 
                         PyScope scope = Py.CreateScope(scopeName);
                         scope.Set("__file__", pythonFile);
@@ -374,6 +373,7 @@ namespace Python.Runtime
                             Debug.WriteLine($"subinterp: {new PythonException().Message}");
 
                         Runtime.Py_EndInterpreter(substate);
+                        Debug.WriteLine($"subinterp: end subinterp");
 
                         Runtime.PyThreadState_Swap(ts);
                         Runtime.PyGILState_Release(gilstate);
