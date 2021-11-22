@@ -335,10 +335,9 @@ namespace Python.Runtime
             }
         }
 
-
         IntPtr _mainstate = IntPtr.Zero;
         IntPtr _gilstate = IntPtr.Zero;
-        public void RunBackgroundScope(string scopeName, string pythonFile)
+        public void RunBackgroundScope(string scopeName, string pythonFile, Stream stdout = null, Stream stderr = null)
         {
             Runtime.PyEval_ReleaseThread(_mainstate);
             _gilstate = Runtime.PyGILState_Ensure();
@@ -357,6 +356,18 @@ namespace Python.Runtime
                         Debug.WriteLine($"subinterp: new python interpretter thread state: {newTs}");
                         Runtime.Initialize();
                         PythonEngine.LoadCLR();
+
+                        PyObject sys = PythonEngine.ImportModule("sys");
+                        if (stdout is Stream)
+                        {
+                            PyObject _stdout = PyObject.FromManagedObject(stdout);
+                            sys.SetAttr("stdout", _stdout);
+                        }
+                        if (stderr is Stream)
+                        {
+                            PyObject _stderr = PyObject.FromManagedObject(stderr);
+                            sys.SetAttr("stderr", _stderr);
+                        }
 
                         PyScope scope = Py.CreateScope(scopeName);
                         scope.Set("__file__", pythonFile);
