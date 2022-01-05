@@ -55,7 +55,7 @@ namespace Python.Runtime
         #endregion
 
         #region Search Paths
-        private List<string> _sysPaths = new List<string>();
+        string[] _sysPaths = default;
 
         // bool _mainInterpThreadState = true;
         // public bool MainInterpretter
@@ -73,157 +73,185 @@ namespace Python.Runtime
 
         public void SetSearchPaths(IEnumerable<string> searchPaths)
         {
-            // // set sys paths
-            // PyList sysPaths = RestoreSearchPaths();
+            // set sys paths
+            PyList sysPaths = RestoreSearchPaths();
+            using (Py.GIL())
+            {
+                // manually add PYTHONPATH since we are overwriting the sys paths
+                var pythonPath = Environment.GetEnvironmentVariable("PYTHONPATH");
+                if (pythonPath != null && pythonPath != string.Empty)
+                {
+                    var searthPathStr = new PyString(pythonPath);
+                    sysPaths.Insert(0, searthPathStr);
+                }
 
-            // using (Py.GIL())
-            // {
-            //     // manually add PYTHONPATH since we are overwriting the sys paths
-            //     var pythonPath = Environment.GetEnvironmentVariable("PYTHONPATH");
-            //     if (pythonPath != null && pythonPath != string.Empty)
-            //     {
-            //         var searthPathStr = new PyString(pythonPath);
-            //         sysPaths.Insert(0, searthPathStr);
-            //     }
-
-            //     // now add the search paths for the script bundle
-            //     foreach (string searchPath in searchPaths.Reverse<string>())
-            //     {
-            //         if (searchPath != null && searchPath != string.Empty)
-            //         {
-            //             var searthPathStr = new PyString(searchPath);
-            //             sysPaths.Insert(0, searthPathStr);
-            //         }
-            //     }
-            // }
+                // now add the search paths for the script bundle
+                foreach (string searchPath in searchPaths.Reverse<string>())
+                {
+                    if (searchPath != null && searchPath != string.Empty)
+                    {
+                        var searthPathStr = new PyString(searchPath);
+                        sysPaths.Insert(0, searthPathStr);
+                    }
+                }
+            }
         }
 
         public void ClearSearchPaths() => RestoreSearchPaths();
 
         private void StoreSearchPaths()
         {
-            // using (Py.GIL())
-            // {
-            //     var currentSysPath = GetSysPaths();
-            //     _sysPaths = new List<string>();
-            //     long itemsCount = currentSysPath.Length();
-            //     for (long i = 0; i < itemsCount; i++)
-            //     {
-            //         BorrowedReference item =
-            //             Runtime.PyList_GetItem(currentSysPath.Handle, i);
-            //         string path = Runtime.GetManagedString(item);
-            //         _sysPaths.Add(path);
-            //     }
-            // }
+            using (Py.GIL())
+            {
+                var currentSysPath = GetSysPaths();
+                var sysPathRef = currentSysPath.BorrowNullable();
+                var sysPaths = new List<string>();
+                long itemsCount = currentSysPath.Length();
+                for (nint i = 0; i < itemsCount; i++)
+                {
+                    BorrowedReference item =
+                        Runtime.PyList_GetItem(sysPathRef, i);
+                    string path = Runtime.GetManagedString(item);
+                    sysPaths.Add(path);
+                }
+                _sysPaths = sysPaths.ToArray();
+            }
         }
 
-        private List<string> RestoreSearchPaths()
+        private PyList RestoreSearchPaths()
         {
-            // using (Py.GIL())
-            // {
-            //     var newList = new PyList();
-            //     int i = 0;
-            //     foreach (var searchPath in _sysPaths)
-            //     {
-            //         var searthPathStr = new PyString(searchPath);
-            //         newList.Insert(i, searthPathStr);
-            //         i++;
-            //     }
-            //     SetSysPaths(newList);
-            //     return newList;
-            // }
-            return new List<string>();
+            using (Py.GIL())
+            {
+                var newList = new PyList();
+                int i = 0;
+                foreach (var searchPath in _sysPaths ?? new string[] { })
+                {
+                    var searthPathStr = new PyString(searchPath);
+                    newList.Insert(i, searthPathStr);
+                    i++;
+                }
+                SetSysPaths(newList);
+                return newList;
+            }
         }
 
-        private List<string> GetSysPaths()
+        private PyList GetSysPaths()
         {
-            // using (Py.GIL())
-            // {
-            //     // set sys paths
-            //     PyObject sys = PythonEngine.ImportModule("sys");
-            //     PyObject sysPathsObj = sys.GetAttr("path");
-            //     return PyList.AsList(sysPathsObj);
-            // }
-            return new List<string>();
+            using (Py.GIL())
+            {
+                // get sys paths
+                using var sys = Runtime.PyImport_ImportModule("sys");
+                using (PyObject sysObj = sys.MoveToPyObject())
+                {
+                    PyObject sysPathsObj = sysObj.GetAttr("path");
+                    return PyList.AsList(sysPathsObj);
+                }
+            }
         }
 
         private void SetSysPaths(PyList sysPaths)
         {
-            // using (Py.GIL())
-            // {
-            //     PyObject sys = PythonEngine.ImportModule("sys");
-            //     sys.SetAttr("path", sysPaths);
-            // }
+            using (Py.GIL())
+            {
+                var existingPaths = GetSysPaths();
+
+                // set sys path
+                using var sys = Runtime.PyImport_ImportModule("sys");
+                using (PyObject sysObj = sys.MoveToPyObject())
+                {
+                    sysObj.SetAttr("path", sysPaths);
+                }
+
+                // dispose existing paths
+                foreach (PyObject path in existingPaths)
+                    path.Dispose();
+                existingPaths.Dispose();
+            }
         }
         #endregion
 
         #region Engine Globals (Builtins)
-        private List<string> _builtinKeys = new List<string>();
+        string[] _builtinKeys = default;
 
         public void SetBuiltins(IDictionary<string, object> builtins)
         {
-            // using (Py.GIL())
-            // {
-            //     IntPtr engineBuiltins = Runtime.PyEval_GetBuiltins();
-            //     if (engineBuiltins != null)
-            //     {
-            //         foreach (KeyValuePair<string, object> item in builtins)
-            //             Runtime.PyDict_SetItemString(
-            //                 pointer: engineBuiltins,
-            //                 key: item.Key,
-            //                 value: PyObject.FromManagedObject(item.Value).Handle
-            //             );
-            //         _builtinKeys = builtins.Keys.ToList();
-            //     }
-            // }
+            using (Py.GIL())
+            {
+                BorrowedReference engineBuiltins = Runtime.PyEval_GetBuiltins();
+                if (engineBuiltins != null)
+                {
+                    foreach (KeyValuePair<string, object> item in builtins)
+                        Runtime.PyDict_SetItemString(
+                            dict: engineBuiltins,
+                            key: item.Key,
+                            value: PyObject.FromManagedObject(item.Value)
+                        );
+                    _builtinKeys = builtins.Keys.ToArray();
+                }
+            }
         }
 
         public void ClearBuiltins()
         {
-            // using (Py.GIL())
-            // {
-            //     IntPtr engineBuiltins = Runtime.PyEval_GetBuiltins();
-            //     if (engineBuiltins != null)
-            //     {
-            //         foreach (var key in _builtinKeys)
-            //             Runtime.PyDict_DelItemString(
-            //                 pointer: engineBuiltins,
-            //                 key: key
-            //             );
-            //         _builtinKeys = new List<string>();
-            //     }
-            // }
+            using (Py.GIL())
+            {
+                BorrowedReference engineBuiltins = Runtime.PyEval_GetBuiltins();
+                if (engineBuiltins != null)
+                {
+                    foreach (var key in _builtinKeys ?? new string[] { })
+                        Runtime.PyDict_DelItemString(
+                            pointer: engineBuiltins,
+                            key: key
+                        );
+                    _builtinKeys = default;
+                }
+            }
         }
         #endregion
 
         #region Input Arguments
-        public void SetSysArgs(IEnumerable<string> args)
+        public void ClearSysArgs() => SetSysArgs(new string[] { });
+
+        public PyList GetSysArgs()
         {
-            // using (Py.GIL())
-            // {
-            //     // setup arguments (sets sys.argv)
-            //     PyObject sys = PythonEngine.ImportModule("sys");
-
-            //     var pythonArgv = new PyList();
-
-            //     // add the rest of the args
-            //     foreach (string arg in args)
-            //     {
-            //         var argStr = new PyString(arg);
-            //         pythonArgv.Append(argStr);
-            //     }
-
-            //     sys.SetAttr("argv", pythonArgv);
-            // }
+            using (Py.GIL())
+            {
+                // get sys paths
+                using var sys = Runtime.PyImport_ImportModule("sys");
+                using (PyObject sysObj = sys.MoveToPyObject())
+                {
+                    PyObject sysArgvObj = sysObj.GetAttr("argv");
+                    return PyList.AsList(sysArgvObj);
+                }
+            }
         }
 
-        public void ClearSysArgs()
+        public void SetSysArgs(IEnumerable<string> args)
         {
-            // using (Py.GIL())
-            // {
-            //     PyObject sys = PythonEngine.ImportModule("sys");
-            //     sys.SetAttr("argv", new PyList());
-            // }
+            using (Py.GIL())
+            {
+                var existingSysArgs = GetSysArgs();
+
+                // setup arguments (sets sys.argv)
+                using var sys = Runtime.PyImport_ImportModule("sys");
+                using (PyObject sysObj = sys.MoveToPyObject())
+                {
+                    var sysArgs = new PyList();
+                    // add the rest of the args
+                    foreach (string arg in args)
+                    {
+                        var argStr = new PyString(arg);
+                        sysArgs.Append(argStr);
+                    }
+
+                    sysObj.SetAttr("argv", sysArgs);
+                }
+
+                // dispose existing paths
+                foreach (PyObject path in existingSysArgs)
+                    path.Dispose();
+                existingSysArgs.Dispose();
+            }
         }
         #endregion
 
@@ -269,14 +297,14 @@ namespace Python.Runtime
         #region Standard IO
         public void SetStdIO(Stream stdin, Stream stdout)
         {
-            var pythonIO = new RhinoCPythonEngineStandardIO(stdin, stdout);
             using (Py.GIL())
             {
-                Log("Setting standard streams");
-                using (var sys = Runtime.PyImport_ImportModule("sys"))
+                using var sys = Runtime.PyImport_ImportModule("sys");
+                using (PyObject sysObj = sys.MoveToPyObject())
                 {
-                    PyObject sysObj = sys.MoveToPyObject();
-                    PyObject stdio = PyObject.FromManagedObject(pythonIO);
+                    PyObject stdio = PyObject.FromManagedObject(
+                        new RhinoCPythonEngineStandardIO(stdin, stdout)
+                    );
                     sysObj.SetAttr("stdin", stdio);
                     sysObj.SetAttr("stdout", stdio);
                     sysObj.SetAttr("stderr", stdio);
@@ -292,7 +320,7 @@ namespace Python.Runtime
 
         public void RunScope(string scopeName, string pythonFile, bool tempFile = false, bool useCache = true)
         {
-            // // TODO: implement and test locals
+            // TODO: implement and test locals
             PyModule scope = Py.CreateScope(scopeName);
             scope.Set("__file__", tempFile ? string.Empty : pythonFile);
 
@@ -303,7 +331,7 @@ namespace Python.Runtime
                 "clr.AddReference(\"RhinoCommon\")\n";
             scope.Exec(code);
 
-            // // execute
+            // execute
             using (Py.GIL())
             {
 
