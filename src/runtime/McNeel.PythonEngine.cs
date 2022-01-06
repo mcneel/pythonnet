@@ -81,7 +81,7 @@ namespace Python.Runtime
                 var pythonPath = Environment.GetEnvironmentVariable("PYTHONPATH");
                 if (pythonPath != null && pythonPath != string.Empty)
                 {
-                    var searthPathStr = new PyString(pythonPath);
+                    using var searthPathStr = new PyString(pythonPath);
                     sysPaths.Insert(0, searthPathStr);
                 }
 
@@ -90,7 +90,7 @@ namespace Python.Runtime
                 {
                     if (searchPath != null && searchPath != string.Empty)
                     {
-                        var searthPathStr = new PyString(searchPath);
+                        using var searthPathStr = new PyString(searchPath);
                         sysPaths.Insert(0, searthPathStr);
                     }
                 }
@@ -126,7 +126,7 @@ namespace Python.Runtime
                 int i = 0;
                 foreach (var searchPath in _sysPaths ?? new string[] { })
                 {
-                    var searthPathStr = new PyString(searchPath);
+                    using var searthPathStr = new PyString(searchPath);
                     newList.Insert(i, searthPathStr);
                     i++;
                 }
@@ -181,11 +181,16 @@ namespace Python.Runtime
                 if (engineBuiltins != null)
                 {
                     foreach (KeyValuePair<string, object> item in builtins)
+                    {
+                        // PyDict_SetItemString _does not_ steal ref
+                        // make sure this ref is disposed
+                        using var value = PyObject.FromManagedObject(item.Value);
                         Runtime.PyDict_SetItemString(
                             dict: engineBuiltins,
                             key: item.Key,
-                            value: PyObject.FromManagedObject(item.Value)
+                            value: value
                         );
+                    }
                     _builtinKeys = builtins.Keys.ToArray();
                 }
             }
@@ -240,7 +245,7 @@ namespace Python.Runtime
                     // add the rest of the args
                     foreach (string arg in args)
                     {
-                        var argStr = new PyString(arg);
+                        using var argStr = new PyString(arg);
                         sysArgs.Append(argStr);
                     }
 
@@ -302,7 +307,7 @@ namespace Python.Runtime
                 using var sys = Runtime.PyImport_ImportModule("sys");
                 using (PyObject sysObj = sys.MoveToPyObject())
                 {
-                    PyObject stdio = PyObject.FromManagedObject(
+                    using var stdio = PyObject.FromManagedObject(
                         new RhinoCPythonEngineStandardIO(stdin, stdout)
                     );
                     sysObj.SetAttr("stdin", stdio);
