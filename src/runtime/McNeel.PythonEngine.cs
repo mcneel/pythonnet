@@ -13,14 +13,14 @@ using Python.Runtime.Platform;
 #pragma warning disable
 namespace Python.Runtime
 {
-    public class RhinoCPythonEngine
+    public class RhinoCodePythonNet
     {
-        static void Log(string message) => Debug.WriteLine($"mcneel.python.runtime: {message}");
+        static void Log(string message) => Debug.WriteLine($"mcneel.pythonnet: {message}");
 
         public Version Version { get; private set; }
 
         #region Initialization
-        public RhinoCPythonEngine(string enigneRoot, Version version)
+        public RhinoCodePythonNet(string enigneRoot, Version version)
         {
             Log($"CPython engine path: {enigneRoot}");
 #if MACOS
@@ -29,18 +29,14 @@ namespace Python.Runtime
             var dylibName = $"libpython{version.Major}.{version.Minor}.dylib";
             var dllPath = Path.Combine(enigneRoot, dylibName);
             LibraryLoader.Instance.Load(dllPath);
-            Log($"RhinoCPythonEngine DarwinLoader.PythonDLL: {dllPath}");
-            // Log($"RhinoCPythonEngine Runtime._PythonDll: {Runtime._PythonDll}");
-#elif WINDOWS
-            Log($"RhinoCPythonEngine assembly path: {enigneRoot}");
-            // Log($"RhinoCPythonEngine pylibPath: {Runtime._PythonDll}");
+            Log($"Library loader set to: {dllPath}");
 #endif
 
             Version = version;
 
             // start cpython runtime
             Initialize();
-            Log($"Initialized PythonEngine");
+            Log($"Initialized python engine");
 
             // store the default search paths for resetting the engine later
             StoreSearchPaths();
@@ -308,7 +304,7 @@ namespace Python.Runtime
                 using (PyObject sysObj = sys.MoveToPyObject())
                 {
                     using var stdio = PyObject.FromManagedObject(
-                        new RhinoCPythonEngineStandardIO(stdin, stdout)
+                        new RhinoCodePythonNetIO(stdin, stdout)
                     );
                     sysObj.SetAttr("stdin", stdio);
                     sysObj.SetAttr("stdout", stdio);
@@ -460,12 +456,12 @@ namespace Python.Runtime
     }
 
     [SuppressMessage("Python.Runtime", "IDE1006")]
-    public class RhinoCPythonEngineStandardIO : Stream, IDisposable
+    public class RhinoCodePythonNetIO : Stream, IDisposable
     {
         private readonly Stream _stdin = null;
         private readonly Stream _stdout = null;
 
-        public RhinoCPythonEngineStandardIO(Stream stdin, Stream stdout) { _stdin = stdin; _stdout = stdout; }
+        public RhinoCodePythonNetIO(Stream stdin, Stream stdout) { _stdin = stdin; _stdout = stdout; }
 
         public Encoding OutputEncoding { get; set; } = Encoding.UTF8;
 
