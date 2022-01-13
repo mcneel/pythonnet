@@ -43,11 +43,8 @@ namespace Python.Runtime
             Log($"Setup default search paths");
         }
 
-        public void Initialize()
-        {
-            PythonEngine.Initialize();
-            // _mainstate = Runtime.PyThreadState_Get();
-        }
+        public void Initialize() => PythonEngine.Initialize();
+        public void ShutDown() => PythonEngine.Shutdown();
         #endregion
 
         #region Search Paths
