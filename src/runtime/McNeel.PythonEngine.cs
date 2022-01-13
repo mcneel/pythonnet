@@ -319,18 +319,15 @@ namespace Python.Runtime
         #region Execution
         private Dictionary<string, PyObject> _cache = new Dictionary<string, PyObject>();
 
-        public void RunScope(string scopeName, string pythonFile, bool tempFile = false, bool useCache = true)
+        public void RunScope(string scopeName, string pythonFile, string bootstrapScript = null, bool tempFile = false, bool useCache = true)
         {
             // TODO: implement and test locals
             PyModule scope = Py.CreateScope(scopeName);
             scope.Set("__file__", tempFile ? string.Empty : pythonFile);
 
             // add default references
-            string code =
-                "import clr\n" +
-                "clr.AddReference(\"System\")\n" +
-                "clr.AddReference(\"RhinoCommon\")\n";
-            scope.Exec(code);
+            if (bootstrapScript is string)
+                scope.Exec(bootstrapScript);
 
             // execute
             using (Py.GIL())
