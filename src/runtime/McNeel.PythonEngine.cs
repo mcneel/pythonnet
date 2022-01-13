@@ -26,11 +26,13 @@ namespace Python.Runtime
 #if MACOS
             // setup the darwin loader manually so it can find the native python shared lib
             // this is so less code changes are done the pythonnet source
-            var dylibName = $"libpython{version.Major}.{version.Minor}.dylib";
-            var dllPath = Path.Combine(enigneRoot, dylibName);
+            var pythonLib = $"libpython{version.Major}.{version.Minor}.dylib";
+#elif WINDOWS
+            var pythonLib = $"python{version.Major}{version.Minor}.dll";
+#endif
+            var dllPath = Path.Combine(enigneRoot, pythonLib);
             LibraryLoader.Instance.Load(dllPath);
             Log($"Library loader set to: {dllPath}");
-#endif
 
             Version = version;
 
