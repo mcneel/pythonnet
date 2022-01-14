@@ -13,14 +13,14 @@ using Python.Runtime.Platform;
 #pragma warning disable
 namespace Python.Runtime
 {
-    public class RhinoCodePythonNet
+    public unsafe class RhinoCodePythonEngine
     {
         static void Log(string message) => Debug.WriteLine($"mcneel.pythonnet: {message}");
 
         public Version Version { get; private set; }
 
         #region Initialization
-        public RhinoCodePythonNet(string enigneRoot, Version version)
+        public RhinoCodePythonEngine(string enigneRoot, Version version)
         {
             Log($"CPython engine path: {enigneRoot}");
 #if MACOS
@@ -303,7 +303,7 @@ namespace Python.Runtime
                 using (PyObject sysObj = sys.MoveToPyObject())
                 {
                     using var stdio = PyObject.FromManagedObject(
-                        new RhinoCodePythonNetIO(stdin, stdout)
+                        new RhinoCodePythonEngineIO(stdin, stdout)
                     );
                     sysObj.SetAttr("stdin", stdio);
                     sysObj.SetAttr("stdout", stdio);
@@ -452,12 +452,12 @@ namespace Python.Runtime
     }
 
     [SuppressMessage("Python.Runtime", "IDE1006")]
-    public class RhinoCodePythonNetIO : Stream, IDisposable
+    public class RhinoCodePythonEngineIO : Stream, IDisposable
     {
         private readonly Stream _stdin = null;
         private readonly Stream _stdout = null;
 
-        public RhinoCodePythonNetIO(Stream stdin, Stream stdout) { _stdin = stdin; _stdout = stdout; }
+        public RhinoCodePythonEngineIO(Stream stdin, Stream stdout) { _stdin = stdin; _stdout = stdout; }
 
         public Encoding OutputEncoding { get; set; } = Encoding.UTF8;
 
