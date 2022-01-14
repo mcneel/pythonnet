@@ -18,6 +18,8 @@ namespace Python.Runtime
         public Version Version { get; private set; }
 
         #region Initialization
+        IntPtr m_threadState = default;
+
         public RhinoCodePythonEngine(string enigneRoot, Version version)
         {
             Log($"CPython engine path: {enigneRoot}");
@@ -43,8 +45,17 @@ namespace Python.Runtime
             Log($"Setup default search paths");
         }
 
-        public void Initialize() => PythonEngine.Initialize();
-        public void ShutDown() => PythonEngine.Shutdown();
+        public void Initialize()
+        {
+            PythonEngine.Initialize();
+            m_threadState = PythonEngine.BeginAllowThreads();
+        }
+
+        public void ShutDown()
+        {
+            PythonEngine.EndAllowThreads(m_threadState);
+            PythonEngine.Shutdown();
+        }
         #endregion
 
         #region Search Paths
@@ -305,16 +316,15 @@ namespace Python.Runtime
         public void RunScope(string scopeName, string pythonFile, string bootstrapScript = null, bool tempFile = false, bool useCache = true)
         {
             // TODO: implement and test locals
-            PyModule scope = Py.CreateScope(scopeName);
-            scope.Set("__file__", tempFile ? string.Empty : pythonFile);
-
-            // add default references
-            if (bootstrapScript is string)
-                scope.Exec(bootstrapScript);
-
             // execute
             using (Py.GIL())
             {
+                PyModule scope = Py.CreateScope(scopeName);
+                scope.Set("__file__", tempFile ? string.Empty : pythonFile);
+
+                // add default references
+                if (bootstrapScript is string)
+                    scope.Exec(bootstrapScript);
 
                 try
                 {
