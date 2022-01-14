@@ -3,8 +3,6 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Diagnostics;
-using System.Threading.Tasks;
-using System.Net.Sockets;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 
@@ -51,20 +49,6 @@ namespace Python.Runtime
 
         #region Search Paths
         string[] _sysPaths = default;
-
-        // bool _mainInterpThreadState = true;
-        // public bool MainInterpretter
-        // {
-        //     get => _mainInterpThreadState;
-        //     set
-        //     {
-        //         _mainInterpThreadState = value;
-        //         if (_mainInterpThreadState)
-        //             Runtime.PyEval_AcquireThread(_mainstate);
-        //         else
-        //             Runtime.PyEval_ReleaseThread(_mainstate);
-        //     }
-        // }
 
         public void SetSearchPaths(IEnumerable<string> searchPaths)
         {
@@ -367,79 +351,6 @@ namespace Python.Runtime
                     scope.Dispose();
                 }
             }
-        }
-
-        // IntPtr _mainstate = IntPtr.Zero;
-        // IntPtr _gilstate = IntPtr.Zero;
-        public void RunBackgroundScope(string scopeName, string pythonFile, Stream stdout = null, Stream stderr = null)
-        {
-            // Runtime.PyEval_ReleaseThread(_mainstate);
-            // _gilstate = Runtime.PyGILState_Ensure();
-
-            // {
-            //     Runtime.PyGILState_Release(_gilstate);
-            //     Runtime.PyThreadState_Swap(IntPtr.Zero);
-            //     {
-            //         Task.Run(() =>
-            //         {
-            //             IntPtr gilstate = Runtime.PyGILState_Ensure();
-            //             IntPtr ts = Runtime.PyThreadState_Get();
-
-            //             IntPtr substate = Runtime.Py_NewInterpreter();
-            //             IntPtr newTs = Runtime.PyThreadState_Get();
-            //             Debug.WriteLine($"subinterp: new python interpretter thread state: {newTs}");
-            //             Runtime.Initialize();
-            //             PythonEngine.LoadCLR();
-
-            //             PyObject sys = PythonEngine.ImportModule("sys");
-            //             if (stdout is Stream)
-            //             {
-            //                 PyObject _stdout = PyObject.FromManagedObject(stdout);
-            //                 sys.SetAttr("stdout", _stdout);
-            //             }
-            //             if (stderr is Stream)
-            //             {
-            //                 PyObject _stderr = PyObject.FromManagedObject(stderr);
-            //                 sys.SetAttr("stderr", _stderr);
-            //             }
-
-            //             PyScope scope = Py.CreateScope(scopeName);
-            //             scope.Set("__file__", pythonFile);
-
-            //             PyObject codeObj = PythonEngine.Compile(
-            //                 code: File.ReadAllText(pythonFile, encoding: Encoding.UTF8),
-            //                 filename: pythonFile,
-            //                 mode: RunFlagType.File
-            //                 );
-
-            //             scope.Execute(codeObj);
-
-            //             if (Runtime.PyErr_Occurred() != IntPtr.Zero)
-            //                 Debug.WriteLine($"subinterp: {new PythonException().Message}");
-
-            //             Runtime.Py_EndInterpreter(substate);
-            //             Debug.WriteLine($"subinterp: end subinterp");
-
-            //             Runtime.PyThreadState_Swap(ts);
-            //             Runtime.PyGILState_Release(gilstate);
-            //         }
-            //         );
-            //     }
-            // }
-        }
-
-        public void StopBackgroundScope()
-        {
-            // Runtime.PyThreadState_Swap(_mainstate);
-            // _gilstate = Runtime.PyGILState_Ensure();
-
-            // Runtime.PyGILState_Release(_gilstate);
-            // Runtime.PyEval_RestoreThread(_mainstate);
-
-            // // var c = new TcpClient("localhost", 8002);
-            // // var d = Encoding.ASCII.GetBytes("GET /end HTTP/1.1");
-            // // c.GetStream().Write(d, 0, d.Length);
-            // // c.Close();
         }
 
         public void ClearCache()
