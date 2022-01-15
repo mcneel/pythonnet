@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 
 using Python.Runtime.Platform;
+using Python.Runtime.Native;
 
 #pragma warning disable
 namespace Python.Runtime
@@ -18,7 +19,7 @@ namespace Python.Runtime
         public Version Version { get; private set; }
 
         #region Initialization
-        IntPtr m_threadState = default;
+        PyThreadState* m_mainThreadState = default;
 
         public RhinoCodePythonEngine(string enigneRoot, Version version)
         {
@@ -48,14 +49,82 @@ namespace Python.Runtime
         public void Initialize()
         {
             PythonEngine.Initialize();
-            m_threadState = PythonEngine.BeginAllowThreads();
+            // release GIL and save current thread state
+            // equals PythonEngine.BeginAllowThreads()
+            m_mainThreadState = Runtime.PyEval_SaveThread();
         }
 
         public void ShutDown()
         {
-            PythonEngine.EndAllowThreads(m_threadState);
+            // equals PythonEngine.EndAllowThreads();
+            Runtime.PyEval_RestoreThread(m_mainThreadState);
             PythonEngine.Shutdown();
+            m_mainThreadState = default;
         }
+        #endregion
+
+        #region Interpreters
+        public class PythonInterpreter : IDisposable
+        {
+            public PythonInterpreter()
+            {
+            }
+
+            public void RunScope(string scopeName, string pythonFile, Stream stdout, Stream stderr)
+            {
+                using (Py.GIL())
+                {
+                    // save the thread state of this thread on main interp
+                    PyThreadState* m_threadState = Runtime.PyThreadState_Get();
+
+                    // create a new interp and thread state
+                    PyThreadState* m_interpState = Runtime.Py_NewInterpreter();
+
+                    // configure stdio
+                    using var sys = Runtime.PyImport_ImportModule("sys");
+                    using (PyObject sysObj = sys.MoveToPyObject())
+                    {
+                        if (stdout is Stream)
+                        {
+                            using var stdoutObj = PyObject.FromManagedObject(stdout);
+                            sysObj.SetAttr("stdout", stdoutObj);
+                        }
+
+                        if (stdout is Stream)
+                        {
+                            using var stderrObj = PyObject.FromManagedObject(stderr);
+                            sysObj.SetAttr("stderr", stderrObj);
+                        }
+                    }
+
+                    // execute
+                    using PyModule scope = Py.CreateScope(scopeName);
+                    scope.Set("__file__", pythonFile);
+
+                    PyObject codeObj = PythonEngine.Compile(
+                        code: File.ReadAllText(pythonFile, encoding: Encoding.UTF8),
+                        filename: pythonFile,
+                        mode: RunFlagType.File
+                        );
+
+                    scope.Execute(codeObj);
+
+                    if (!Runtime.PyErr_Occurred().IsNull)
+                        Debug.WriteLine($"subinterp: {PythonException.FetchCurrentRaw().Message}");
+
+                    // end interp
+                    Runtime.Py_EndInterpreter(m_interpState);
+                    // restore main interp thread
+                    Runtime.PyThreadState_Swap(m_threadState);
+                }
+            }
+
+            public void Dispose()
+            {
+            }
+        }
+
+        public PythonInterpreter NewInterpreter() => new PythonInterpreter();
         #endregion
 
         #region Search Paths
@@ -316,6 +385,10 @@ namespace Python.Runtime
         public void RunScope(string scopeName, string pythonFile, string bootstrapScript = null, bool tempFile = false, bool useCache = true)
         {
             // TODO: implement and test locals
+
+            // ensure main interp
+            Runtime.PyEval_AcquireThread(m_mainThreadState);
+
             // execute
             using (Py.GIL())
             {
@@ -361,6 +434,8 @@ namespace Python.Runtime
                     scope.Dispose();
                 }
             }
+
+            Runtime.PyEval_ReleaseThread(m_mainThreadState);
         }
 
         public void ClearCache()
