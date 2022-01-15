@@ -834,6 +834,9 @@ namespace Python.Runtime
         internal static PyThreadState* PyThreadState_Get() => Delegates.PyThreadState_Get();
 
 
+        internal static PyThreadState* PyThreadState_Swap(PyThreadState* threadState) => Delegates.PyThreadState_Swap(threadState);
+
+
         internal static PyThreadState* _PyThreadState_UncheckedGet() => Delegates._PyThreadState_UncheckedGet();
 
 
@@ -1978,6 +1981,7 @@ namespace Python.Runtime
                 Py_EndInterpreter = (delegate* unmanaged[Cdecl]<PyThreadState*, void>)GetFunctionByName(nameof(Py_EndInterpreter), GetUnmanagedDll(_PythonDll));
                 PyThreadState_New = (delegate* unmanaged[Cdecl]<PyInterpreterState*, PyThreadState*>)GetFunctionByName(nameof(PyThreadState_New), GetUnmanagedDll(_PythonDll));
                 PyThreadState_Get = (delegate* unmanaged[Cdecl]<PyThreadState*>)GetFunctionByName(nameof(PyThreadState_Get), GetUnmanagedDll(_PythonDll));
+                PyThreadState_Swap = (delegate* unmanaged[Cdecl]<PyThreadState*, PyThreadState*>)GetFunctionByName(nameof(PyThreadState_Swap), GetUnmanagedDll(_PythonDll));
                 _PyThreadState_UncheckedGet = (delegate* unmanaged[Cdecl]<PyThreadState*>)GetFunctionByName(nameof(_PyThreadState_UncheckedGet), GetUnmanagedDll(_PythonDll));
                 try
                 {
@@ -2264,6 +2268,7 @@ namespace Python.Runtime
             internal static delegate* unmanaged[Cdecl]<PyThreadState*, void> Py_EndInterpreter { get; }
             internal static delegate* unmanaged[Cdecl]<PyInterpreterState*, PyThreadState*> PyThreadState_New { get; }
             internal static delegate* unmanaged[Cdecl]<PyThreadState*> PyThreadState_Get { get; }
+            internal static delegate* unmanaged[Cdecl]<PyThreadState*, PyThreadState*> PyThreadState_Swap { get; }
             internal static delegate* unmanaged[Cdecl]<PyThreadState*> _PyThreadState_UncheckedGet { get; }
             internal static delegate* unmanaged[Cdecl]<int> PyGILState_Check { get; }
             internal static delegate* unmanaged[Cdecl]<PyGILState> PyGILState_Ensure { get; }
