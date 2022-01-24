@@ -390,52 +390,52 @@ namespace Python.Runtime
             Runtime.PyEval_AcquireThread(m_mainThreadState);
 
             // execute
-            using (Py.GIL())
+            try
             {
-                PyModule scope = Py.CreateScope(scopeName);
-                scope.Set("__file__", tempFile ? string.Empty : pythonFile);
-
-                // add default references
-                if (bootstrapScript is string)
-                    scope.Exec(bootstrapScript);
-
-                try
+                using (Py.GIL())
                 {
-                    PyObject codeObj;
-                    if (useCache && _cache.ContainsKey(pythonFile))
+                    using (PyModule scope = Py.CreateScope(scopeName))
                     {
-                        codeObj = _cache[pythonFile];
-                    }
-                    else
-                    {
-                        codeObj = PythonEngine.Compile(
-                            code: File.ReadAllText(pythonFile, encoding: Encoding.UTF8),
-                            filename: pythonFile,
-                            mode: RunFlagType.File
-                            );
-                        // cache the compiled code object
-                        _cache[pythonFile] = codeObj;
-                    }
+                        scope.Set("__file__", tempFile ? string.Empty : pythonFile);
 
-                    scope.Execute(codeObj);
-                }
-                catch (PythonException pyEx)
-                {
-                    throw new Exception(
-                        message: string.Join(
-                            Environment.NewLine,
-                            new string[] { pyEx.Message, pyEx.StackTrace }
-                            ),
-                        innerException: pyEx
-                        );
-                }
-                finally
-                {
-                    scope.Dispose();
+                        // add default references
+                        if (bootstrapScript is string)
+                            scope.Exec(bootstrapScript);
+
+                        PyObject codeObj;
+                        if (useCache && _cache.ContainsKey(pythonFile))
+                        {
+                            codeObj = _cache[pythonFile];
+                        }
+                        else
+                        {
+                            codeObj = PythonEngine.Compile(
+                                code: File.ReadAllText(pythonFile, encoding: Encoding.UTF8),
+                                filename: pythonFile,
+                                mode: RunFlagType.File
+                                );
+                            // cache the compiled code object
+                            _cache[pythonFile] = codeObj;
+                        }
+
+                        scope.Execute(codeObj);
+                    }
                 }
             }
-
-            Runtime.PyEval_ReleaseThread(m_mainThreadState);
+            catch (PythonException pyEx)
+            {
+                throw new Exception(
+                    message: string.Join(
+                        Environment.NewLine,
+                        new string[] { pyEx.Message, pyEx.StackTrace }
+                        ),
+                    innerException: pyEx
+                    );
+            }
+            finally
+            {
+                Runtime.PyEval_ReleaseThread(m_mainThreadState);
+            }
         }
 
         public void ClearCache()
