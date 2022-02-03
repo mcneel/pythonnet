@@ -33,6 +33,7 @@ namespace Python.Runtime
 #endif
             var dllPath = Path.Combine(enigneRoot, pythonLib);
             LibraryLoader.Instance.Load(dllPath);
+            PythonEngine.PythonHome = enigneRoot;
             Log($"Library loader set to: {dllPath}");
 
             Version = version;
