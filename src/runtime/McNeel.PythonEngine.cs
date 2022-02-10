@@ -383,7 +383,7 @@ namespace Python.Runtime
         #region Execution
         private Dictionary<string, PyObject> _cache = new Dictionary<string, PyObject>();
 
-        public void RunScope(string scopeName, string pythonFile, string bootstrapScript = null, bool tempFile = false, bool useCache = true)
+        public void RunScope(string scopeName, string pythonFile, IDictionary<string, object> inputs, IDictionary<string, object> outputs, string bootstrapScript = null, bool tempFile = false, bool useCache = true)
         {
             // TODO: implement and test locals
 
@@ -398,6 +398,15 @@ namespace Python.Runtime
                     using (PyModule scope = Py.CreateScope(scopeName))
                     {
                         scope.Set("__file__", tempFile ? string.Empty : pythonFile);
+
+                        // set inputs and unwrap possible python objects
+                        foreach (var pair in inputs)
+                        {
+                            if (pair.Value is PythonObject pythonObject)
+                                scope.Set(pair.Key, pythonObject.PyObject);
+                            else
+                                scope.Set(pair.Key, pair.Value);
+                        }
 
                         // add default references
                         if (bootstrapScript is string)
@@ -420,6 +429,18 @@ namespace Python.Runtime
                         }
 
                         scope.Execute(codeObj);
+
+                        // set outputs and wrap possible python objects
+                        foreach (var pair in outputs)
+                            if (scope.TryGet(pair.Key, out object outputValue))
+                            {
+                                if (outputValue is PyObject pyObj)
+                                    outputs[pair.Key] = new PythonObject(pyObj);
+                                else
+                                    outputs[pair.Key] = outputValue;
+                            }
+                            else
+                                outputs[pair.Key] = null;
                     }
                 }
             }
@@ -506,6 +527,21 @@ namespace Python.Runtime
         {
             _stdout?.Write(buffer, offset, count);
         }
+    }
+
+    public class PythonObject
+    {
+        internal PyObject PyObject { get; }
+
+        readonly string _repr;
+
+        public PythonObject(PyObject pyObj)
+        {
+            PyObject = pyObj;
+            _repr = pyObj.ToString();
+        }
+
+        public override string ToString() => _repr;
     }
 }
 #pragma warning restore
