@@ -432,7 +432,7 @@ namespace Python.Runtime
                         scope.Execute(codeObj);
 
                         // set outputs and wrap possible python objects
-                        foreach (var pair in outputs)
+                        foreach (var pair in new Dictionary<string, object>(outputs))
                             if (scope.TryGet(pair.Key, out object outputValue))
                             {
                                 if (outputValue is PyObject pyObj)
