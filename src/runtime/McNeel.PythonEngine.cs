@@ -5,6 +5,7 @@ using System.Text;
 using System.Diagnostics;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Dynamic;
 
 using Python.Runtime.Platform;
 using Python.Runtime.Native;
@@ -529,7 +530,7 @@ namespace Python.Runtime
         }
     }
 
-    public class PythonObject
+    public class PythonObject : DynamicObject
     {
         internal PyObject PyObject { get; }
 
