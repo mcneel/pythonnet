@@ -384,7 +384,16 @@ namespace Python.Runtime
         #region Execution
         private Dictionary<string, PyObject> _cache = new Dictionary<string, PyObject>();
 
-        public void RunScope(string scopeName, string pythonFile, IDictionary<string, object> inputs, IDictionary<string, object> outputs, string bootstrapScript = null, bool tempFile = false, bool useCache = true)
+        public void RunScope(
+            string codeId,
+            string scopeName,
+            string pythonCode,
+            string pythonFile,
+            IDictionary<string, object> inputs,
+            IDictionary<string, object> outputs,
+            string bootstrapScript = null,
+            bool useCache = true
+        )
         {
             // TODO: implement and test locals
 
@@ -398,7 +407,7 @@ namespace Python.Runtime
                 {
                     using (PyModule scope = Py.CreateScope(scopeName))
                     {
-                        scope.Set("__file__", tempFile ? string.Empty : pythonFile);
+                        scope.Set("__file__", pythonFile ?? string.Empty);
 
                         // set inputs and unwrap possible python objects
                         foreach (var pair in inputs)
@@ -414,19 +423,19 @@ namespace Python.Runtime
                             scope.Exec(bootstrapScript);
 
                         PyObject codeObj;
-                        if (useCache && _cache.ContainsKey(pythonFile))
+                        if (useCache && _cache.ContainsKey(codeId))
                         {
-                            codeObj = _cache[pythonFile];
+                            codeObj = _cache[codeId];
                         }
                         else
                         {
                             codeObj = PythonEngine.Compile(
-                                code: File.ReadAllText(pythonFile, encoding: Encoding.UTF8),
-                                filename: pythonFile,
+                                code: pythonCode,
+                                filename: pythonFile ?? string.Empty,
                                 mode: RunFlagType.File
                                 );
                             // cache the compiled code object
-                            _cache[pythonFile] = codeObj;
+                            _cache[codeId] = codeObj;
                         }
 
                         scope.Execute(codeObj);
