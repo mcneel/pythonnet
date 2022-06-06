@@ -9,6 +9,7 @@ using System.Dynamic;
 
 using Python.Runtime.Platform;
 using Python.Runtime.Native;
+using System.Collections;
 
 #pragma warning disable
 namespace Python.Runtime
@@ -443,15 +444,7 @@ namespace Python.Runtime
                         // set outputs and wrap possible python objects
                         foreach (var pair in new Dictionary<string, object>(outputs))
                             if (scope.TryGet(pair.Key, out object outputValue))
-                            {
-                                if (outputValue is PyObject pyObj)
-                                    if (pyObj.AsManagedObject(typeof(object)) is object managedObj)
-                                        outputs[pair.Key] = managedObj;
-                                    else
-                                        outputs[pair.Key] = new PythonObject(pyObj);
-                                else
-                                    outputs[pair.Key] = outputValue;
-                            }
+                                outputs[pair.Key] = PythonObject.MarshallOutput(outputValue);
                             else
                                 outputs[pair.Key] = null;
                     }
@@ -544,6 +537,26 @@ namespace Python.Runtime
 
     public class PythonObject : DynamicObject
     {
+        public static object MarshallOutput(object value)
+        {
+            if (value is IEnumerable<object> enumerable)
+            {
+                var res = new List<object>();
+                foreach (object item in enumerable)
+                    res.Add(MarshallOutputValue(item));
+                return res;
+            }
+
+            return MarshallOutputValue(value);
+        }
+
+        static object MarshallOutputValue(object value)
+        {
+            if (value is PyObject pyObj)
+                return new PythonObject(pyObj);
+            return value;
+        }
+
         internal PyObject PyObject { get; }
 
         readonly string _repr;
