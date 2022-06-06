@@ -445,7 +445,10 @@ namespace Python.Runtime
                             if (scope.TryGet(pair.Key, out object outputValue))
                             {
                                 if (outputValue is PyObject pyObj)
-                                    outputs[pair.Key] = new PythonObject(pyObj);
+                                    if (pyObj.AsManagedObject(typeof(object)) is object managedObj)
+                                        outputs[pair.Key] = managedObj;
+                                    else
+                                        outputs[pair.Key] = new PythonObject(pyObj);
                                 else
                                     outputs[pair.Key] = outputValue;
                             }
