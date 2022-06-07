@@ -383,23 +383,22 @@ namespace Python.Runtime
         #endregion
 
         #region Execution
-        private Dictionary<string, PyObject> _cache = new Dictionary<string, PyObject>();
-
-        public void RunScope(
+        public object RunScope(
             string codeId,
             string scopeName,
             string pythonCode,
             string pythonFile,
             IDictionary<string, object> inputs,
             IDictionary<string, object> outputs,
-            string bootstrapScript = null,
-            bool useCache = true
+            string bootstrapScript = null
         )
         {
             // TODO: implement and test locals
 
             // ensure main interp
             Runtime.PyEval_AcquireThread(m_mainThreadState);
+
+            PyObject codeObj = default;
 
             // execute
             try
@@ -423,21 +422,11 @@ namespace Python.Runtime
                         if (bootstrapScript is string)
                             scope.Exec(bootstrapScript);
 
-                        PyObject codeObj;
-                        if (useCache && _cache.ContainsKey(codeId))
-                        {
-                            codeObj = _cache[codeId];
-                        }
-                        else
-                        {
-                            codeObj = PythonEngine.Compile(
-                                code: pythonCode,
-                                filename: pythonFile ?? string.Empty,
-                                mode: RunFlagType.File
-                                );
-                            // cache the compiled code object
-                            _cache[codeId] = codeObj;
-                        }
+                        codeObj = PythonEngine.Compile(
+                            code: pythonCode,
+                            filename: pythonFile ?? string.Empty,
+                            mode: RunFlagType.File
+                            );
 
                         scope.Execute(codeObj);
 
@@ -464,13 +453,66 @@ namespace Python.Runtime
             {
                 Runtime.PyEval_ReleaseThread(m_mainThreadState);
             }
+
+            return codeObj;
         }
 
-        public void ClearCache()
+        public void RunScope(
+            object codeObj,
+            string scopeName,
+            string pythonFile,
+            IDictionary<string, object> inputs,
+            IDictionary<string, object> outputs
+        )
         {
-            foreach (PyObject codeObj in _cache.Values)
-                codeObj.Dispose();
-            _cache.Clear();
+            // TODO: implement and test locals
+
+            // ensure main interp
+            Runtime.PyEval_AcquireThread(m_mainThreadState);
+
+            // execute
+            try
+            {
+                using (Py.GIL())
+                {
+                    using (PyModule scope = Py.CreateScope(scopeName))
+                    {
+                        scope.Set("__file__", pythonFile ?? string.Empty);
+
+                        // set inputs and unwrap possible python objects
+                        foreach (var pair in inputs)
+                        {
+                            if (pair.Value is PythonObject pythonObject)
+                                scope.Set(pair.Key, pythonObject.PyObject);
+                            else
+                                scope.Set(pair.Key, pair.Value);
+                        }
+
+                        scope.Execute(codeObj as PyObject);
+
+                        // set outputs and wrap possible python objects
+                        foreach (var pair in new Dictionary<string, object>(outputs))
+                            if (scope.TryGet(pair.Key, out object outputValue))
+                                outputs[pair.Key] = PythonObject.MarshallOutput(outputValue);
+                            else
+                                outputs[pair.Key] = null;
+                    }
+                }
+            }
+            catch (PythonException pyEx)
+            {
+                throw new Exception(
+                    message: string.Join(
+                        Environment.NewLine,
+                        new string[] { pyEx.Message, pyEx.StackTrace }
+                        ),
+                    innerException: pyEx
+                    );
+            }
+            finally
+            {
+                Runtime.PyEval_ReleaseThread(m_mainThreadState);
+            }
         }
         #endregion
     }
