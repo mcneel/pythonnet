@@ -514,6 +514,57 @@ namespace Python.Runtime
                 Runtime.PyEval_ReleaseThread(m_mainThreadState);
             }
         }
+
+
+        public object CompileScope(
+            string codeId,
+            string scopeName,
+            string pythonCode,
+            string pythonFile
+        )
+        {
+            // TODO: implement and test locals
+
+            // ensure main interp
+            Runtime.PyEval_AcquireThread(m_mainThreadState);
+
+            PyObject codeObj = default;
+
+            // execute
+            try
+            {
+                using (Py.GIL())
+                {
+                    using (PyModule scope = Py.CreateScope(scopeName))
+                    {
+                        scope.Set("__file__", pythonFile ?? string.Empty);
+
+                        codeObj = PythonEngine.Compile(
+                            code: pythonCode,
+                            filename: pythonFile ?? string.Empty,
+                            mode: RunFlagType.File
+                            );
+                    }
+                }
+            }
+            catch (PythonException pyEx)
+            {
+                throw new Exception(
+                    message: string.Join(
+                        Environment.NewLine,
+                        new string[] { pyEx.Message, pyEx.StackTrace }
+                        ),
+                    innerException: pyEx
+                    );
+            }
+            finally
+            {
+                Runtime.PyEval_ReleaseThread(m_mainThreadState);
+            }
+
+            return codeObj;
+        }
+
         #endregion
     }
 
