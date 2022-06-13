@@ -5,9 +5,11 @@ using System.Text;
 using System.Diagnostics;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Dynamic;
 
 using Python.Runtime.Platform;
 using Python.Runtime.Native;
+using System.Collections;
 
 #pragma warning disable
 namespace Python.Runtime
@@ -381,9 +383,87 @@ namespace Python.Runtime
         #endregion
 
         #region Execution
-        private Dictionary<string, PyObject> _cache = new Dictionary<string, PyObject>();
+        public object RunScope(
+            string codeId,
+            string scopeName,
+            string pythonCode,
+            string pythonFile,
+            IDictionary<string, object> inputs,
+            IDictionary<string, object> outputs,
+            string bootstrapScript = null
+        )
+        {
+            // TODO: implement and test locals
 
-        public void RunScope(string scopeName, string pythonFile, string bootstrapScript = null, bool tempFile = false, bool useCache = true)
+            // ensure main interp
+            Runtime.PyEval_AcquireThread(m_mainThreadState);
+
+            PyObject codeObj = default;
+
+            // execute
+            try
+            {
+                using (Py.GIL())
+                {
+                    using (PyModule scope = Py.CreateScope(scopeName))
+                    {
+                        scope.Set("__file__", pythonFile ?? string.Empty);
+
+                        // set inputs and unwrap possible python objects
+                        foreach (var pair in inputs)
+                        {
+                            if (pair.Value is PythonObject pythonObject)
+                                scope.Set(pair.Key, pythonObject.PyObject);
+                            else
+                                scope.Set(pair.Key, pair.Value);
+                        }
+
+                        // add default references
+                        if (bootstrapScript is string)
+                            scope.Exec(bootstrapScript);
+
+                        codeObj = PythonEngine.Compile(
+                            code: pythonCode,
+                            filename: pythonFile ?? string.Empty,
+                            mode: RunFlagType.File
+                            );
+
+                        scope.Execute(codeObj);
+
+                        // set outputs and wrap possible python objects
+                        foreach (var pair in new Dictionary<string, object>(outputs))
+                            if (scope.TryGet(pair.Key, out object outputValue))
+                                outputs[pair.Key] = PythonObject.MarshallOutput(outputValue);
+                            else
+                                outputs[pair.Key] = null;
+                    }
+                }
+            }
+            catch (PythonException pyEx)
+            {
+                throw new Exception(
+                    message: string.Join(
+                        Environment.NewLine,
+                        new string[] { pyEx.Message, pyEx.StackTrace }
+                        ),
+                    innerException: pyEx
+                    );
+            }
+            finally
+            {
+                Runtime.PyEval_ReleaseThread(m_mainThreadState);
+            }
+
+            return codeObj;
+        }
+
+        public void RunScope(
+            object codeObj,
+            string scopeName,
+            string pythonFile,
+            IDictionary<string, object> inputs,
+            IDictionary<string, object> outputs
+        )
         {
             // TODO: implement and test locals
 
@@ -397,29 +477,25 @@ namespace Python.Runtime
                 {
                     using (PyModule scope = Py.CreateScope(scopeName))
                     {
-                        scope.Set("__file__", tempFile ? string.Empty : pythonFile);
+                        scope.Set("__file__", pythonFile ?? string.Empty);
 
-                        // add default references
-                        if (bootstrapScript is string)
-                            scope.Exec(bootstrapScript);
-
-                        PyObject codeObj;
-                        if (useCache && _cache.ContainsKey(pythonFile))
+                        // set inputs and unwrap possible python objects
+                        foreach (var pair in inputs)
                         {
-                            codeObj = _cache[pythonFile];
-                        }
-                        else
-                        {
-                            codeObj = PythonEngine.Compile(
-                                code: File.ReadAllText(pythonFile, encoding: Encoding.UTF8),
-                                filename: pythonFile,
-                                mode: RunFlagType.File
-                                );
-                            // cache the compiled code object
-                            _cache[pythonFile] = codeObj;
+                            if (pair.Value is PythonObject pythonObject)
+                                scope.Set(pair.Key, pythonObject.PyObject);
+                            else
+                                scope.Set(pair.Key, pair.Value);
                         }
 
-                        scope.Execute(codeObj);
+                        scope.Execute(codeObj as PyObject);
+
+                        // set outputs and wrap possible python objects
+                        foreach (var pair in new Dictionary<string, object>(outputs))
+                            if (scope.TryGet(pair.Key, out object outputValue))
+                                outputs[pair.Key] = PythonObject.MarshallOutput(outputValue);
+                            else
+                                outputs[pair.Key] = null;
                     }
                 }
             }
@@ -439,12 +515,56 @@ namespace Python.Runtime
             }
         }
 
-        public void ClearCache()
+
+        public object CompileScope(
+            string codeId,
+            string scopeName,
+            string pythonCode,
+            string pythonFile
+        )
         {
-            foreach (PyObject codeObj in _cache.Values)
-                codeObj.Dispose();
-            _cache.Clear();
+            // TODO: implement and test locals
+
+            // ensure main interp
+            Runtime.PyEval_AcquireThread(m_mainThreadState);
+
+            PyObject codeObj = default;
+
+            // execute
+            try
+            {
+                using (Py.GIL())
+                {
+                    using (PyModule scope = Py.CreateScope(scopeName))
+                    {
+                        scope.Set("__file__", pythonFile ?? string.Empty);
+
+                        codeObj = PythonEngine.Compile(
+                            code: pythonCode,
+                            filename: pythonFile ?? string.Empty,
+                            mode: RunFlagType.File
+                            );
+                    }
+                }
+            }
+            catch (PythonException pyEx)
+            {
+                throw new Exception(
+                    message: string.Join(
+                        Environment.NewLine,
+                        new string[] { pyEx.Message, pyEx.StackTrace }
+                        ),
+                    innerException: pyEx
+                    );
+            }
+            finally
+            {
+                Runtime.PyEval_ReleaseThread(m_mainThreadState);
+            }
+
+            return codeObj;
         }
+
         #endregion
     }
 
@@ -506,6 +626,41 @@ namespace Python.Runtime
         {
             _stdout?.Write(buffer, offset, count);
         }
+    }
+
+    public class PythonObject : DynamicObject
+    {
+        public static object MarshallOutput(object value)
+        {
+            if (value is IEnumerable<object> enumerable)
+            {
+                var res = new List<object>();
+                foreach (object item in enumerable)
+                    res.Add(MarshallOutputValue(item));
+                return res;
+            }
+
+            return MarshallOutputValue(value);
+        }
+
+        static object MarshallOutputValue(object value)
+        {
+            if (value is PyObject pyObj)
+                return new PythonObject(pyObj);
+            return value;
+        }
+
+        internal PyObject PyObject { get; }
+
+        readonly string _repr;
+
+        public PythonObject(PyObject pyObj)
+        {
+            PyObject = pyObj;
+            _repr = pyObj.ToString();
+        }
+
+        public override string ToString() => _repr;
     }
 }
 #pragma warning restore
