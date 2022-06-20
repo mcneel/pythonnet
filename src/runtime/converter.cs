@@ -358,6 +358,14 @@ namespace Python.Runtime
                 return ToArray(value, obType, out result, setError);
             }
 
+            if (obType.GetInterface(nameof(IEnumerable)) != null
+                    && obType.GenericTypeArguments.Length == 1
+                    && obType.GenericTypeArguments[0] is Type elementType)
+            {
+                var arrayType = Array.CreateInstance(elementType, 0).GetType();
+                return ToArray(value, arrayType, out result, setError);
+            }
+
             // Conversion to 'Object' is done based on some reasonable default
             // conversions (Python string -> managed string).
             if (obType == objectType)
