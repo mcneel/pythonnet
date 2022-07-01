@@ -67,7 +67,7 @@ namespace Python.Runtime
         public static int MainManagedThreadId { get; private set; }
 
         public static ShutdownMode ShutdownMode { get; internal set; }
-        private static readonly List<PyObject> _pyRefs = new ();
+        private static readonly List<PyObject> _pyRefs = new();
 
         internal static Version PyVersion
         {
@@ -657,7 +657,7 @@ namespace Python.Runtime
                 if (mt is ClassBase)
                 {
                     MaybeType _type = ((ClassBase)mt).type;
-                    t = _type.Valid ?  _type.Value : null;
+                    t = _type.Valid ? _type.Value : null;
                 }
                 else if (mt is CLRObject)
                 {
@@ -835,6 +835,9 @@ namespace Python.Runtime
 
 
         internal static PyThreadState* PyThreadState_Swap(PyThreadState* threadState) => Delegates.PyThreadState_Swap(threadState);
+
+
+        internal static int PyFrame_GetLineNumber(IntPtr frame) => Delegates.PyFrame_GetLineNumber(frame);
 
 
         internal static PyThreadState* _PyThreadState_UncheckedGet() => Delegates._PyThreadState_UncheckedGet();
@@ -1411,7 +1414,7 @@ namespace Python.Runtime
 
         internal static NewReference PyString_FromString(string value)
         {
-            fixed(char* ptr = value)
+            fixed (char* ptr = value)
                 return Delegates.PyUnicode_DecodeUTF16(
                     (IntPtr)ptr,
                     value.Length * sizeof(Char),
@@ -1905,7 +1908,7 @@ namespace Python.Runtime
         internal static nint PyGC_Collect() => Delegates.PyGC_Collect();
         internal static void Py_CLEAR(BorrowedReference ob, int offset) => ReplaceReference(ob, offset, default);
         internal static void Py_CLEAR<T>(ref T? ob)
-            where T: PyObject
+            where T : PyObject
         {
             ob?.Dispose();
             ob = null;
@@ -1982,6 +1985,7 @@ namespace Python.Runtime
                 PyThreadState_New = (delegate* unmanaged[Cdecl]<PyInterpreterState*, PyThreadState*>)GetFunctionByName(nameof(PyThreadState_New), GetUnmanagedDll(_PythonDll));
                 PyThreadState_Get = (delegate* unmanaged[Cdecl]<PyThreadState*>)GetFunctionByName(nameof(PyThreadState_Get), GetUnmanagedDll(_PythonDll));
                 PyThreadState_Swap = (delegate* unmanaged[Cdecl]<PyThreadState*, PyThreadState*>)GetFunctionByName(nameof(PyThreadState_Swap), GetUnmanagedDll(_PythonDll));
+                PyFrame_GetLineNumber = (delegate* unmanaged[Cdecl]<IntPtr, int>)GetFunctionByName(nameof(PyFrame_GetLineNumber), GetUnmanagedDll(_PythonDll));
                 _PyThreadState_UncheckedGet = (delegate* unmanaged[Cdecl]<PyThreadState*>)GetFunctionByName(nameof(_PyThreadState_UncheckedGet), GetUnmanagedDll(_PythonDll));
                 try
                 {
@@ -2162,7 +2166,8 @@ namespace Python.Runtime
                 try
                 {
                     PyIter_Check = (delegate* unmanaged[Cdecl]<BorrowedReference, int>)GetFunctionByName(nameof(PyIter_Check), GetUnmanagedDll(_PythonDll));
-                } catch (MissingMethodException) { }
+                }
+                catch (MissingMethodException) { }
                 PyIter_Next = (delegate* unmanaged[Cdecl]<BorrowedReference, NewReference>)GetFunctionByName(nameof(PyIter_Next), GetUnmanagedDll(_PythonDll));
                 PyModule_New = (delegate* unmanaged[Cdecl]<StrPtr, NewReference>)GetFunctionByName(nameof(PyModule_New), GetUnmanagedDll(_PythonDll));
                 PyModule_GetDict = (delegate* unmanaged[Cdecl]<BorrowedReference, BorrowedReference>)GetFunctionByName(nameof(PyModule_GetDict), GetUnmanagedDll(_PythonDll));
@@ -2188,7 +2193,8 @@ namespace Python.Runtime
                 try
                 {
                     PyObject_GC_IsTracked = (delegate* unmanaged[Cdecl]<BorrowedReference, int>)GetFunctionByName(nameof(PyObject_GC_IsTracked), GetUnmanagedDll(_PythonDll));
-                } catch (MissingMethodException) { }
+                }
+                catch (MissingMethodException) { }
                 PyObject_GC_Track = (delegate* unmanaged[Cdecl]<BorrowedReference, void>)GetFunctionByName(nameof(PyObject_GC_Track), GetUnmanagedDll(_PythonDll));
                 PyObject_GC_UnTrack = (delegate* unmanaged[Cdecl]<BorrowedReference, void>)GetFunctionByName(nameof(PyObject_GC_UnTrack), GetUnmanagedDll(_PythonDll));
                 _PyObject_Dump = (delegate* unmanaged[Cdecl]<BorrowedReference, void>)GetFunctionByName(nameof(_PyObject_Dump), GetUnmanagedDll(_PythonDll));
@@ -2269,6 +2275,7 @@ namespace Python.Runtime
             internal static delegate* unmanaged[Cdecl]<PyInterpreterState*, PyThreadState*> PyThreadState_New { get; }
             internal static delegate* unmanaged[Cdecl]<PyThreadState*> PyThreadState_Get { get; }
             internal static delegate* unmanaged[Cdecl]<PyThreadState*, PyThreadState*> PyThreadState_Swap { get; }
+            internal static delegate* unmanaged[Cdecl]<IntPtr, int> PyFrame_GetLineNumber { get; }
             internal static delegate* unmanaged[Cdecl]<PyThreadState*> _PyThreadState_UncheckedGet { get; }
             internal static delegate* unmanaged[Cdecl]<int> PyGILState_Check { get; }
             internal static delegate* unmanaged[Cdecl]<PyGILState> PyGILState_Ensure { get; }

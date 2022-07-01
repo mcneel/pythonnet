@@ -305,6 +305,8 @@ namespace Python.Runtime
         #endregion
 
         #region Execution
+        public int GetLineNumber(object frame) => Runtime.PyFrame_GetLineNumber(((PyObject)frame).Handle);
+
         public object RunScope(
             string codeId,
             string scopeName,
