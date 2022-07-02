@@ -244,45 +244,6 @@ namespace Python.Runtime
         }
         #endregion
 
-        #region Debugging
-        public static int TraceFunc(object frame, object evnt, object arg)
-        {
-            return 0;
-            // if trace function of debug controls is connected,
-            // collect frame info and send to the trace function
-            //RhinoApp.WriteLine($"{frame}");
-            //if (_traceFunc != null) {
-            //    var mockExecFrame = new ExecutionFrame {
-            //        ThreadId = 0,
-            //        SourceFilePath = "",
-            //        LineNumber = 0,
-            //        Globals = new Dictionary<string, object>() {
-            //            { "meaning_of_universe", 42 }
-            //        },
-            //        Locals = new Dictionary<string, object>() {
-            //            { "local_var1", "some value " },
-            //            { "local_var2", 37 },
-            //            { "local_var3", 545.56}
-            //        }
-            //    };
-            //    _traceFunc(ExecutionEvent.Line, mockExecFrame);
-            //}
-        }
-
-        public void SetTrace()
-        {
-            //PyObject sys = PythonEngine.ImportModule("sys");
-            //var traceFuncMethod = new MethodWrapper(GetType(), "TraceFunc");
-            //sys.InvokeMethod("settrace", new PyObject(traceFuncMethod.ptr));
-        }
-
-        public void ClearTrace()
-        {
-            //PyObject sys = PythonEngine.ImportModule("sys");
-            //sys.InvokeMethod("settrace", PyObject.FromManagedObject(null));
-        }
-        #endregion
-
         #region Standard IO
         public void SetStdIO(Stream stdin, Stream stdout)
         {
