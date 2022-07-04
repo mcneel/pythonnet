@@ -21,8 +21,6 @@ namespace Python.Runtime
         public Version Version { get; private set; }
 
         #region Initialization
-        PyThreadState* m_mainThreadState = default;
-
         public RhinoCodePythonEngine(string enigneRoot, Version version)
         {
             Log($"CPython engine path: {enigneRoot}");
@@ -49,85 +47,9 @@ namespace Python.Runtime
             Log($"Setup default search paths");
         }
 
-        public void Initialize()
-        {
-            PythonEngine.Initialize();
-            // release GIL and save current thread state
-            // equals PythonEngine.BeginAllowThreads()
-            m_mainThreadState = Runtime.PyEval_SaveThread();
-        }
+        public void Initialize() => PythonEngine.Initialize();
 
-        public void ShutDown()
-        {
-            // equals PythonEngine.EndAllowThreads();
-            Runtime.PyEval_RestoreThread(m_mainThreadState);
-            PythonEngine.Shutdown();
-            m_mainThreadState = default;
-        }
-        #endregion
-
-        #region Interpreters
-        public class PythonInterpreter : IDisposable
-        {
-            public PythonInterpreter()
-            {
-            }
-
-            public void RunScope(string scopeName, string pythonFile, Stream stdout, Stream stderr)
-            {
-                using (Py.GIL())
-                {
-                    // save the thread state of this thread on main interp
-                    PyThreadState* m_threadState = Runtime.PyThreadState_Get();
-
-                    // create a new interp and thread state
-                    PyThreadState* m_interpState = Runtime.Py_NewInterpreter();
-
-                    // configure stdio
-                    using var sys = Runtime.PyImport_ImportModule("sys");
-                    using (PyObject sysObj = sys.MoveToPyObject())
-                    {
-                        if (stdout is Stream)
-                        {
-                            using var stdoutObj = PyObject.FromManagedObject(stdout);
-                            sysObj.SetAttr("stdout", stdoutObj);
-                        }
-
-                        if (stdout is Stream)
-                        {
-                            using var stderrObj = PyObject.FromManagedObject(stderr);
-                            sysObj.SetAttr("stderr", stderrObj);
-                        }
-                    }
-
-                    // execute
-                    using PyModule scope = Py.CreateScope(scopeName);
-                    scope.Set("__file__", pythonFile);
-
-                    PyObject codeObj = PythonEngine.Compile(
-                        code: File.ReadAllText(pythonFile, encoding: Encoding.UTF8),
-                        filename: pythonFile,
-                        mode: RunFlagType.File
-                        );
-
-                    scope.Execute(codeObj);
-
-                    if (!Runtime.PyErr_Occurred().IsNull)
-                        Debug.WriteLine($"subinterp: {PythonException.FetchCurrentRaw().Message}");
-
-                    // end interp
-                    Runtime.Py_EndInterpreter(m_interpState);
-                    // restore main interp thread
-                    Runtime.PyThreadState_Swap(m_threadState);
-                }
-            }
-
-            public void Dispose()
-            {
-            }
-        }
-
-        public PythonInterpreter NewInterpreter() => new PythonInterpreter();
+        public void ShutDown() => PythonEngine.Shutdown();
         #endregion
 
         #region Search Paths
@@ -395,9 +317,6 @@ namespace Python.Runtime
         {
             // TODO: implement and test locals
 
-            // ensure main interp
-            Runtime.PyEval_AcquireThread(m_mainThreadState);
-
             PyObject codeObj = default;
 
             // execute
@@ -449,10 +368,6 @@ namespace Python.Runtime
                     innerException: pyEx
                     );
             }
-            finally
-            {
-                Runtime.PyEval_ReleaseThread(m_mainThreadState);
-            }
 
             return codeObj;
         }
@@ -466,9 +381,6 @@ namespace Python.Runtime
         )
         {
             // TODO: implement and test locals
-
-            // ensure main interp
-            Runtime.PyEval_AcquireThread(m_mainThreadState);
 
             // execute
             try
@@ -509,10 +421,6 @@ namespace Python.Runtime
                     innerException: pyEx
                     );
             }
-            finally
-            {
-                Runtime.PyEval_ReleaseThread(m_mainThreadState);
-            }
         }
 
 
@@ -524,9 +432,6 @@ namespace Python.Runtime
         )
         {
             // TODO: implement and test locals
-
-            // ensure main interp
-            Runtime.PyEval_AcquireThread(m_mainThreadState);
 
             PyObject codeObj = default;
 
@@ -556,10 +461,6 @@ namespace Python.Runtime
                         ),
                     innerException: pyEx
                     );
-            }
-            finally
-            {
-                Runtime.PyEval_ReleaseThread(m_mainThreadState);
             }
 
             return codeObj;
