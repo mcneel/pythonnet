@@ -8,8 +8,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.Dynamic;
 
 using Python.Runtime.Platform;
-using Python.Runtime.Native;
-using System.Collections;
 
 #pragma warning disable
 namespace Python.Runtime
@@ -344,7 +342,9 @@ namespace Python.Runtime
             string scopeName,
             string pythonFile,
             IDictionary<string, object> inputs,
-            IDictionary<string, object> outputs
+            IDictionary<string, object> outputs,
+            string beforeScript = null,
+            string afterScript = null
         )
         {
             // TODO: implement and test locals
@@ -367,7 +367,14 @@ namespace Python.Runtime
                                 scope.Set(pair.Key, pair.Value);
                         }
 
+                        // add default references
+                        if (beforeScript is string)
+                            scope.Exec(beforeScript);
+
                         scope.Execute(codeObj as PyObject);
+
+                        if (afterScript is string)
+                            scope.Exec(afterScript);
 
                         // set outputs and wrap possible python objects
                         foreach (var pair in new Dictionary<string, object>(outputs))
