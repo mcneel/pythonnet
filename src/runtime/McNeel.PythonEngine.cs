@@ -312,7 +312,8 @@ namespace Python.Runtime
             string pythonFile,
             IDictionary<string, object> inputs,
             IDictionary<string, object> outputs,
-            string bootstrapScript = null
+            string beforeScript = null,
+            string afterScript = null
         )
         {
             // TODO: implement and test locals
@@ -338,8 +339,8 @@ namespace Python.Runtime
                         }
 
                         // add default references
-                        if (bootstrapScript is string)
-                            scope.Exec(bootstrapScript);
+                        if (beforeScript is string)
+                            scope.Exec(beforeScript);
 
                         codeObj = PythonEngine.Compile(
                             code: pythonCode,
@@ -348,6 +349,9 @@ namespace Python.Runtime
                             );
 
                         scope.Execute(codeObj);
+
+                        if (afterScript is string)
+                            scope.Exec(afterScript);
 
                         // set outputs and wrap possible python objects
                         foreach (var pair in new Dictionary<string, object>(outputs))
