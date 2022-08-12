@@ -451,26 +451,9 @@ namespace Python.Runtime
 
         public RhinoCodePythonEngineIO(Stream stdin, Stream stdout) { _stdin = stdin; _stdout = stdout; }
 
-        public Encoding OutputEncoding { get; set; } = Encoding.UTF8;
-
-        public override bool CanRead => true;
-        public override bool CanWrite => true;
-        public override bool CanSeek => false;
-        public override long Length => throw new NotImplementedException();
-        public override long Position { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotImplementedException();
-        public override void SetLength(long value) => throw new NotImplementedException();
-        public override void Flush() { }
-
-        public bool isatty()
-        {
-            return false;
-        }
-
-        public void flush()
-        {
-            Flush();
-        }
+        #region Python stream
+        public bool isatty() => false;
+        public void flush() => Flush();
 
         // python read method
         public string read(int size = -1) => readline(size);
@@ -491,16 +474,22 @@ namespace Python.Runtime
             var buffer = OutputEncoding.GetBytes(content);
             Write(buffer, 0, buffer.Length);
         }
+        #endregion
 
-        public override int Read(byte[] buffer, int offset, int count)
-        {
-            return _stdin != null ? _stdin.Read(buffer, offset, count) : 0;
-        }
+        #region Stream
+        public Encoding OutputEncoding { get; set; } = Encoding.UTF8;
 
-        public override void Write(byte[] buffer, int offset, int count)
-        {
-            _stdout?.Write(buffer, offset, count);
-        }
+        public override bool CanRead => true;
+        public override bool CanWrite => true;
+        public override bool CanSeek => false;
+        public override long Length => _stdout?.Length ?? 0;
+        public override long Position { get => _stdout?.Position ?? 0; set { if (_stdout is null) return; _stdout.Position = value; } }
+        public override long Seek(long offset, SeekOrigin origin) => _stdout?.Seek(offset, origin) ?? 0;
+        public override void SetLength(long value) => _stdout.SetLength(value);
+        public override int Read(byte[] buffer, int offset, int count) => _stdin?.Read(buffer, offset, count) ?? 0;
+        public override void Write(byte[] buffer, int offset, int count) => _stdout?.Write(buffer, offset, count);
+        public override void Flush() => _stdout?.Flush();
+        #endregion
     }
 
     public class PythonObject : DynamicObject
