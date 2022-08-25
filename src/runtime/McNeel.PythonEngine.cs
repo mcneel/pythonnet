@@ -53,8 +53,8 @@ namespace Python.Runtime
 
         public void ShutDown()
         {
-            PythonEngine.Shutdown();
             EndThreads();
+            PythonEngine.Shutdown();
         }
 
         IntPtr _main = IntPtr.Zero;
