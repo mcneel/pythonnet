@@ -37,15 +37,15 @@ namespace Python.Runtime
             Version = version;
 
             // start cpython runtime
-            Initialize();
+            Start();
             Log($"Initialized python engine");
 
             // store the default search paths for resetting the engine later
-            StoreSearchPaths();
+            StoreSysPaths();
             Log($"Setup default search paths");
         }
 
-        public void Initialize()
+        public void Start()
         {
             PythonEngine.Initialize();
             BeginThreads();
@@ -71,12 +71,12 @@ namespace Python.Runtime
         #endregion
 
         #region Search Paths
-        string[] _sysPaths = default;
+        string[] _defaultSysPaths = default;
 
-        public void SetSearchPaths(IEnumerable<string> searchPaths)
+        public void SetSearchPaths(IEnumerable<string> paths)
         {
             // set sys paths
-            PyList sysPaths = RestoreSearchPaths();
+            PyList sysPaths = RestoreSysPaths();
             using (Py.GIL())
             {
                 // manually add PYTHONPATH since we are overwriting the sys paths
@@ -88,20 +88,20 @@ namespace Python.Runtime
                 }
 
                 // now add the search paths for the script bundle
-                foreach (string searchPath in searchPaths.Reverse<string>())
+                foreach (string path in paths.Reverse<string>())
                 {
-                    if (searchPath != null && searchPath != string.Empty)
+                    if (path != null && path != string.Empty)
                     {
-                        using var searthPathStr = new PyString(searchPath);
+                        using var searthPathStr = new PyString(path);
                         sysPaths.Insert(0, searthPathStr);
                     }
                 }
             }
         }
 
-        public void ClearSearchPaths() => RestoreSearchPaths();
+        public void ClearSearchPaths() => RestoreSysPaths();
 
-        private void StoreSearchPaths()
+        void StoreSysPaths()
         {
             using (Py.GIL())
             {
@@ -116,17 +116,17 @@ namespace Python.Runtime
                     string path = Runtime.GetManagedString(item);
                     sysPaths.Add(path);
                 }
-                _sysPaths = sysPaths.ToArray();
+                _defaultSysPaths = sysPaths.ToArray();
             }
         }
 
-        private PyList RestoreSearchPaths()
+        PyList RestoreSysPaths()
         {
             using (Py.GIL())
             {
                 var newList = new PyList();
                 int i = 0;
-                foreach (var searchPath in _sysPaths ?? new string[] { })
+                foreach (var searchPath in _defaultSysPaths ?? new string[] { })
                 {
                     using var searthPathStr = new PyString(searchPath);
                     newList.Insert(i, searthPathStr);
@@ -137,7 +137,7 @@ namespace Python.Runtime
             }
         }
 
-        private PyList GetSysPaths()
+        PyList GetSysPaths()
         {
             using (Py.GIL())
             {
@@ -151,11 +151,11 @@ namespace Python.Runtime
             }
         }
 
-        private void SetSysPaths(PyList sysPaths)
+        void SetSysPaths(PyList sysPaths)
         {
             using (Py.GIL())
             {
-                var existingPaths = GetSysPaths();
+                var paths = GetSysPaths();
 
                 // set sys path
                 using var sys = Runtime.PyImport_ImportModule("sys");
@@ -165,9 +165,9 @@ namespace Python.Runtime
                 }
 
                 // dispose existing paths
-                foreach (PyObject path in existingPaths)
+                foreach (PyObject path in paths)
                     path.Dispose();
-                existingPaths.Dispose();
+                paths.Dispose();
             }
         }
         #endregion
@@ -466,8 +466,8 @@ namespace Python.Runtime
     [SuppressMessage("Python.Runtime", "IDE1006")]
     public class RhinoCodePythonEngineIO : Stream, IDisposable
     {
-        private readonly Stream _stdin = null;
-        private readonly Stream _stdout = null;
+        readonly Stream _stdin = null;
+        readonly Stream _stdout = null;
 
         public RhinoCodePythonEngineIO(Stream stdin, Stream stdout) { _stdin = stdin; _stdout = stdout; }
 
