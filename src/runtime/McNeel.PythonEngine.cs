@@ -286,6 +286,22 @@ namespace Python.Runtime
         #region Execution
         public int GetLineNumber(object frame) => Runtime.PyFrame_GetLineNumber(((PyObject)frame).Handle);
 
+        public bool Evaluate<T>(string pythonCode, object locals, out T? value)
+        {
+            value = default;
+
+            using (Py.GIL())
+            {
+                // PyDict g = new PyDict(((PyObject)globals).BorrowNullable());
+                PyObject pyObj = PythonEngine.Eval(pythonCode, locals: locals as PyObject);
+                if (pyObj is null)
+                    return false;
+
+                value = (T)pyObj.As<T>();
+                return true;
+            }
+        }
+
         public object RunScope(
             string codeId,
             string scopeName,
