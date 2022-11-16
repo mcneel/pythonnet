@@ -291,12 +291,15 @@ namespace Python.Runtime
             public PyException(PythonException pyEx)
                 : base(pyEx.Message)
             {
-                _pyStackTrace = string.Join(
-                    Environment.NewLine,
-                    "Traceback (most recent call last):",
-                    PythonException.TracebackToString(pyEx.Traceback),
-                    $"{pyEx.Type.Name}: {pyEx.Message}"
-                );
+                if (pyEx.Traceback is null)
+                    _pyStackTrace = string.Empty;
+                else
+                    _pyStackTrace = string.Join(
+                        Environment.NewLine,
+                        "Traceback (most recent call last):",
+                        PythonException.TracebackToString(pyEx.Traceback),
+                        $"{pyEx.Type.Name}: {pyEx.Message}"
+                    );
             }
 
             public override string ToString() => _pyStackTrace;
