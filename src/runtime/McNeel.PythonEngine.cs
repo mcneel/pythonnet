@@ -284,6 +284,24 @@ namespace Python.Runtime
         #endregion
 
         #region Execution
+        class PyException : Exception
+        {
+            readonly string _pyStackTrace;
+
+            public PyException(PythonException pyEx)
+                : base(pyEx.Message)
+            {
+                _pyStackTrace = string.Join(
+                    Environment.NewLine,
+                    "Traceback (most recent call last):",
+                    PythonException.TracebackToString(pyEx.Traceback),
+                    $"{pyEx.Type.Name}: {pyEx.Message}"
+                );
+            }
+
+            public override string ToString() => _pyStackTrace;
+        }
+
         public int GetLineNumber(object frame) => Runtime.PyFrame_GetLineNumber(((PyObject)frame).Handle);
 
         public bool Evaluate<T>(string pythonCode, object locals, out T? value)
@@ -361,13 +379,7 @@ namespace Python.Runtime
             }
             catch (PythonException pyEx)
             {
-                throw new Exception(
-                    message: string.Join(
-                        Environment.NewLine,
-                        new string[] { pyEx.Message, pyEx.StackTrace }
-                        ),
-                    innerException: pyEx
-                    );
+                throw new PyException(pyEx);
             }
 
             return codeObj;
@@ -423,13 +435,7 @@ namespace Python.Runtime
             }
             catch (PythonException pyEx)
             {
-                throw new Exception(
-                    message: string.Join(
-                        Environment.NewLine,
-                        new string[] { pyEx.Message, pyEx.StackTrace }
-                        ),
-                    innerException: pyEx
-                    );
+                throw new PyException(pyEx);
             }
         }
 
@@ -464,13 +470,7 @@ namespace Python.Runtime
             }
             catch (PythonException pyEx)
             {
-                throw new Exception(
-                    message: string.Join(
-                        Environment.NewLine,
-                        new string[] { pyEx.Message, pyEx.StackTrace }
-                        ),
-                    innerException: pyEx
-                    );
+                throw new PyException(pyEx);
             }
 
             return codeObj;
