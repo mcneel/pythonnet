@@ -23,6 +23,8 @@
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
 
+    <GenerateDocumentationFile>True</GenerateDocumentationFile>
+
     <AssemblyOriginatorKeyFile>..\pythonnet.snk</AssemblyOriginatorKeyFile>
     <SignAssembly>true</SignAssembly>
 
@@ -50,10 +52,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="resources\clr.py">
+    <EmbeddedResource Include="Resources\clr.py">
       <LogicalName>clr.py</LogicalName>
     </EmbeddedResource>
-    <EmbeddedResource Include="resources\interop.py">
+    <EmbeddedResource Include="Resources\interop.py">
       <LogicalName>interop.py</LogicalName>
     </EmbeddedResource>
     <EmbeddedResource Include="Mixins\*.py" />

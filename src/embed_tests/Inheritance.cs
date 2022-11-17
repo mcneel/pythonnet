@@ -59,6 +59,14 @@ namespace Python.EmbeddingTest
             Assert.IsTrue(PythonReferenceComparer.Instance.Equals(b, bInstanceClass));
         }
 
+        // https://github.com/pythonnet/pythonnet/issues/1420
+        [Test]
+        public void CallBaseMethodFromContainerInNestedClass()
+        {
+            using var nested = new ContainerClass.InnerClass().ToPython();
+            nested.InvokeMethod(nameof(ContainerClass.BaseMethod));
+        }
+
         [Test]
         public void Grandchild_PassesExtraBaseInstanceCheck()
         {
@@ -110,6 +118,15 @@ namespace Python.EmbeddingTest
             Assert.AreEqual(2, msg.Refcount);
             scope.Set("exn", null);
             Assert.AreEqual(1, msg.Refcount);
+        }
+
+        // https://github.com/pythonnet/pythonnet/issues/1455
+        [Test]
+        public void PropertyAccessorOverridden()
+        {
+            using var derived = new PropertyAccessorDerived().ToPython();
+            derived.SetAttr(nameof(PropertyAccessorDerived.VirtualProp), "hi".ToPython());
+            Assert.AreEqual("HI", derived.GetAttr(nameof(PropertyAccessorDerived.VirtualProp)).As<string>());
         }
     }
 
@@ -181,6 +198,28 @@ namespace Python.EmbeddingTest
                 }
             }
             set => this.extras[nameof(this.XProp)] = value;
+        }
+    }
+
+    public class PropertyAccessorBase
+    {
+        public virtual string VirtualProp { get; set; }
+    }
+
+    public class PropertyAccessorIntermediate: PropertyAccessorBase { }
+
+    public class PropertyAccessorDerived: PropertyAccessorIntermediate
+    {
+        public override string VirtualProp { set => base.VirtualProp = value.ToUpperInvariant(); }
+    }
+
+    public class ContainerClass
+    {
+        public void BaseMethod() { }
+
+        public class InnerClass: ContainerClass
+        {
+
         }
     }
 }

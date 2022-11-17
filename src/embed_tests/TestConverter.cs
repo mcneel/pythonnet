@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 
 using NUnit.Framework;
 
@@ -132,6 +133,25 @@ namespace Python.EmbeddingTest
         }
 
         [Test]
+        public void BigIntExplicit()
+        {
+            BigInteger val = 42;
+            var i = new PyInt(val);
+            var ni = i.As<BigInteger>();
+            Assert.AreEqual(val, ni);
+            var nullable = i.As<BigInteger?>();
+            Assert.AreEqual(val, nullable);
+        }
+
+        [Test]
+        public void PyIntImplicit()
+        {
+            var i = new PyInt(1);
+            var ni = (PyObject)i.As<object>();
+            Assert.IsTrue(PythonReferenceComparer.Instance.Equals(i, ni));
+        }
+
+        [Test]
         public void ToPyList()
         {
             var list = new PyList();
@@ -158,8 +178,11 @@ namespace Python.EmbeddingTest
             var clrObject = (CLRObject)ManagedType.GetManagedObject(pyObjectProxy);
             Assert.AreSame(pyObject, clrObject.inst);
 
-            var proxiedHandle = pyObjectProxy.GetAttr("Handle").As<IntPtr>();
-            Assert.AreEqual(pyObject.Handle, proxiedHandle);
+#pragma warning disable CS0612 // Type or member is obsolete
+            const string handlePropertyName = nameof(PyObject.Handle);
+#pragma warning restore CS0612 // Type or member is obsolete
+            var proxiedHandle = pyObjectProxy.GetAttr(handlePropertyName).As<IntPtr>();
+            Assert.AreEqual(pyObject.DangerousGetAddressOrNull(), proxiedHandle);
         }
 
         // regression for https://github.com/pythonnet/pythonnet/issues/451

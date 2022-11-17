@@ -1,6 +1,10 @@
-name: GitHub Actions
+name: Main
 
-on: [ pull_request, push ]
+on:
+  push:
+    branches:
+      - master
+  pull_request:
 
 jobs:
   build-test:
@@ -12,12 +16,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows, ubuntu, macos]
-        python: ["3.6", "3.7", "3.8", "3.9", "3.10"]
-        platform: [x64]
-        shutdown_mode: [Normal, Soft]
-
-    env:
-      PYTHONNET_SHUTDOWN_MODE: ${{ matrix.SHUTDOWN_MODE }}
+        python: ["3.7", "3.8", "3.9", "3.10", "3.11"]
+        platform: [x64, x86]
+        exclude:
+          - os: ubuntu
+            platform: x86
+          - os: macos
+            platform: x86
 
     steps:
       - name: Set Environment on macOS
@@ -49,25 +54,31 @@ jobs:
         run: |
           pip install -v .
 
-      - name: Set Python DLL path (non Windows)
+      - name: Set Python DLL path and PYTHONHOME (non Windows)
         if: ${{ matrix.os != 'windows' }}
         run: |
-          python -m pythonnet.find_libpython --export >> $GITHUB_ENV
+          echo PYTHONNET_PYDLL=$(python -m find_libpython) >> $GITHUB_ENV
+          echo PYTHONHOME=$(python -c 'import sys; print(sys.prefix)') >> $GITHUB_ENV
 
-      - name: Set Python DLL path (Windows)
+      - name: Set Python DLL path and PYTHONHOME (Windows)
         if: ${{ matrix.os == 'windows' }}
         run: |
-          python -m pythonnet.find_libpython --export | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append -InputObject "PYTHONNET_PYDLL=$(python -m find_libpython)"
+          Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append -InputObject "PYTHONHOME=$(python -c 'import sys; print(sys.prefix)')"
 
       - name: Embedding tests
         run: dotnet test --runtime any-${{ matrix.platform }} --logger "console;verbosity=detailed" src/embed_tests/
+        env:
+          MONO_THREADS_SUSPEND: preemptive # https://github.com/mono/mono/issues/21466
 
       - name: Python Tests (Mono)
         if: ${{ matrix.os != 'windows' }}
         run: pytest --runtime mono
 
+      # TODO: Run these tests on Windows x86
       - name: Python Tests (.NET Core)
-        run: pytest --runtime netcore
+        if: ${{ matrix.platform == 'x64' }}
+        run: pytest --runtime coreclr
 
       - name: Python Tests (.NET Framework)
         if: ${{ matrix.os == 'windows' }}
@@ -76,5 +87,10 @@ jobs:
       - name: Python tests run from .NET
         run: dotnet test --runtime any-${{ matrix.platform }} src/python_tests_runner/
 
-      # TODO: Run perf tests
+      - name: Perf tests
+        if: ${{ (matrix.python == '3.8') && (matrix.platform == 'x64') }}
+        run: |
+          pip install --force --no-deps --target src/perf_tests/baseline/ pythonnet==2.5.2
+          dotnet test --configuration Release --runtime any-${{ matrix.platform }} --logger "console;verbosity=detailed" src/perf_tests/
+
       # TODO: Run mono tests on Windows?

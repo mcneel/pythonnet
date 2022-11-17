@@ -4,7 +4,7 @@ import platform
 
 import pytest
 
-from pythonnet.find_libpython import find_libpython
+from find_libpython import find_libpython
 libpython = find_libpython()
 
 pytestmark = pytest.mark.xfail(libpython is None, reason="Can't find suitable libpython")
@@ -65,7 +65,6 @@ def test_method_return_type_change():
 def test_field_type_change():
     _run_test("field_type_change")
 
-@pytest.mark.xfail(reason="Events not yet serializable")
 def test_rename_event():
     _run_test('event_rename')
 

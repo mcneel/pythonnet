@@ -177,9 +177,21 @@ def test_generic_reference_type():
 
 def test_generic_value_type():
     """Test usage of generic value type definitions."""
+    from System import Int32
+    from Python.Test import GenericStructConstructorTest
+
+    ob = GenericStructConstructorTest[Int32](42)
+    assert ob.Value == 42
+
+
+def test_nullable():
+    """Test usage of Nullable[T] (special runtime handling)."""
     inst = System.Nullable[System.Int32](10)
     assert inst.HasValue
     assert inst.Value == 10
+
+    with pytest.raises(TypeError):
+        inst = System.Nullable[System.Int32]()
 
 
 def test_generic_interface():
@@ -749,6 +761,18 @@ def test_missing_generic_type():
     from System.Collections import IList
     with pytest.raises(TypeError):
         IList[bool]
+
+# https://github.com/pythonnet/pythonnet/issues/1522
+def test_overload_generic_parameter():
+    from Python.Test import MethodTest, MethodTestSub
+
+    inst = MethodTest()
+    generic = MethodTestSub()
+    inst.OverloadedConstrainedGeneric(generic)
+    inst.OverloadedConstrainedGeneric[MethodTestSub](generic)
+
+    inst.OverloadedConstrainedGeneric[MethodTestSub](generic, '42')
+    inst.OverloadedConstrainedGeneric[MethodTestSub](generic, System.String('42'))
 
 def test_invalid_generic_type_parameter():
     from Python.Test import GenericTypeWithConstraint

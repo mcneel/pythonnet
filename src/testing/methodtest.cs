@@ -258,6 +258,11 @@ namespace Python.Test
             return i;
         }
 
+        public static decimal TestDecimalDefaultParam(decimal n = 1m)
+        {
+            return n;
+        }
+
         public static int TestTwoDefaultParam(int i = 5, int j = 6)
         {
             return i + j;
@@ -645,6 +650,9 @@ namespace Python.Test
         {
             return i;
         }
+
+        public virtual void OverloadedConstrainedGeneric<T>(T generic) where T : MethodTest { }
+        public virtual void OverloadedConstrainedGeneric<T>(T generic, string str) where T: MethodTest { }
 
         public static string CaseSensitive()
         {

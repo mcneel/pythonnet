@@ -1,4 +1,8 @@
 using System;
+using System.Globalization;
+using System.Linq;
+using System.Numerics;
+
 using NUnit.Framework;
 using Python.Runtime;
 
@@ -178,6 +182,43 @@ namespace Python.EmbeddingTest
             var a = new PyInt(val);
             Assert.IsInstanceOf(typeof(long), a.ToInt64());
             Assert.AreEqual(val, a.ToInt64());
+        }
+
+        [Test]
+        public void ToBigInteger()
+        {
+            int[] simpleValues =
+            {
+                0, 1, 2,
+                0x10,
+                0x79,
+                0x80,
+                0x81,
+                0xFF,
+                0x123,
+                0x8000,
+                0x1234,
+                0x8001,
+                0x4000,
+                0xFF,
+            };
+            simpleValues = simpleValues.Concat(simpleValues.Select(v => -v)).ToArray();
+
+            var expected = simpleValues.Select(v => new BigInteger(v)).ToArray();
+            var actual = simpleValues.Select(v => new PyInt(v).ToBigInteger()).ToArray();
+
+            CollectionAssert.AreEqual(expected, actual);
+        }
+
+        [Test]
+        public void ToBigIntegerLarge()
+        {
+            BigInteger val = BigInteger.Pow(2, 1024) + 3;
+            var pyInt = new PyInt(val);
+            Assert.AreEqual(val, pyInt.ToBigInteger());
+            val = -val;
+            pyInt = new PyInt(val);
+            Assert.AreEqual(val, pyInt.ToBigInteger());
         }
     }
 }

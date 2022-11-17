@@ -79,4 +79,39 @@ namespace Python.Test
         {
         }
     }
+
+    public interface IOutArg
+    {
+        string MyMethod_Out(string name, out int index);
+    }
+
+    public class OutArgCaller
+    {
+        public static int CallMyMethod_Out(IOutArg myInterface)
+        {
+            myInterface.MyMethod_Out("myclient", out int index);
+            return index;
+        }
+    }
+
+    public interface IGenericInterface<T>
+    {
+        public T Get(T x);
+    }
+
+    public class SpecificInterfaceUser
+    {
+        public SpecificInterfaceUser(IGenericInterface<int> some, int x)
+        {
+            some.Get(x);
+        }
+    }
+
+    public class GenericInterfaceUser<T>
+    {
+        public GenericInterfaceUser(IGenericInterface<T> some, T x)
+        {
+            some.Get(x);
+        }
+    }
 }

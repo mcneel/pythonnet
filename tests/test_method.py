@@ -280,6 +280,16 @@ def test_string_out_params():
     assert result[1] == "output string"
 
 
+def test_string_out_params_without_passing_string_value():
+    """Test use of string out-parameters."""
+    # @eirannejad 2022-01-13
+    result = MethodTest.TestStringOutParams("hi")
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+    assert result[0] is True
+    assert result[1] == "output string"
+
+
 def test_string_ref_params():
     """Test use of string byref parameters."""
     result = MethodTest.TestStringRefParams("hi", "there")
@@ -308,6 +318,16 @@ def test_value_out_params():
         MethodTest.TestValueOutParams("hi", None)
 
 
+def test_value_out_params_without_passing_string_value():
+    """Test use of string out-parameters."""
+    # @eirannejad 2022-01-13
+    result = MethodTest.TestValueOutParams("hi")
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+    assert result[0] is True
+    assert result[1] == 42
+
+
 def test_value_ref_params():
     """Test use of value type byref parameters."""
     result = MethodTest.TestValueRefParams("hi", 1)
@@ -330,6 +350,15 @@ def test_object_out_params():
     assert isinstance(result[1], System.Exception)
 
     result = MethodTest.TestObjectOutParams("hi", None)
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+    assert result[0] is True
+    assert isinstance(result[1], System.Exception)
+
+
+def test_object_out_params_without_passing_string_value():
+    """Test use of object out-parameters."""
+    result = MethodTest.TestObjectOutParams("hi")
     assert isinstance(result, tuple)
     assert len(result) == 2
     assert result[0] is True
@@ -362,6 +391,15 @@ def test_struct_out_params():
     # None cannot be converted to a value type like a struct
     with pytest.raises(TypeError):
         MethodTest.TestValueRefParams("hi", None)
+
+
+def test_struct_out_params_without_passing_string_value():
+    """Test use of struct out-parameters."""
+    result = MethodTest.TestStructOutParams("hi")
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+    assert result[0] is True
+    assert isinstance(result[1], System.Guid)
 
 
 def test_struct_ref_params():
@@ -401,6 +439,12 @@ def test_single_default_param():
     """Test void method with single ref-parameter."""
     result = MethodTest.TestSingleDefaultParam()
     assert result == 5
+
+
+def test_decimal_default_param():
+    """Test that decimal default parameters work."""
+    result = MethodTest.TestDecimalDefaultParam()
+    assert result == System.Decimal(1)
 
 
 def test_one_arg_and_two_default_param():
@@ -1212,3 +1256,41 @@ def test_method_encoding():
 def test_method_with_pointer_array_argument():
     with pytest.raises(TypeError):
         MethodTest.PointerArray([0])
+
+def test_method_call_implicit_conversion():
+
+    class IntAnswerMixin:
+        # For Python >= 3.8
+        def __index__(self):
+            return 42
+
+        # For Python < 3.10
+        def __int__(self):
+            return 42
+
+    class Answer(int, IntAnswerMixin):
+        pass
+
+    class FloatAnswer(float, IntAnswerMixin):
+        def __float__(self):
+            return 42.0
+
+    # TODO: This should also work for integer types but due to some complexities
+    # in the C-API functions (some call __int__/__index__, some don't), it's not
+    # supported, yet.
+    for v in [Answer(), FloatAnswer()]:
+        for t in [System.Double, System.Single]:
+            min_value = t(t.MinValue)
+            compare_to = min_value.CompareTo.__overloads__[t]
+
+            assert compare_to(v) == -1
+
+    class SomeNonFloat:
+        def __float__(self):
+            return 42.0
+
+    for t in [System.Double, System.Single]:
+        with pytest.raises(TypeError):
+            min_value = t(t.MinValue)
+            compare_to = min_value.CompareTo.__overloads__[t]
+            assert compare_to(SomeNonFloat()) == -1

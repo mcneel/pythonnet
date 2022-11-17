@@ -15,7 +15,6 @@ def test_enum_standard_attrs():
     assert DayOfWeek.__name__ == 'DayOfWeek'
     assert DayOfWeek.__module__ == 'System'
     assert isinstance(DayOfWeek.__dict__, DictProxyType)
-    assert DayOfWeek.__doc__ is None
 
 
 def test_enum_get_member():
@@ -87,6 +86,20 @@ def test_ulong_enum():
     assert Test.ULongEnum.Two == Test.ULongEnum(2)
 
 
+def test_simple_enum_to_int():
+    from System import DayOfWeek
+    assert int(DayOfWeek.Sunday) == 0
+
+
+def test_long_enum_to_int():
+    assert int(Test.LongEnum.Max) == 9223372036854775807
+    assert int(Test.LongEnum.Min) == -9223372036854775808
+
+
+def test_ulong_enum_to_int():
+    assert int(Test.ULongEnum.Max) == 18446744073709551615
+
+
 def test_instantiate_enum_fails():
     """Test that instantiation of an enum class fails."""
     from System import DayOfWeek
@@ -125,9 +138,10 @@ def test_enum_undefined_value():
     # This should fail because our test enum doesn't have it.
     with pytest.raises(ValueError):
         Test.FieldTest().EnumField = Test.ShortEnum(20)
-    
+
     # explicitly permit undefined values
     Test.FieldTest().EnumField = Test.ShortEnum(20, True)
+
 
 def test_enum_conversion():
     """Test enumeration conversion."""
@@ -142,6 +156,6 @@ def test_enum_conversion():
 
     with pytest.raises(TypeError):
         Test.FieldTest().EnumField = "str"
-    
+
     with pytest.raises(TypeError):
         Test.FieldTest().EnumField = 1
