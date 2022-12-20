@@ -8,7 +8,7 @@
     <RootNamespace>Python.Runtime</RootNamespace>
     <AssemblyName>McNeel.Python39.Runtime</AssemblyName>
     <NoWarn>1591;NU1701</NoWarn>
-    <NoWarn>$(NoWarn);CS0105;CS3021;CS0618;CS0067;CS0649</NoWarn>
+    <NoWarn>$(NoWarn);CS0105;CS3021;CS0618;CS0067;CS0649;CS8600</NoWarn>
     <NoWarn>$(NoWarn);CS1030</NoWarn>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
