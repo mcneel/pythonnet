@@ -532,22 +532,42 @@ namespace Python.Runtime
     {
         public static object MarshallOutput(object value)
         {
-            if (value is IEnumerable<object> enumerable)
+            switch (value)
             {
-                var res = new List<object>();
-                foreach (object item in enumerable)
-                    res.Add(MarshallOutputValue(item));
-                return res;
+                case IEnumerable<object> enumerable:
+                    return enumerable.Select(i => MarshallOutput(i)).ToList();
+
+                case IDictionary<object, object> dict:
+                    return dict.Select(p =>
+                    {
+                        return new KeyValuePair<object, object>(MarshallOutput(p.Key), MarshallOutput(p.Value));
+                    }).ToDictionary(p => p.Key, p => p.Value);
+
+                case PyObject pyObj:
+                    return MarshallOutput(pyObj);
             }
 
-            return MarshallOutputValue(value);
+            return value;
         }
 
-        static object MarshallOutputValue(object value)
+        static object MarshallOutput(PyObject pyObj)
         {
-            if (value is PyObject pyObj)
-                return new PythonObject(pyObj);
-            return value;
+            if (ManagedType.GetManagedObject(pyObj) is CLRObject co)
+            {
+                return MarshallOutput(co.inst);
+            }
+            if (Runtime.PyList_Check(pyObj))
+            {
+                var l = new PyList(pyObj);
+               return l.Select(i => MarshallOutput(i)).ToList();
+            }
+            else if (Runtime.PyDict_Check(pyObj))
+            {
+                var d = new PyDict(pyObj);
+                return d.Keys().ToDictionary(k => MarshallOutput(k), k => MarshallOutput(d[k]));
+            }
+
+            return new PythonObject(pyObj);
         }
 
         internal PyObject PyObject { get; }
