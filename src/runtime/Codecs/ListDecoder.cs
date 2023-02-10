@@ -1,5 +1,7 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Python.Runtime.Codecs
 {
@@ -7,10 +9,8 @@ namespace Python.Runtime.Codecs
     {
         private static bool IsList(Type targetType)
         {
-            if (!targetType.IsGenericType)
-                return false;
-
-            return targetType.GetGenericTypeDefinition() == typeof(IList<>);
+            return (targetType.IsGenericType && targetType.GetGenericTypeDefinition() == typeof(IList<>))
+                || (targetType == typeof(IList));
         }
 
         private static bool IsList(PyType objectType)
@@ -32,7 +32,7 @@ namespace Python.Runtime.Codecs
         {
             if (pyObj == null) throw new ArgumentNullException(nameof(pyObj));
 
-            var elementType = typeof(T).GetGenericArguments()[0];
+            var elementType = typeof(T).IsGenericType ? typeof(T).GetGenericArguments()[0] : typeof(object);
             Type collectionType = typeof(CollectionWrappers.ListWrapper<>).MakeGenericType(elementType);
 
             var instance = Activator.CreateInstance(collectionType, new[] { pyObj });
