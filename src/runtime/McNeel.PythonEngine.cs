@@ -320,74 +320,8 @@ namespace Python.Runtime
             }
         }
 
-        public object RunScope(
-            string codeId,
-            string scopeName,
-            string pythonCode,
-            string pythonFile,
-            IDictionary<string, object> inputs,
-            IDictionary<string, object> outputs,
-            string beforeScript = null,
-            string afterScript = null
-        )
-        {
-            // TODO: implement and test locals
-
-            PyObject codeObj = default;
-
-            // execute
-            try
-            {
-                using (Py.GIL())
-                {
-                    using (PyModule scope = Py.CreateScope(scopeName))
-                    {
-                        scope.Set("__file__", pythonFile ?? string.Empty);
-
-                        // set inputs and unwrap possible python objects
-                        foreach (var pair in inputs)
-                        {
-                            if (pair.Value is PythonObject pythonObject)
-                                scope.Set(pair.Key, pythonObject.PyObject);
-                            else
-                                scope.Set(pair.Key, pair.Value);
-                        }
-
-                        // add default references
-                        if (beforeScript is string)
-                            scope.Exec(beforeScript);
-
-                        codeObj = PythonEngine.Compile(
-                            code: pythonCode,
-                            filename: pythonFile ?? string.Empty,
-                            mode: RunFlagType.File
-                            );
-
-                        scope.Execute(codeObj);
-
-                        if (afterScript is string)
-                            scope.Exec(afterScript);
-
-                        // set outputs and wrap possible python objects
-                        foreach (var pair in new Dictionary<string, object>(outputs))
-                            if (scope.TryGet(pair.Key, out object outputValue))
-                                outputs[pair.Key] = PythonObject.MarshallOutput(outputValue);
-                            else
-                                outputs[pair.Key] = null;
-                    }
-                }
-            }
-            catch (PythonException pyEx)
-            {
-                throw new PyException(pyEx);
-            }
-
-            return codeObj;
-        }
-
         public void RunScope(
-            object codeObj,
-            string scopeName,
+            (IntPtr ScopePointer, IntPtr CodePointer) scope,
             string pythonFile,
             IDictionary<string, object> inputs,
             IDictionary<string, object> outputs,
@@ -400,37 +334,37 @@ namespace Python.Runtime
             // execute
             try
             {
+                PyModule pyscope = new PyModule(new BorrowedReference(scope.ScopePointer));
+                PyObject pycode = new PyObject(new BorrowedReference(scope.CodePointer));
+
                 using (Py.GIL())
                 {
-                    using (PyModule scope = Py.CreateScope(scopeName))
+                    pyscope.Set("__file__", pythonFile ?? string.Empty);
+
+                    // set inputs and unwrap possible python objects
+                    foreach (var pair in inputs)
                     {
-                        scope.Set("__file__", pythonFile ?? string.Empty);
-
-                        // set inputs and unwrap possible python objects
-                        foreach (var pair in inputs)
-                        {
-                            if (pair.Value is PythonObject pythonObject)
-                                scope.Set(pair.Key, pythonObject.PyObject);
-                            else
-                                scope.Set(pair.Key, pair.Value);
-                        }
-
-                        // add default references
-                        if (beforeScript is string)
-                            scope.Exec(beforeScript);
-
-                        scope.Execute(codeObj as PyObject);
-
-                        if (afterScript is string)
-                            scope.Exec(afterScript);
-
-                        // set outputs and wrap possible python objects
-                        foreach (var pair in new Dictionary<string, object>(outputs))
-                            if (scope.TryGet(pair.Key, out object outputValue))
-                                outputs[pair.Key] = PythonObject.MarshallOutput(outputValue);
-                            else
-                                outputs[pair.Key] = null;
+                        if (pair.Value is PythonObject pythonObject)
+                            pyscope.Set(pair.Key, pythonObject.PyObject);
+                        else
+                            pyscope.Set(pair.Key, pair.Value);
                     }
+
+                    // add default references
+                    if (beforeScript is string)
+                        pyscope.Exec(beforeScript);
+
+                    pyscope.Execute(pycode);
+
+                    if (afterScript is string)
+                        pyscope.Exec(afterScript);
+
+                    // set outputs and wrap possible python objects
+                    foreach (var pair in new Dictionary<string, object>(outputs))
+                        if (pyscope.TryGet(pair.Key, out object outputValue))
+                            outputs[pair.Key] = PythonObject.MarshallOutput(outputValue);
+                        else
+                            outputs[pair.Key] = null;
                 }
             }
             catch (PythonException pyEx)
@@ -439,8 +373,7 @@ namespace Python.Runtime
             }
         }
 
-
-        public object CompileScope(
+        public (IntPtr ScopePointer, IntPtr CodePointer) CompileScope(
             string codeId,
             string scopeName,
             string pythonCode,
@@ -449,23 +382,22 @@ namespace Python.Runtime
         {
             // TODO: implement and test locals
 
-            PyObject codeObj = default;
+            PyModule scope = default;
+            PyObject code = default;
 
             // execute
             try
             {
                 using (Py.GIL())
                 {
-                    using (PyModule scope = Py.CreateScope(scopeName))
-                    {
-                        scope.Set("__file__", pythonFile ?? string.Empty);
+                    scope = Py.CreateScope(scopeName);
+                    scope.Set("__file__", pythonFile ?? string.Empty);
 
-                        codeObj = PythonEngine.Compile(
-                            code: pythonCode,
-                            filename: pythonFile ?? string.Empty,
-                            mode: RunFlagType.File
-                            );
-                    }
+                    code = PythonEngine.Compile(
+                        code: pythonCode,
+                        filename: pythonFile ?? string.Empty,
+                        mode: RunFlagType.File
+                        );
                 }
             }
             catch (PythonException pyEx)
@@ -473,9 +405,20 @@ namespace Python.Runtime
                 throw new PyException(pyEx);
             }
 
-            return codeObj;
+            return (scope.Handle, code.Handle);
         }
 
+        public void DisposeScope((IntPtr ScopePointer, IntPtr CodePointer) scope)
+        {
+            PyModule pyscope = new PyModule(new BorrowedReference(scope.ScopePointer));
+            PyObject pycode = new PyObject(new BorrowedReference(scope.CodePointer));
+
+            using (Py.GIL())
+            {
+                pyscope.Dispose();
+                pycode.Dispose();
+            }
+        }
         #endregion
     }
 
@@ -559,7 +502,7 @@ namespace Python.Runtime
             if (Runtime.PyList_Check(pyObj))
             {
                 var l = new PyList(pyObj);
-               return l.Select(i => MarshallOutput(i)).ToList();
+                return l.Select(i => MarshallOutput(i)).ToList();
             }
             else if (Runtime.PyDict_Check(pyObj))
             {
