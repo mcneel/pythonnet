@@ -284,7 +284,7 @@ namespace Python.Runtime
         #endregion
 
         #region Execution
-        class PyException : Exception
+        public class PyException : Exception
         {
             readonly string _pyStackTrace;
 
@@ -320,8 +320,32 @@ namespace Python.Runtime
             }
         }
 
-        public void RunScope(
-            (IntPtr ScopePointer, IntPtr CodePointer) scope,
+        public object CompileCode(string codeId, string scopeName, string pythonCode, string pythonFile)
+        {
+            try
+            {
+                using (Py.GIL())
+                    return PythonEngine.Compile(
+                        code: pythonCode,
+                        filename: pythonFile ?? string.Empty,
+                        mode: RunFlagType.File
+                        );
+            }
+            catch (PythonException pyEx)
+            {
+                throw new PyException(pyEx);
+            }
+        }
+
+        public object CreateScope(string scopeName, string pythonFile)
+        {
+            using (Py.GIL())
+                return PrepareScope(scopeName, pythonFile);
+        }
+
+        public void RunCode(
+            string scopeName,
+            object code,
             string pythonFile,
             IDictionary<string, object> inputs,
             IDictionary<string, object> outputs,
@@ -329,43 +353,11 @@ namespace Python.Runtime
             string afterScript = null
         )
         {
-            // TODO: implement and test locals
-
-            // execute
             try
             {
-                PyModule pyscope = new PyModule(new BorrowedReference(scope.ScopePointer));
-                PyObject pycode = new PyObject(new BorrowedReference(scope.CodePointer));
-
                 using (Py.GIL())
-                {
-                    pyscope.Set("__file__", pythonFile ?? string.Empty);
-
-                    // set inputs and unwrap possible python objects
-                    foreach (var pair in inputs)
-                    {
-                        if (pair.Value is PythonObject pythonObject)
-                            pyscope.Set(pair.Key, pythonObject.PyObject);
-                        else
-                            pyscope.Set(pair.Key, pair.Value);
-                    }
-
-                    // add default references
-                    if (beforeScript is string)
-                        pyscope.Exec(beforeScript);
-
-                    pyscope.Execute(pycode);
-
-                    if (afterScript is string)
-                        pyscope.Exec(afterScript);
-
-                    // set outputs and wrap possible python objects
-                    foreach (var pair in new Dictionary<string, object>(outputs))
-                        if (pyscope.TryGet(pair.Key, out object outputValue))
-                            outputs[pair.Key] = PythonObject.MarshallOutput(outputValue);
-                        else
-                            outputs[pair.Key] = null;
-                }
+                using (PyModule pyscope = PrepareScope(scopeName, pythonFile))
+                    ExecuteScope(pyscope, (PyObject)code, pythonFile, inputs, outputs, beforeScript, afterScript);
             }
             catch (PythonException pyEx)
             {
@@ -373,53 +365,85 @@ namespace Python.Runtime
             }
         }
 
-        public (IntPtr ScopePointer, IntPtr CodePointer) CompileScope(
-            string codeId,
-            string scopeName,
-            string pythonCode,
-            string pythonFile
+        public void RunScope(
+            object scope,
+            object code,
+            string pythonFile,
+            IDictionary<string, object> inputs,
+            IDictionary<string, object> outputs,
+            string beforeScript = null,
+            string afterScript = null
         )
         {
-            // TODO: implement and test locals
-
-            PyModule scope = default;
-            PyObject code = default;
-
-            // execute
             try
             {
                 using (Py.GIL())
-                {
-                    scope = Py.CreateScope(scopeName);
-                    scope.Set("__file__", pythonFile ?? string.Empty);
-
-                    code = PythonEngine.Compile(
-                        code: pythonCode,
-                        filename: pythonFile ?? string.Empty,
-                        mode: RunFlagType.File
-                        );
-                }
+                    ExecuteScope((PyModule)scope, (PyObject)code, pythonFile, inputs, outputs, beforeScript, afterScript);
             }
             catch (PythonException pyEx)
             {
                 throw new PyException(pyEx);
             }
-
-            return (scope.Handle, code.Handle);
         }
 
-        public void DisposeScope((IntPtr ScopePointer, IntPtr CodePointer) scope)
+        public void DisposeCode(object code)
         {
-            PyModule pyscope = new PyModule(new BorrowedReference(scope.ScopePointer));
-            PyObject pycode = new PyObject(new BorrowedReference(scope.CodePointer));
+            if (code is PyObject pycode)
+                using (Py.GIL())
+                    pycode.Dispose();
+        }
 
-            using (Py.GIL())
-            {
-                pyscope.Dispose();
-                pycode.Dispose();
-            }
+        public void DisposeScope(object scope)
+        {
+            if (scope is PyModule pyscope)
+                using (Py.GIL())
+                    pyscope.Dispose();
         }
         #endregion
+
+        PyModule PrepareScope(string scopeName, string pythonFile)
+        {
+            PyModule pyscope = Py.CreateScope(scopeName);
+            pyscope.Set("__file__", pythonFile ?? string.Empty);
+            return pyscope;
+        }
+
+        void ExecuteScope(
+            PyModule pyscope,
+            PyObject pycode,
+            string pythonFile,
+            IDictionary<string, object> inputs,
+            IDictionary<string, object> outputs,
+            string beforeScript = null,
+            string afterScript = null)
+        {
+            pyscope.Set("__file__", pythonFile ?? string.Empty);
+
+            // set inputs and unwrap possible python objects
+            foreach (var pair in inputs)
+            {
+                if (pair.Value is PythonObject pythonObject)
+                    pyscope.Set(pair.Key, pythonObject.PyObject);
+                else
+                    pyscope.Set(pair.Key, pair.Value);
+            }
+
+            // add default references
+            if (beforeScript is string)
+                pyscope.Exec(beforeScript);
+
+            pyscope.Execute(pycode);
+
+            if (afterScript is string)
+                pyscope.Exec(afterScript);
+
+            // set outputs and wrap possible python objects
+            foreach (var pair in new Dictionary<string, object>(outputs))
+                if (pyscope.TryGet(pair.Key, out object outputValue))
+                    outputs[pair.Key] = PythonObject.MarshallOutput(outputValue);
+                else
+                    outputs[pair.Key] = null;
+        }
     }
 
     [SuppressMessage("Python.Runtime", "IDE1006")]
