@@ -399,7 +399,6 @@ namespace Python.Runtime
                 using (Py.GIL())
                     pyscope.Dispose();
         }
-        #endregion
 
         PyModule PrepareScope(string scopeName, string pythonFile)
         {
@@ -422,10 +421,7 @@ namespace Python.Runtime
             // set inputs and unwrap possible python objects
             foreach (var pair in inputs)
             {
-                if (pair.Value is PythonObject pythonObject)
-                    pyscope.Set(pair.Key, pythonObject.PyObject);
-                else
-                    pyscope.Set(pair.Key, pair.Value);
+                pyscope.Set(pair.Key, pair.Value);
             }
 
             // add default references
@@ -440,10 +436,51 @@ namespace Python.Runtime
             // set outputs and wrap possible python objects
             foreach (var pair in new Dictionary<string, object>(outputs))
                 if (pyscope.TryGet(pair.Key, out object outputValue))
-                    outputs[pair.Key] = PythonObject.MarshallOutput(outputValue);
+                    outputs[pair.Key] = MarshallOutput(outputValue);
                 else
                     outputs[pair.Key] = null;
         }
+
+        static object MarshallOutput(object value)
+        {
+            switch (value)
+            {
+                case IEnumerable<object> enumerable:
+                    return enumerable.Select(i => MarshallOutput(i)).ToList();
+
+                case IDictionary<object, object> dict:
+                    return dict.Select(p =>
+                    {
+                        return new KeyValuePair<object, object>(MarshallOutput(p.Key), MarshallOutput(p.Value));
+                    }).ToDictionary(p => p.Key, p => p.Value);
+
+                case PyObject pyObj:
+                    return MarshallOutput(pyObj);
+            }
+
+            return value;
+        }
+
+        static object MarshallOutput(PyObject pyObj)
+        {
+            if (ManagedType.GetManagedObject(pyObj) is CLRObject co)
+            {
+                return MarshallOutput(co.inst);
+            }
+            if (Runtime.PyList_Check(pyObj))
+            {
+                var l = new PyList(pyObj);
+                return l.Select(i => MarshallOutput(i)).ToList();
+            }
+            else if (Runtime.PyDict_Check(pyObj))
+            {
+                var d = new PyDict(pyObj);
+                return d.Keys().ToDictionary(k => MarshallOutput(k), k => MarshallOutput(d[k]));
+            }
+
+            return pyObj;
+        }
+        #endregion
     }
 
     [SuppressMessage("Python.Runtime", "IDE1006")]
@@ -493,61 +530,6 @@ namespace Python.Runtime
         public override void Write(byte[] buffer, int offset, int count) => _stdout?.Write(buffer, offset, count);
         public override void Flush() => _stdout?.Flush();
         #endregion
-    }
-
-    public class PythonObject : DynamicObject
-    {
-        public static object MarshallOutput(object value)
-        {
-            switch (value)
-            {
-                case IEnumerable<object> enumerable:
-                    return enumerable.Select(i => MarshallOutput(i)).ToList();
-
-                case IDictionary<object, object> dict:
-                    return dict.Select(p =>
-                    {
-                        return new KeyValuePair<object, object>(MarshallOutput(p.Key), MarshallOutput(p.Value));
-                    }).ToDictionary(p => p.Key, p => p.Value);
-
-                case PyObject pyObj:
-                    return MarshallOutput(pyObj);
-            }
-
-            return value;
-        }
-
-        static object MarshallOutput(PyObject pyObj)
-        {
-            if (ManagedType.GetManagedObject(pyObj) is CLRObject co)
-            {
-                return MarshallOutput(co.inst);
-            }
-            if (Runtime.PyList_Check(pyObj))
-            {
-                var l = new PyList(pyObj);
-                return l.Select(i => MarshallOutput(i)).ToList();
-            }
-            else if (Runtime.PyDict_Check(pyObj))
-            {
-                var d = new PyDict(pyObj);
-                return d.Keys().ToDictionary(k => MarshallOutput(k), k => MarshallOutput(d[k]));
-            }
-
-            return new PythonObject(pyObj);
-        }
-
-        internal PyObject PyObject { get; }
-
-        readonly string _repr;
-
-        public PythonObject(PyObject pyObj)
-        {
-            PyObject = pyObj;
-            _repr = pyObj.ToString();
-        }
-
-        public override string ToString() => _repr;
     }
 }
 #pragma warning restore
