@@ -467,15 +467,66 @@ namespace Python.Runtime
             {
                 return MarshallOutput(co.inst);
             }
-            if (Runtime.PyList_Check(pyObj))
+
+            else if (Runtime.PyList_Check(pyObj))
             {
                 var l = new PyList(pyObj);
                 return l.Select(i => MarshallOutput(i)).ToList();
             }
+
             else if (Runtime.PyDict_Check(pyObj))
             {
                 var d = new PyDict(pyObj);
                 return d.Keys().ToDictionary(k => MarshallOutput(k), k => MarshallOutput(d[k]));
+            }
+
+            else if (Runtime.PyString_CheckExact(pyObj))
+            {
+                if (Converter.ToPrimitive(pyObj, typeof(string), out object? result, false))
+                    return result;
+                return pyObj;
+            }
+
+            else if (Runtime.PyBool_CheckExact(pyObj))
+            {
+                if (Converter.ToPrimitive(pyObj, typeof(bool), out object? result, false))
+                    return result;
+                return pyObj;
+            }
+
+            else if (Runtime.PyFloat_CheckExact(pyObj))
+            {
+                if (Converter.ToPrimitive(pyObj, typeof(double), out object? result, false))
+                    return result;
+                return pyObj;
+            }
+
+            else if (Runtime.PyString_Check(pyObj))
+            {
+                if (Converter.ToPrimitive(pyObj, typeof(string), out object? result, false))
+                    return result;
+                return pyObj;
+            }
+
+            else if (Runtime.PyBool_Check(pyObj))
+            {
+                if (Converter.ToPrimitive(pyObj, typeof(bool), out object? result, false))
+                    return result;
+                return pyObj;
+            }
+
+            else if (Runtime.PyFloat_Check(pyObj))
+            {
+                if (Converter.ToPrimitive(pyObj, typeof(double), out object? result, false))
+                    return result;
+                return pyObj;
+            }
+
+            else if (Runtime.PyInt_Check(pyObj))
+            {
+                if (Converter.ToPrimitive(pyObj, typeof(int), out object? result, false))
+                    return result;
+                return pyObj;
             }
 
             return pyObj;
