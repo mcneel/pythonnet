@@ -74,6 +74,17 @@ namespace Python.Runtime
 
         public virtual NewReference Invoke(BorrowedReference target, BorrowedReference args, BorrowedReference kw, MethodBase? info)
         {
+            // NOTE: do nothing on struct default ctor
+            // do nothing and return 'void' when runtime is attempting
+            // to call __init__ with no arguments on a struct.
+            // ManagedType.GetManagedObject(target) returns the instance
+            if (name == "__init__"
+                    && !type.Value.IsClass
+                    && Runtime.PyTuple_Size(args) == 0)
+            {
+                return new NewReference(Runtime.PyNone);
+            }
+
             return binder.Invoke(target, args, kw, info, this.info);
         }
 
