@@ -300,6 +300,10 @@ namespace Python.Runtime
                     result = mo;
                     break;
 
+                case Iterator it:
+                    result = it;
+                    break;
+
                 case CLRObject co:
                     object tmp = co.inst;
                     if (obType.IsInstanceOfType(tmp))
