@@ -296,6 +296,10 @@ namespace Python.Runtime
             result = null;
             switch (ManagedType.GetManagedObject(value))
             {
+                case Iterator it:
+                    result = it;
+                    break;
+
                 case CLRObject co:
                     object tmp = co.inst;
                     if (obType.IsInstanceOfType(tmp))
