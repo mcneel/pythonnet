@@ -343,6 +343,19 @@ namespace Python.Runtime
                 return PrepareScope(scopeName, pythonFile);
         }
 
+        public void RunScript(string script)
+        {
+            try
+            {
+                using (Py.GIL())
+                    PythonEngine.RunSimpleString(script);
+            }
+            catch (PythonException pyEx)
+            {
+                throw new PyException(pyEx);
+            }
+        }
+
         public void RunCode(
             string scopeName,
             object code,
