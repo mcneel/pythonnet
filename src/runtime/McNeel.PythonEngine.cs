@@ -450,8 +450,6 @@ namespace Python.Runtime
             foreach (var pair in new Dictionary<string, object>(outputs))
                 if (pyscope.TryGet(pair.Key, out object outputValue))
                     outputs[pair.Key] = MarshallOutput(outputValue);
-                else
-                    outputs[pair.Key] = null;
         }
 
         static object MarshallOutput(object value)
