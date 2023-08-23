@@ -304,6 +304,49 @@ namespace Python.Runtime
 
         public int GetLineNumber(object frame) => Runtime.PyFrame_GetLineNumber(((PyObject)frame).Handle);
 
+        public bool TryGetMembers(object pyObject, out IEnumerable<string> members, bool privates = true)
+        {
+            members = default;
+
+            using (Py.GIL())
+            using (PyObject pyObj = pyObject.ToPython())
+            {
+                if (ManagedType.GetManagedObject(pyObj) is ModuleObject module)
+                    module.LoadNames();
+
+                if (pyObj is PyObject)
+                {
+                    IEnumerable<string> pymembers = pyObj.GetDynamicMemberNames();
+                    if (!privates)
+                        pymembers = pymembers.Where(m => !m.StartsWith("_"));
+
+                    members = pymembers.ToArray();
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public bool TryGetItems(object pyObject, out IEnumerable<object> items)
+        {
+            items = default;
+
+            using (Py.GIL())
+            using (PyObject pyObj = pyObject.ToPython())
+            {
+                if (Runtime.PyTuple_Check(pyObj))
+                {
+                    var tuple = new PyTuple(pyObj);
+                    items = tuple.ToArray();
+
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         public bool Evaluate<T>(string pythonCode, object locals, out T? value)
         {
             value = default;
