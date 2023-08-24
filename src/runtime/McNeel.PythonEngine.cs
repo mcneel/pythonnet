@@ -304,25 +304,95 @@ namespace Python.Runtime
 
         public int GetLineNumber(object frame) => Runtime.PyFrame_GetLineNumber(((PyObject)frame).Handle);
 
+        public bool TryGetManaged(object pyObject, out Type managed)
+        {
+            managed = default;
+
+            switch (pyObject)
+            {
+                case PyObject pyObj:
+                    using (Py.GIL())
+                    {
+                        ManagedType? managedType = ManagedType.GetManagedObject(pyObj);
+
+                        switch (managedType)
+                        {
+                            case ClassBase b:
+                                var _type = b.type;
+                                managed = _type.Valid ? _type.Value : null;
+                                return true;
+
+                            case CLRObject c:
+                                switch (c.inst)
+                                {
+                                    case Type type:
+                                        managed = type;
+                                        return true;
+
+                                    case object obj:
+                                        managed = obj.GetType();
+                                        return true;
+
+                                }
+                                break;
+
+                        }
+                    }
+                    break;
+
+                case Type type:
+                    managed = type;
+                    return true;
+            }
+
+
+            return false;
+        }
+
         public bool TryGetMembers(object pyObject, out IEnumerable<string> members, bool privates = true)
         {
             members = default;
 
-            using (Py.GIL())
-            using (PyObject pyObj = pyObject.ToPython())
+            switch (pyObject)
             {
-                if (ManagedType.GetManagedObject(pyObj) is ModuleObject module)
-                    module.LoadNames();
+                case PyObject pyObj:
+                    using (Py.GIL())
+                    {
+                        var all = new HashSet<string>();
 
-                if (pyObj is PyObject)
-                {
-                    IEnumerable<string> pymembers = pyObj.GetDynamicMemberNames();
-                    if (!privates)
-                        pymembers = pymembers.Where(m => !m.StartsWith("_"));
+                        if (ManagedType.GetManagedObject(pyObj) is ModuleObject module)
+                        {
+                            module.LoadNames();
 
-                    members = pymembers.ToArray();
-                    return true;
-                }
+                            string modnspace = module.moduleName + '.';
+                            foreach (string nspace in AssemblyManager.GetNamespaces())
+                            {
+                                if (nspace.StartsWith(modnspace))
+                                {
+                                    string subnspace = nspace.Remove(0, modnspace.Length);
+                                    int dotindex = subnspace.IndexOf('.');
+                                    if (dotindex > 0)
+                                        subnspace = subnspace.Substring(0, dotindex);
+
+                                    all.Add(subnspace);
+                                }
+                            }
+
+                        }
+
+                        if (pyObj is PyObject)
+                        {
+                            IEnumerable<string> pymembers = pyObj.GetDynamicMemberNames();
+                            if (!privates)
+                                pymembers = pymembers.Where(m => !m.StartsWith("_"));
+
+                            all.UnionWith(pymembers.ToArray());
+
+                            members = all.ToArray();
+                            return true;
+                        }
+                    }
+                    break;
             }
 
             return false;
@@ -406,14 +476,20 @@ namespace Python.Runtime
             IDictionary<string, object> inputs,
             IDictionary<string, object> outputs,
             string beforeScript = null,
-            string afterScript = null
+            string afterScript = null,
+            bool marshallOutputs = true
         )
         {
             try
             {
                 using (Py.GIL())
                 using (PyModule pyscope = PrepareScope(scopeName, pythonFile))
-                    ExecuteScope(pyscope, (PyObject)code, pythonFile, inputs, outputs, beforeScript, afterScript);
+                    ExecuteScope(
+                            pyscope, (PyObject)code, pythonFile,
+                            inputs, outputs,
+                            beforeScript, afterScript,
+                            marshallOutputs
+                        );
             }
             catch (PythonException pyEx)
             {
@@ -428,13 +504,19 @@ namespace Python.Runtime
             IDictionary<string, object> inputs,
             IDictionary<string, object> outputs,
             string beforeScript = null,
-            string afterScript = null
+            string afterScript = null,
+            bool marshallOutputs = true
         )
         {
             try
             {
                 using (Py.GIL())
-                    ExecuteScope((PyModule)scope, (PyObject)code, pythonFile, inputs, outputs, beforeScript, afterScript);
+                    ExecuteScope(
+                            (PyModule)scope, (PyObject)code, pythonFile,
+                            inputs, outputs,
+                            beforeScript, afterScript,
+                            marshallOutputs
+                        );
             }
             catch (PythonException pyEx)
             {
@@ -470,7 +552,8 @@ namespace Python.Runtime
             IDictionary<string, object> inputs,
             IDictionary<string, object> outputs,
             string beforeScript = null,
-            string afterScript = null)
+            string afterScript = null,
+            bool marshallOutputs = true)
         {
             pyscope.Set("__file__", pythonFile ?? string.Empty);
 
@@ -492,7 +575,12 @@ namespace Python.Runtime
             // set outputs and wrap possible python objects
             foreach (var pair in new Dictionary<string, object>(outputs))
                 if (pyscope.TryGet(pair.Key, out object outputValue))
-                    outputs[pair.Key] = MarshallOutput(outputValue);
+                {
+                    if (marshallOutputs)
+                        outputs[pair.Key] = MarshallOutput(outputValue);
+                    else
+                        outputs[pair.Key] = outputValue;
+                }
         }
 
         static object MarshallOutput(object value)
