@@ -386,6 +386,12 @@ namespace Python.Runtime
                 var arrayType = Array.CreateInstance(elementType, 0).GetType();
                 return ToArray(value, arrayType, out result, setError);
             }
+            
+            // Convert python iterables to IEnumerable argument
+            if (obType == typeof(IEnumerable))
+            {
+                return ToArray(value, typeof(object[]), out result, setError);
+            }
 
             // Conversion to 'Object' is done based on some reasonable default
             // conversions (Python string -> managed string).
