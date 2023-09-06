@@ -16,10 +16,8 @@ namespace Python.Runtime
     {
         static void Log(string message) => Debug.WriteLine($"mcneel.pythonnet: {message}");
 
-        public Version Version { get; private set; }
-
         #region Initialization
-        public RhinoCodePythonEngine(string enigneRoot, Version version)
+        public RhinoCodePythonEngine(string enigneRoot, int major, int minor)
         {
             Log($"CPython engine path: {enigneRoot}");
 #if MACOS
@@ -27,14 +25,12 @@ namespace Python.Runtime
             // this is so less code changes are done the pythonnet source
             var pythonLib = $"libpython{version.Major}.{version.Minor}.dylib";
 #elif WINDOWS
-            var pythonLib = $"python{version.Major}{version.Minor}.dll";
+            var pythonLib = $"python{major}{minor}.dll";
 #endif
             var dllPath = Path.Combine(enigneRoot, pythonLib);
             LibraryLoader.Instance.Load(dllPath);
             PythonEngine.PythonHome = enigneRoot;
             Log($"Library loader set to: {dllPath}");
-
-            Version = version;
 
             // start cpython runtime
             Start();
