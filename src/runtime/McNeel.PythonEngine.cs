@@ -23,7 +23,7 @@ namespace Python.Runtime
 #if MACOS
             // setup the darwin loader manually so it can find the native python shared lib
             // this is so less code changes are done the pythonnet source
-            var pythonLib = $"libpython{major}.{major}.dylib";
+            var pythonLib = $"libpython{major}.{minor}.dylib";
 #elif WINDOWS
             var pythonLib = $"python{major}{minor}.dll";
 #endif
