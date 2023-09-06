@@ -437,8 +437,7 @@ namespace Python.Runtime
 
                 if (Runtime.PyInt_Check(value))
                 {
-                    result = new PyInt(value);
-                    return true;
+                    return ToPrimitive(value, int32Type, out result, setError);
                 }
 
                 result = new PyObject(value);
