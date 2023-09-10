@@ -5,6 +5,7 @@ using System.Text;
 using System.Diagnostics;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.RegularExpressions;
 using System.Dynamic;
 
 using Python.Runtime.Platform;
@@ -282,17 +283,29 @@ namespace Python.Runtime
         #region Execution
         public class PyException : Exception
         {
+            static readonly Regex s_msgParser = new Regex(@",\sline\s(?<line>\d+?),\sin\s(?<module>.+)");
             readonly string _pyStackTrace;
+
+            public int LineNumber { get; } = -1;
 
             public PyException(PythonException pyEx)
                 : base(pyEx.Message)
             {
+                string traceback = pyEx.Traceback is null ? string.Empty : PythonException.TracebackToString(pyEx.Traceback);
+
                 _pyStackTrace = pyEx.Traceback is null ? string.Empty : string.Join(
                     Environment.NewLine,
                     "Traceback (most recent call last):",
-                    PythonException.TracebackToString(pyEx.Traceback),
+                    traceback,
                     $"{pyEx.Type.Name}: {pyEx.Message}"
                 );
+
+                Match m = s_msgParser.Match(traceback);
+                if (m.Success
+                        && int.TryParse(m.Groups["line"].Value, out int line))
+                {
+                    LineNumber = line;
+                }
             }
 
             public override string ToString() => _pyStackTrace;
