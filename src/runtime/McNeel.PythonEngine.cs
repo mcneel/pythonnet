@@ -15,6 +15,8 @@ namespace Python.Runtime
 {
     public unsafe class RhinoCodePythonEngine
     {
+        const string COMPLETE_ATTR = "__complete__";
+
         static void Log(string message) => Debug.WriteLine($"mcneel.pythonnet: {message}");
 
         #region Initialization
@@ -391,6 +393,16 @@ namespace Python.Runtime
 
                         if (pyObj is PyObject)
                         {
+                            if (pyObj.HasAttr(COMPLETE_ATTR))
+                            {
+                                using (PyObject __complete__ = pyObj.GetAttr(COMPLETE_ATTR))
+                                using (PyList list = new PyList(__complete__))
+                                {
+                                    members = list.Select(i => i.ToString()!).ToArray();
+                                    return true;
+                                }
+                            }
+
                             IEnumerable<string> pymembers = pyObj.GetDynamicMemberNames();
                             if (!privates)
                                 pymembers = pymembers.Where(m => !m.StartsWith("_"));
