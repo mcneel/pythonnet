@@ -454,7 +454,7 @@ namespace Python.Runtime
             }
         }
 
-        public object CompileCode(string codeId, string scopeName, string pythonCode, string pythonFile)
+        public object CompileCode(string codeId, string pythonCode, string pythonFile)
         {
             try
             {
