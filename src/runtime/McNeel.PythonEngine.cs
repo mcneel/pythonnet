@@ -302,8 +302,11 @@ namespace Python.Runtime
                     $"{pyEx.Type.Name}: {pyEx.Message}"
                 );
 
-                Match m = s_msgParser.Match(traceback);
-                if (m.Success
+                Match m = s_msgParser.Matches(traceback)
+                                     .OfType<Match>()
+                                     .LastOrDefault();
+                if (m is Match
+                        && m.Success
                         && int.TryParse(m.Groups["line"].Value, out int line))
                 {
                     LineNumber = line;
