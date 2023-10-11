@@ -611,10 +611,13 @@ namespace Python.Runtime
         {
             switch (value)
             {
-                case IEnumerable<object> enumerable:
+                case object[] array:
+                    return array.Select(i => MarshallOutput(i)).ToArray();
+
+                case List<object> enumerable:
                     return enumerable.Select(i => MarshallOutput(i)).ToList();
 
-                case IDictionary<object, object> dict:
+                case Dictionary<object, object> dict:
                     return dict.Select(p =>
                     {
                         return new KeyValuePair<object, object>(MarshallOutput(p.Key), MarshallOutput(p.Value));
