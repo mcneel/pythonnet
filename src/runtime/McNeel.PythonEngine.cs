@@ -291,7 +291,7 @@ namespace Python.Runtime
             public int LineNumber { get; } = -1;
 
             public PyException(PythonException pyEx)
-                : base(pyEx.Message)
+                : base(ParseMessage(pyEx))
             {
                 string traceback = pyEx.Traceback is null ? string.Empty : PythonException.TracebackToString(pyEx.Traceback);
 
@@ -299,7 +299,7 @@ namespace Python.Runtime
                     Environment.NewLine,
                     "Traceback (most recent call last):",
                     traceback,
-                    $"{pyEx.Type.Name}: {pyEx.Message}"
+                    $"{pyEx.Type.Name}: {Message}"
                 );
 
                 Match m = s_msgParser.Matches(traceback)
@@ -314,6 +314,14 @@ namespace Python.Runtime
             }
 
             public override string ToString() => _pyStackTrace;
+
+            static string ParseMessage(PythonException pyEx)
+            {
+                if (pyEx.Message.Equals("None", StringComparison.InvariantCultureIgnoreCase))
+                    return $"{pyEx.Type.Name} exception";
+
+                return pyEx.Message;
+            }
         }
 
         public int GetLineNumber(object frame) => Runtime.PyFrame_GetLineNumber(((PyObject)frame).Handle);
