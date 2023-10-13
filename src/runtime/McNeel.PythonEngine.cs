@@ -645,6 +645,11 @@ namespace Python.Runtime
                 return MarshallOutput(co.inst);
             }
 
+            else if (Runtime.PyObject_TYPE(pyObj) == Runtime.PyNoneType)
+            {
+                return null;
+            }
+
             else if (Runtime.PyList_Check(pyObj))
             {
                 var l = new PyList(pyObj);
