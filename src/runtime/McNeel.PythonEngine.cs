@@ -285,16 +285,21 @@ namespace Python.Runtime
         #region Execution
         public class PyException : Exception
         {
-            static readonly Regex s_msgParser = new Regex(@"File ""file:.+,\sline\s(?<line>\d+?),\sin\s(?<module>.+)");
+            static readonly Regex s_msgParser = new Regex(@"(?<message>.+)\(.+line\s(?<line>\d+?)\)");
+            static readonly Regex s_tbParser = new Regex(@"File ""file:.+,\sline\s(?<line>\d+?),\sin\s(?<module>.+)");
+
+            readonly string _message;
             readonly string _pyStackTrace;
+
+            public override string Message => _message;
 
             public int LineNumber { get; } = -1;
 
-            public PyException(PythonException pyEx)
-                : base(ParseMessage(pyEx))
+            public PyException(PythonException pyEx) : base()
             {
                 string traceback = pyEx.Traceback is null ? string.Empty : PythonException.TracebackToString(pyEx.Traceback);
 
+                _message = ParseMessage(pyEx);
                 _pyStackTrace = pyEx.Traceback is null ? string.Empty : string.Join(
                     Environment.NewLine,
                     "Traceback (most recent call last):",
@@ -302,14 +307,24 @@ namespace Python.Runtime
                     $"{pyEx.Type.Name}: {Message}"
                 );
 
-                Match m = s_msgParser.Matches(traceback)
-                                     .OfType<Match>()
-                                     .LastOrDefault();
+                Match m = s_tbParser.Matches(traceback)
+                                    .OfType<Match>()
+                                    .LastOrDefault();
                 if (m is Match
                         && m.Success
                         && int.TryParse(m.Groups["line"].Value, out int line))
                 {
                     LineNumber = line;
+                }
+                else
+                {
+                    m = s_msgParser.Match(Message);
+                    if (m.Success
+                            && int.TryParse(m.Groups["line"].Value, out line))
+                    {
+                        _message = m.Groups["message"].Value;
+                        LineNumber = line;
+                    }
                 }
             }
 
