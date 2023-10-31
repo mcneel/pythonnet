@@ -286,7 +286,7 @@ namespace Python.Runtime
         public class PyException : Exception
         {
             static readonly Regex s_msgParser = new Regex(@"(?<message>.+)\(.+line\s(?<line>\d+?)\)");
-            static readonly Regex s_tbParser = new Regex(@"File ""file:.+,\sline\s(?<line>\d+?),\sin\s(?<module>.+)");
+            static readonly Regex s_tbParser = new Regex(@"File "".+,\sline\s(?<line>\d+?),\sin\s(?<module>.+)");
 
             readonly string _message;
             readonly string _pyStackTrace;
