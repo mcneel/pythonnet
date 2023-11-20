@@ -40,7 +40,11 @@ namespace Python.Runtime
             Log($"Initialized python engine");
 
             // store the default search paths for resetting the engine later
-            StoreSysPaths();
+            using (Py.GIL())
+            {
+                StoreSysPaths();
+            }
+
             Log($"Setup default search paths");
         }
 
@@ -74,10 +78,11 @@ namespace Python.Runtime
 
         public void SetSearchPaths(IEnumerable<string> paths)
         {
-            // set sys paths
-            PyList sysPaths = RestoreSysPaths();
             using (Py.GIL())
             {
+                // set sys paths
+                PyList sysPaths = RestoreSysPaths();
+
                 // manually add PYTHONPATH since we are overwriting the sys paths
                 var pythonPath = Environment.GetEnvironmentVariable("PYTHONPATH");
                 if (pythonPath != null && pythonPath != string.Empty)
@@ -98,76 +103,70 @@ namespace Python.Runtime
             }
         }
 
-        public void ClearSearchPaths() => RestoreSysPaths();
-
-        void StoreSysPaths()
+        public void ClearSearchPaths()
         {
             using (Py.GIL())
             {
-                var currentSysPath = GetSysPaths();
-                var sysPathRef = currentSysPath.BorrowNullable();
-                var sysPaths = new List<string>();
-                long itemsCount = currentSysPath.Length();
-                for (nint i = 0; i < itemsCount; i++)
-                {
-                    BorrowedReference item =
-                        Runtime.PyList_GetItem(sysPathRef, i);
-                    string path = Runtime.GetManagedString(item);
-                    sysPaths.Add(path);
-                }
-                _defaultSysPaths = sysPaths.ToArray();
+                RestoreSysPaths();
             }
+        }
+
+        void StoreSysPaths()
+        {
+            var currentSysPath = GetSysPaths();
+            var sysPathRef = currentSysPath.BorrowNullable();
+            var sysPaths = new List<string>();
+            long itemsCount = currentSysPath.Length();
+            for (nint i = 0; i < itemsCount; i++)
+            {
+                BorrowedReference item =
+                    Runtime.PyList_GetItem(sysPathRef, i);
+                string path = Runtime.GetManagedString(item);
+                sysPaths.Add(path);
+            }
+            _defaultSysPaths = sysPaths.ToArray();
         }
 
         PyList RestoreSysPaths()
         {
-            using (Py.GIL())
+            var newList = new PyList();
+            int i = 0;
+            foreach (var searchPath in _defaultSysPaths ?? new string[] { })
             {
-                var newList = new PyList();
-                int i = 0;
-                foreach (var searchPath in _defaultSysPaths ?? new string[] { })
-                {
-                    using var searthPathStr = new PyString(searchPath);
-                    newList.Insert(i, searthPathStr);
-                    i++;
-                }
-                SetSysPaths(newList);
-                return newList;
+                using var searthPathStr = new PyString(searchPath);
+                newList.Insert(i, searthPathStr);
+                i++;
             }
+            SetSysPaths(newList);
+            return newList;
         }
 
         PyList GetSysPaths()
         {
-            using (Py.GIL())
+            // get sys paths
+            using var sys = Runtime.PyImport_ImportModule("sys");
+            using (PyObject sysObj = sys.MoveToPyObject())
             {
-                // get sys paths
-                using var sys = Runtime.PyImport_ImportModule("sys");
-                using (PyObject sysObj = sys.MoveToPyObject())
-                {
-                    PyObject sysPathsObj = sysObj.GetAttr("path");
-                    return PyList.AsList(sysPathsObj);
-                }
+                PyObject sysPathsObj = sysObj.GetAttr("path");
+                return PyList.AsList(sysPathsObj);
             }
         }
 
         void SetSysPaths(PyList sysPaths)
         {
-            using (Py.GIL())
+            var paths = GetSysPaths();
+
+            // set sys path
+            using var sys = Runtime.PyImport_ImportModule("sys");
+            using (PyObject sysObj = sys.MoveToPyObject())
             {
-                var paths = GetSysPaths();
-
-                // set sys path
-                using var sys = Runtime.PyImport_ImportModule("sys");
-                using (PyObject sysObj = sys.MoveToPyObject())
-                {
-                    sysObj.SetAttr("path", sysPaths);
-                }
-
-                // dispose existing paths
-                foreach (PyObject path in paths)
-                    path.Dispose();
-                paths.Dispose();
+                sysObj.SetAttr("path", sysPaths);
             }
+
+            // dispose existing paths
+            foreach (PyObject path in paths)
+                path.Dispose();
+            paths.Dispose();
         }
         #endregion
 
