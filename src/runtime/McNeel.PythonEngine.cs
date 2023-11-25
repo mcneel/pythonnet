@@ -496,12 +496,6 @@ namespace Python.Runtime
             }
         }
 
-        public object CreateScope(string scopeName, string pythonFile)
-        {
-            using (Py.GIL())
-                return PrepareScope(scopeName, pythonFile);
-        }
-
         public void RunScript(string script)
         {
             try
@@ -515,54 +509,33 @@ namespace Python.Runtime
             }
         }
 
-        public void RunCode(
-            string scopeName,
-            object code,
-            string pythonFile,
-            IDictionary<string, object> inputs,
-            IDictionary<string, object> outputs,
-            string beforeScript = null,
-            string afterScript = null,
-            bool marshallOutputs = true
-        )
-        {
-            try
-            {
-                using (Py.GIL())
-                using (PyModule pyscope = PrepareScope(scopeName, pythonFile))
-                    ExecuteScope(
-                            pyscope, (PyObject)code, pythonFile,
-                            inputs, outputs,
-                            beforeScript, afterScript,
-                            marshallOutputs
-                        );
-            }
-            catch (PythonException pyEx)
-            {
-                throw new PyException(pyEx);
-            }
-        }
+        public IDisposable GIL() => Py.GIL();
+
+        public object CreateScope(string scopeName, string pythonFile) => PrepareScope(scopeName, pythonFile);
 
         public void RunScope(
             object scope,
             object code,
             string pythonFile,
-            IDictionary<string, object> inputs,
-            IDictionary<string, object> outputs,
             string beforeScript = null,
-            string afterScript = null,
-            bool marshallOutputs = true
+            string afterScript = null
         )
         {
+            PyModule pyscope = (PyModule)scope;
+            PyObject pycode = (PyObject)code;
+
             try
             {
-                using (Py.GIL())
-                    ExecuteScope(
-                            (PyModule)scope, (PyObject)code, pythonFile,
-                            inputs, outputs,
-                            beforeScript, afterScript,
-                            marshallOutputs
-                        );
+                pyscope.Set("__file__", pythonFile ?? string.Empty);
+
+                // add default references
+                if (beforeScript is string)
+                    pyscope.Exec(beforeScript);
+
+                pyscope.Execute(pycode);
+
+                if (afterScript is string)
+                    pyscope.Exec(afterScript);
             }
             catch (PythonException pyEx)
             {
@@ -591,45 +564,7 @@ namespace Python.Runtime
             return pyscope;
         }
 
-        void ExecuteScope(
-            PyModule pyscope,
-            PyObject pycode,
-            string pythonFile,
-            IDictionary<string, object> inputs,
-            IDictionary<string, object> outputs,
-            string beforeScript = null,
-            string afterScript = null,
-            bool marshallOutputs = true)
-        {
-            pyscope.Set("__file__", pythonFile ?? string.Empty);
-
-            // set inputs and unwrap possible python objects
-            foreach (var pair in inputs)
-            {
-                pyscope.Set(pair.Key, pair.Value);
-            }
-
-            // add default references
-            if (beforeScript is string)
-                pyscope.Exec(beforeScript);
-
-            pyscope.Execute(pycode);
-
-            if (afterScript is string)
-                pyscope.Exec(afterScript);
-
-            // set outputs and wrap possible python objects
-            foreach (var pair in new Dictionary<string, object>(outputs))
-                if (pyscope.TryGet(pair.Key, out object outputValue))
-                {
-                    if (marshallOutputs)
-                        outputs[pair.Key] = MarshallOutput(outputValue);
-                    else
-                        outputs[pair.Key] = outputValue;
-                }
-        }
-
-        static object MarshallOutput(object value)
+        public object MarshallOutput(object value)
         {
             switch (value)
             {
@@ -652,7 +587,7 @@ namespace Python.Runtime
             return value;
         }
 
-        static object MarshallOutput(PyObject pyObj)
+        object MarshallOutput(PyObject pyObj)
         {
             if (ManagedType.GetManagedObject(pyObj) is CLRObject co)
             {
