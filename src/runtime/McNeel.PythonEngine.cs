@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Diagnostics;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
@@ -562,6 +563,18 @@ namespace Python.Runtime
             PyModule pyscope = Py.CreateScope(scopeName);
             pyscope.Set("__file__", pythonFile ?? string.Empty);
             return pyscope;
+        }
+        #endregion
+
+        #region Marshalling
+        public object MarshInputList(IEnumerable enumerable)
+        {
+            PyList pyList = new PyList();
+
+            foreach (object obj in enumerable)
+                pyList.Append(PyObject.FromManagedObject(obj));
+
+            return pyList;
         }
 
         public object MarshOutput(object value)
