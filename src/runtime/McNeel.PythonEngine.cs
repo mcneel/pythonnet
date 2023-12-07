@@ -564,34 +564,34 @@ namespace Python.Runtime
             return pyscope;
         }
 
-        public object MarshallOutput(object value)
+        public object MarshOutput(object value)
         {
             switch (value)
             {
                 case object[] array:
-                    return array.Select(i => MarshallOutput(i)).ToArray();
+                    return array.Select(i => MarshOutput(i)).ToArray();
 
                 case List<object> enumerable:
-                    return enumerable.Select(i => MarshallOutput(i)).ToList();
+                    return enumerable.Select(i => MarshOutput(i)).ToList();
 
                 case Dictionary<object, object> dict:
                     return dict.Select(p =>
                     {
-                        return new KeyValuePair<object, object>(MarshallOutput(p.Key), MarshallOutput(p.Value));
+                        return new KeyValuePair<object, object>(MarshOutput(p.Key), MarshOutput(p.Value));
                     }).ToDictionary(p => p.Key, p => p.Value);
 
                 case PyObject pyObj:
-                    return MarshallOutput(pyObj);
+                    return MarshOutput(pyObj);
             }
 
             return value;
         }
 
-        object MarshallOutput(PyObject pyObj)
+        object MarshOutput(PyObject pyObj)
         {
             if (ManagedType.GetManagedObject(pyObj) is CLRObject co)
             {
-                return MarshallOutput(co.inst);
+                return MarshOutput(co.inst);
             }
 
             else if (Runtime.PyObject_TYPE(pyObj) == Runtime.PyNoneType)
@@ -602,13 +602,13 @@ namespace Python.Runtime
             else if (Runtime.PyList_Check(pyObj))
             {
                 var l = new PyList(pyObj);
-                return l.Select(i => MarshallOutput(i)).ToList();
+                return l.Select(i => MarshOutput(i)).ToList();
             }
 
             else if (Runtime.PyDict_Check(pyObj))
             {
                 var d = new PyDict(pyObj);
-                return d.Keys().ToDictionary(k => MarshallOutput(k), k => MarshallOutput(d[k]));
+                return d.Keys().ToDictionary(k => MarshOutput(k), k => MarshOutput(d[k]));
             }
 
             else if (Runtime.PyString_CheckExact(pyObj))
