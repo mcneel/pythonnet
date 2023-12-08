@@ -326,6 +326,20 @@ namespace Python.Runtime
                     throw new ArgumentException("We should never receive instances of other managed types");
             }
 
+            // NOTE: generate a delegate to cast a python callable into a System.Delegate
+            if (typeof(System.Delegate).IsAssignableFrom(obType))
+            {
+                result = null;
+                if (Runtime.PyCallable_Check(value) < 1)
+                {
+                    Exceptions.SetError(Exceptions.TypeError, "object must be callable");
+                    return false;
+                }
+
+                result = PythonEngine.DelegateManager.GetDelegate(obType, new PyObject(value));
+                return true;
+            }
+
             if (value == Runtime.PyNone && !obType.IsValueType)
             {
                 result = null;

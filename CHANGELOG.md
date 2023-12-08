@@ -950,3 +950,4 @@ This version improves performance on benchmarks significantly compared to 2.3.
 [i238]: https://github.com/pythonnet/pythonnet/issues/238
 [i1481]: https://github.com/pythonnet/pythonnet/issues/1481
 [i1672]: https://github.com/pythonnet/pythonnet/pull/1672
+[p2015]: https://github.com/pythonnet/pythonnet/pull/2015
