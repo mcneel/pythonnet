@@ -227,6 +227,8 @@ namespace Python.Runtime
             {
                 var item = iter.Value;
                 var name = iter.Key;
+                if (name == "None")
+                    name = "NONE";
                 impl.dotNetMembers.Add(name);
                 Runtime.PyDict_SetItemString(dict, name, item);
                 if (ClassBase.CilToPyOpMap.TryGetValue(name, out var pyOp)

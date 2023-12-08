@@ -55,7 +55,7 @@ def pytest_configure(config):
     if runtime_opt == "coreclr":
         # This is optional now:
         #
-        # fw = "net6.0"
+        # fw = "net7.0"
         # runtime_params["runtime_config"] = str(
         #     bin_path / "Python.Test.runtimeconfig.json"
         # )

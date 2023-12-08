@@ -296,6 +296,14 @@ namespace Python.Runtime
             result = null;
             switch (ManagedType.GetManagedObject(value))
             {
+                case ModuleObject mo:
+                    result = mo;
+                    break;
+
+                case Iterator it:
+                    result = it;
+                    break;
+
                 case CLRObject co:
                     object tmp = co.inst;
                     if (obType.IsInstanceOfType(tmp))
@@ -369,6 +377,14 @@ namespace Python.Runtime
             if (obType.IsArray)
             {
                 return ToArray(value, obType, out result, setError);
+            }
+
+            if (obType.GetInterface(nameof(IEnumerable)) != null
+                    && obType.GenericTypeArguments.Length == 1
+                    && obType.GenericTypeArguments[0] is Type elementType)
+            {
+                var arrayType = Array.CreateInstance(elementType, 0).GetType();
+                return ToArray(value, arrayType, out result, setError);
             }
 
             // Conversion to 'Object' is done based on some reasonable default

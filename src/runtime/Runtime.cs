@@ -705,6 +705,12 @@ namespace Python.Runtime
         internal static PyThreadState* PyThreadState_Get() => Delegates.PyThreadState_Get();
 
 
+        internal static PyThreadState* PyThreadState_Swap(PyThreadState* threadState) => Delegates.PyThreadState_Swap(threadState);
+
+
+        internal static int PyFrame_GetLineNumber(IntPtr frame) => Delegates.PyFrame_GetLineNumber(frame);
+
+
         internal static PyThreadState* _PyThreadState_UncheckedGet() => Delegates._PyThreadState_UncheckedGet();
 
 

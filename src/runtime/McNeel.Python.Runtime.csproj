@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Project Setup: shared -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <Platforms>AnyCPU</Platforms>
+    <LangVersion>10.0</LangVersion>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Python.Runtime</RootNamespace>
+    <AssemblyName>McNeel.Python39.Runtime</AssemblyName>
+    <NoWarn>1591;NU1701</NoWarn>
+    <NoWarn>$(NoWarn);CS0105;CS3021;CS0618;CS0067;CS0649;CS8600</NoWarn>
+    <NoWarn>$(NoWarn);CS1030</NoWarn>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <AppendTargetFrameworkToOutputPath>False</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <!-- Project Setup: Windows -->
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
+  </PropertyGroup>
+
+  <!-- Project Setup: macOS -->
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <DefineConstants>$(DefineConstants);MACOS</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="resources\clr.py">
+      <LogicalName>clr.py</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="resources\interop.py">
+      <LogicalName>interop.py</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Mixins\*.py" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Lost.Compat.NullabilityAttributes" Version="0.0.4" PrivateAssets="All" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.1.1" PrivateAssets="All" />
+    <PackageReference Include="System.Reflection.Emit" Version="4.3.0" />
+  </ItemGroup>
+</Project>
