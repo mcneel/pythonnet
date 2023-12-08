@@ -320,7 +320,7 @@ namespace Python.Runtime
 
             Runtime.PyType_Modified(type.Reference);
 
-            //DebugUtil.DumpType(type);
+            // DebugUtil.DumpType(type);
         }
 
         static int InheritOrAllocateStandardFields(BorrowedReference type)
@@ -374,7 +374,7 @@ namespace Python.Runtime
             return new PyTuple(bases);
         }
 
-        internal static NewReference CreateSubType(BorrowedReference py_name, ClassBase py_base_type, IList<Type> interfaces, BorrowedReference dictRef)
+        internal static NewReference CreateSubType(BorrowedReference py_name, ClassBase baseClass, IEnumerable<Type> interfaces, BorrowedReference dictRef)
         {
             // Utility to create a subtype of a managed type with the ability for the
             // a python subtype able to override the managed implementation
@@ -415,10 +415,10 @@ namespace Python.Runtime
             }
 
             // create the new managed type subclassing the base managed type
-            return ReflectedClrType.CreateSubclass(py_base_type, interfaces, name,
-                ns: (string?)namespaceStr,
-                assembly: (string?)assembly,
-                dict: dictRef);
+            return ReflectedClrType.CreateSubclass(baseClass, interfaces, name,
+                                                   ns: (string?)namespaceStr,
+                                                   assembly: (string?)assembly,
+                                                   dict: dictRef);
         }
 
         internal static IntPtr WriteMethodDef(IntPtr mdef, IntPtr name, IntPtr func, PyMethodFlags flags, IntPtr doc)
