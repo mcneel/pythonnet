@@ -418,7 +418,7 @@ namespace Python.Runtime
             return ReflectedClrType.CreateSubclass(baseClass, interfaces, name,
                                                    ns: (string?)namespaceStr,
                                                    assembly: (string?)assembly,
-                                                    dict: dictRef);
+                                                   dict: dictRef);
         }
 
         internal static IntPtr WriteMethodDef(IntPtr mdef, IntPtr name, IntPtr func, PyMethodFlags flags, IntPtr doc)
