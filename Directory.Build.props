@@ -21,4 +21,7 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference> -->
   </ItemGroup>
+
+  <Import Condition="Exists('$(MSBuildThisFileDirectory)..\..\Directory.Build.props')"
+          Project="$(MSBuildThisFileDirectory)..\..\Directory.Build.props" />
 </Project>
