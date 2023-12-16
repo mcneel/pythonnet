@@ -574,17 +574,22 @@ namespace Python.Runtime
                 case string str:
                     return MarshToPyObject(value);
 
-                case List<object> enumerable:
+                case IDictionary dict:
+                    PyDict pyDict = new PyDict();
+                    foreach (KeyValuePair<object, object> pair in dict)
+                    {
+                        if (pair.Key is string key)
+                            pyDict[key] = MarshInput(pair.Value);
+                    }
+                    return pyDict;
+
+                case IEnumerable enumerable:
                     PyList pyList = new PyList();
                     foreach (object obj in enumerable)
+                    {
                         pyList.Append(MarshInput(obj));
+                    }
                     return pyList;
-
-                case Dictionary<string, object> dict:
-                    PyDict pyDict = new PyDict();
-                    foreach (KeyValuePair<string, object> pair in dict)
-                        pyDict[pair.Key] = MarshInput(pair.Value);
-                    return pyDict;
 
                 case PyObject pyObj:
                     return pyObj;
