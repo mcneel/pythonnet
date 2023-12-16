@@ -567,6 +567,9 @@ namespace Python.Runtime
         #endregion
 
         #region Marshalling
+        // NOTE:
+        // ensures incoming data is marshalled into
+        // closest-matching Python objects
         public PyObject MarshInput(object value)
         {
             switch (value)
@@ -583,9 +586,9 @@ namespace Python.Runtime
                     }
                     return pyDict;
 
-                case IEnumerable enumerable:
+                case IList list:
                     PyList pyList = new PyList();
-                    foreach (object obj in enumerable)
+                    foreach (object obj in list)
                     {
                         pyList.Append(MarshInput(obj));
                     }
@@ -604,6 +607,9 @@ namespace Python.Runtime
             return PyObject.FromNullableReference(_value.Borrow());
         }
 
+        // NOTE:
+        // ensures outgoing data is marshalled into
+        // closest-matching dotnet objects
         public object MarshOutput(object value)
         {
             switch (value)
@@ -611,10 +617,15 @@ namespace Python.Runtime
                 case object[] array:
                     return array.Select(i => MarshOutput(i)).ToArray();
 
-                case List<object> enumerable:
-                    return enumerable.Select(i => MarshOutput(i)).ToList();
+                case IList list:
+                    var dotnetList = new List<object>();
+                    foreach (object obj in dotnetList)
+                    {
+                        dotnetList.Append(MarshOutput(obj));
+                    }
+                    return dotnetList;
 
-                case Dictionary<object, object> dict:
+                case IDictionary<object, object> dict:
                     return dict.Select(p =>
                     {
                         return new KeyValuePair<object, object>(MarshOutput(p.Key), MarshOutput(p.Value));
