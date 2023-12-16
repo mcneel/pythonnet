@@ -567,14 +567,36 @@ namespace Python.Runtime
         #endregion
 
         #region Marshalling
-        public object MarshInputList(IEnumerable enumerable)
+        public PyObject MarshInput(object value)
         {
-            PyList pyList = new PyList();
+            switch (value)
+            {
+                case string str:
+                    return MarshToPyObject(value);
 
-            foreach (object obj in enumerable)
-                pyList.Append(PyObject.FromManagedObject(obj));
+                case List<object> enumerable:
+                    PyList pyList = new PyList();
+                    foreach (object obj in enumerable)
+                        pyList.Append(MarshInput(obj));
+                    return pyList;
 
-            return pyList;
+                case Dictionary<string, object> dict:
+                    PyDict pyDict = new PyDict();
+                    foreach (KeyValuePair<string, object> pair in dict)
+                        pyDict[pair.Key] = MarshInput(pair.Value);
+                    return pyDict;
+
+                case PyObject pyObj:
+                    return pyObj;
+            }
+
+            return MarshToPyObject(value);
+        }
+
+        PyObject MarshToPyObject(object value)
+        {
+            using var _value = Converter.ToPythonDetectType(value);
+            return PyObject.FromNullableReference(_value.Borrow());
         }
 
         public object MarshOutput(object value)
@@ -594,13 +616,13 @@ namespace Python.Runtime
                     }).ToDictionary(p => p.Key, p => p.Value);
 
                 case PyObject pyObj:
-                    return MarshOutput(pyObj);
+                    return MarshFromPyObject(pyObj);
             }
 
             return value;
         }
 
-        object MarshOutput(PyObject pyObj)
+        object MarshFromPyObject(PyObject pyObj)
         {
             if (ManagedType.GetManagedObject(pyObj) is CLRObject co)
             {
@@ -615,13 +637,13 @@ namespace Python.Runtime
             else if (Runtime.PyList_Check(pyObj))
             {
                 var l = new PyList(pyObj);
-                return l.Select(i => MarshOutput(i)).ToList();
+                return l.Select(i => MarshFromPyObject(i)).ToList();
             }
 
             else if (Runtime.PyDict_Check(pyObj))
             {
                 var d = new PyDict(pyObj);
-                return d.Keys().ToDictionary(k => MarshOutput(k), k => MarshOutput(d[k]));
+                return d.Keys().ToDictionary(k => MarshFromPyObject(k), k => MarshFromPyObject(d[k]));
             }
 
             else if (Runtime.PyString_CheckExact(pyObj))
