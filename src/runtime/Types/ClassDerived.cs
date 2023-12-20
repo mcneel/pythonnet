@@ -296,6 +296,7 @@ namespace Python.Runtime
                                          })
                                         .Concat(baseInterfaces.SelectMany(x => x.GetMethods()))
                                         .ToList();
+
             foreach (MethodInfo method in virtualMethods)
             {
                 // override the virtual method to call out to the python method, if there is one.
