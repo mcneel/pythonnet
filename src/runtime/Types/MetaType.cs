@@ -1,7 +1,7 @@
 using System;
+using System.Linq;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
@@ -119,6 +119,7 @@ namespace Python.Runtime
                     return Exceptions.RaiseTypeError("Non .NET type used as super class for meta type. This is not supported.");
                 }
             }
+
             // if the base type count is 0, there might still be interfaces to implement.
             if (baseTypes.Count == 0)
             {
@@ -163,22 +164,25 @@ namespace Python.Runtime
                 return Exceptions.RaiseTypeError("subclasses of managed classes do not support __slots__");
             }
 
-            // If __assembly__ or __namespace__ are in the class dictionary then create
-            // a managed sub type.
-            // This creates a new managed type that can be used from .net to call back
-            // into python.
-            if (null != dict)
+            // If `dict` is provided (contains '__module__' and '__qualname__') and
+            // baseType is valid for subtyping, then lets create a custom dotnet type, implementing baseType, that
+            // can be used from .net to call back into python (e.g. virtual overrides on python side)
+            if (dict != null)
             {
-                using var clsDict = new PyDict(dict);
-                if (clsDict.HasKey("__assembly__") || clsDict.HasKey("__namespace__"))
+                using (var clsDict = new PyDict(dict))
                 {
-                    return TypeManager.CreateSubType(name, baseTypes[0], interfaces, clsDict);
+                    if (!clsDict.HasKey("__namespace__"))
+                    {
+                        clsDict["__namespace__"] =
+                            (clsDict["__module__"].ToString()).ToPython();
+                    }
+                    return TypeManager.CreateSubType(name, cb, interfaces, clsDict);
                 }
             }
 
-            var base_type = Runtime.PyTuple_GetItem(bases, 0);
-
-            // otherwise just create a basic type without reflecting back into the managed side.
+            // otherwise just create a basic type without reflecting back into the managed side
+            // since the baseType does not have any need to call into python (e.g. no virtual methods)
+            BorrowedReference pyBase = Runtime.PyTuple_GetItem(bases, 0);
             IntPtr func = Util.ReadIntPtr(Runtime.PyTypeType, TypeOffset.tp_new);
             NewReference type = NativeCall.Call_3(func, tp, args, kw);
             if (type.IsNull())
@@ -196,23 +200,23 @@ namespace Python.Runtime
             flags |= TypeFlags.HaveGC;
             PyType.SetFlags(type.Borrow(), flags);
 
-            TypeManager.CopySlot(base_type, type.Borrow(), TypeOffset.tp_dealloc);
+            TypeManager.CopySlot(pyBase, type.Borrow(), TypeOffset.tp_dealloc);
 
             // Hmm - the standard subtype_traverse, clear look at ob_size to
             // do things, so to allow gc to work correctly we need to move
             // our hidden handle out of ob_size. Then, in theory we can
             // comment this out and still not crash.
-            TypeManager.CopySlot(base_type, type.Borrow(), TypeOffset.tp_traverse);
-            TypeManager.CopySlot(base_type, type.Borrow(), TypeOffset.tp_clear);
+            TypeManager.CopySlot(pyBase, type.Borrow(), TypeOffset.tp_traverse);
+            TypeManager.CopySlot(pyBase, type.Borrow(), TypeOffset.tp_clear);
 
             // derived types must have their GCHandle at the same offset as the base types
-            int clrInstOffset = Util.ReadInt32(base_type, Offsets.tp_clr_inst_offset);
+            int clrInstOffset = Util.ReadInt32(pyBase, Offsets.tp_clr_inst_offset);
             Debug.Assert(clrInstOffset > 0
                       && clrInstOffset < Util.ReadInt32(type.Borrow(), TypeOffset.tp_basicsize));
             Util.WriteInt32(type.Borrow(), Offsets.tp_clr_inst_offset, clrInstOffset);
 
             // for now, move up hidden handle...
-            var gc = (GCHandle)Util.ReadIntPtr(base_type, Offsets.tp_clr_inst);
+            var gc = (GCHandle)Util.ReadIntPtr(pyBase, Offsets.tp_clr_inst);
             Util.WriteIntPtr(type.Borrow(), Offsets.tp_clr_inst, (IntPtr)GCHandle.Alloc(gc.Target));
 
             Runtime.PyType_Modified(type.Borrow());
