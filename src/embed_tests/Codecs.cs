@@ -103,6 +103,7 @@ namespace Python.EmbeddingTest {
             using var pyListType = pyList.GetPythonType();
             Assert.IsTrue(codec.CanDecode(pyListType, typeof(IList<bool>)));
             Assert.IsTrue(codec.CanDecode(pyListType, typeof(IList<int>)));
+            Assert.IsTrue(codec.CanDecode(pyListType, typeof(System.Collections.IList)));
             Assert.IsFalse(codec.CanDecode(pyListType, typeof(System.Collections.IEnumerable)));
             Assert.IsFalse(codec.CanDecode(pyListType, typeof(IEnumerable<int>)));
             Assert.IsFalse(codec.CanDecode(pyListType, typeof(ICollection<float>)));
