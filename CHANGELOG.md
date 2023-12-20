@@ -9,8 +9,6 @@ This document follows the conventions laid out in [Keep a CHANGELOG][].
 
 ### Added
 
-- Added support for automatically casting callables as Delegate when passed as argument to a Managed method ([#2015][p2015]).
-
 ### Changed
 
 ### Fixed
@@ -940,4 +938,3 @@ This version improves performance on benchmarks significantly compared to 2.3.
 [i238]: https://github.com/pythonnet/pythonnet/issues/238
 [i1481]: https://github.com/pythonnet/pythonnet/issues/1481
 [i1672]: https://github.com/pythonnet/pythonnet/pull/1672
-[p2015]: https://github.com/pythonnet/pythonnet/pull/2015
