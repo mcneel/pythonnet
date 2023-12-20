@@ -32,6 +32,10 @@ namespace Python.Test
         {
             return o.Count;
         }
+        public int GetLengthIList(System.Collections.IList o)
+        {
+            return o.Count;
+        }
         public int GetLength2(IEnumerable<ListMember> o)
         {
             return o.Count();
