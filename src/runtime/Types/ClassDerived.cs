@@ -144,6 +144,7 @@ namespace Python.Runtime
         /// </summary>
         internal static Type CreateDerivedType(string name,
             Type baseType,
+            IList<Type> typeInterfaces,
             BorrowedReference py_dict,
             string? namespaceStr,
             string? assemblyName,
@@ -163,7 +164,9 @@ namespace Python.Runtime
             ModuleBuilder moduleBuilder = GetModuleBuilder(assemblyName, moduleName);
 
             Type baseClass = baseType;
-            var interfaces = new List<Type> { typeof(IPythonDerivedType) };
+            var interfaces = new HashSet<Type> { typeof(IPythonDerivedType) };
+            foreach(var interfaceType in typeInterfaces)
+                interfaces.Add(interfaceType);
 
             // if the base type is an interface then use System.Object as the base class
             // and add the base type to the list of interfaces this new class will implement.
@@ -214,13 +217,17 @@ namespace Python.Runtime
                 }
             }
 
-            // override any virtual methods not already overridden by the properties above
-            MethodInfo[] methods = baseType.GetMethods();
+            // override any virtual not already overridden by the properties above
+            // also override any interface method.
+            var methods = baseType.GetMethods().Concat(interfaces.SelectMany(x => x.GetMethods()));
             var virtualMethods = new HashSet<string>();
             foreach (MethodInfo method in methods)
             {
                 if (!method.Attributes.HasFlag(MethodAttributes.Virtual) |
-                    method.Attributes.HasFlag(MethodAttributes.Final))
+                    method.Attributes.HasFlag(MethodAttributes.Final)
+                    // overriding generic virtual methods is not supported
+                    // so a call to that should be deferred to the base class method.
+                    || method.IsGenericMethod)
                 {
                     continue;
                 }

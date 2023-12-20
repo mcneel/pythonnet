@@ -9,7 +9,7 @@
 import System
 import pytest
 from Python.Test import (IInterfaceTest, SubClassTest, EventArgsTest,
-                         FunctionsTest, IGenericInterface)
+                         FunctionsTest, IGenericInterface, GenericVirtualMethodTest, SimpleClass, ISayHello1)
 from System.Collections.Generic import List
 
 
@@ -327,3 +327,20 @@ def test_generic_interface():
     obj = GenericInterfaceImpl()
     SpecificInterfaceUser(obj, Int32(0))
     GenericInterfaceUser[Int32](obj, Int32(0))
+
+def test_virtual_generic_method():
+    class OverloadingSubclass(GenericVirtualMethodTest):
+        __namespace__ = "test_virtual_generic_method_cls"
+    class OverloadingSubclass2(OverloadingSubclass):
+        __namespace__ = "test_virtual_generic_method_cls"
+    obj = OverloadingSubclass()
+    assert obj.VirtMethod[int](5) == 5
+    obj = OverloadingSubclass2()
+    assert obj.VirtMethod[int](5) == 5
+
+def test_implement_interface_and_class():
+    class DualSubClass0(ISayHello1, SimpleClass):
+        __namespace__ = "Test"
+        def SayHello(self):
+            return "hello"
+    obj = DualSubClass0()

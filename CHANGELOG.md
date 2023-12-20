@@ -5,13 +5,25 @@ project adheres to [Semantic Versioning][].
 
 This document follows the conventions laid out in [Keep a CHANGELOG][].
 
-## [Unreleased][]
+## [3.0.3](https://github.com/pythonnet/pythonnet/releases/tag/v3.0.3) - 2023-10-11
 
 ### Added
 
+-   Support for Python 3.12
+
 ### Changed
 
+-   Use enum name in `repr`
+
+## [3.0.2](https://github.com/pythonnet/pythonnet/releases/tag/v3.0.2) - 2023-08-29
+
 ### Fixed
+
+-   Fixed error occuring when inheriting a class containing a virtual generic method
+-   Make a second call to `pythonnet.load` a no-op, as it was intended
+-   Added support for multiple inheritance when inheriting from a class and/or multiple interfaces
+-   Fixed error occuring when calling `GetBuffer` for anything other than `PyBUF.SIMPLE`
+-   Bumped `clr_loader` dependency to incorporate patches
 
 ## [3.0.1](https://github.com/pythonnet/pythonnet/releases/tag/v3.0.1) - 2022-11-03
 
