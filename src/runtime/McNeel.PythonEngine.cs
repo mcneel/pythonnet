@@ -53,6 +53,10 @@ namespace Python.Runtime
         {
             PythonEngine.Initialize();
             BeginThreads();
+
+            PyObjectConversions.RegisterDecoder(Python.Runtime.Codecs.SequenceDecoder.Instance);
+            PyObjectConversions.RegisterDecoder(Python.Runtime.Codecs.IterableDecoder.Instance);
+            PyObjectConversions.RegisterDecoder(Python.Runtime.Codecs.ListDecoder.Instance);
         }
 
         public void ShutDown()
