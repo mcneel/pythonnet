@@ -165,7 +165,7 @@ namespace Python.Runtime
 
             Type baseClass = baseType;
             var interfaces = new HashSet<Type> { typeof(IPythonDerivedType) };
-            foreach(var interfaceType in typeInterfaces)
+            foreach (var interfaceType in typeInterfaces)
                 interfaces.Add(interfaceType);
 
             // if the base type is an interface then use System.Object as the base class
@@ -477,23 +477,34 @@ namespace Python.Runtime
                 methodName = pyMethodName.As<string>() ?? throw new ArgumentNullException(methodNameAttribute);
             }
 
+            Type returnType;
             using var pyReturnType = func.GetAttr("_clr_return_type_");
-            using var pyArgTypes = func.GetAttr("_clr_arg_types_");
-            using var pyArgTypesIter = PyIter.GetIter(pyArgTypes);
-            var returnType = pyReturnType.AsManagedObject(typeof(Type)) as Type;
-            if (returnType == null)
+            if (GetClrTypeFromPythonType(pyReturnType) is Type clrReturnType)
+            {
+                returnType = clrReturnType;
+            }
+            else
             {
                 returnType = typeof(void);
             }
 
+
+            using var pyArgTypes = func.GetAttr("_clr_arg_types_");
+            using var pyArgTypesIter = PyIter.GetIter(pyArgTypes);
+
             var argTypes = new List<Type>();
             foreach (PyObject pyArgType in pyArgTypesIter)
             {
-                var argType = pyArgType.AsManagedObject(typeof(Type)) as Type;
-                if (argType == null)
+                Type argType;
+                if (GetClrTypeFromPythonType(pyArgType) is Type clrArgType)
+                {
+                    argType = clrArgType;
+                }
+                else
                 {
                     throw new ArgumentException("_clr_arg_types_ must be a list or tuple of CLR types");
                 }
+
                 argTypes.Add(argType);
                 pyArgType.Dispose();
             }
@@ -595,16 +606,21 @@ namespace Python.Runtime
                                              MethodAttributes.HideBySig |
                                              MethodAttributes.SpecialName;
 
+            Type propClrType;
+
             using var pyPropertyType = func.GetAttr("_clr_property_type_");
-            var propertyType = pyPropertyType.AsManagedObject(typeof(Type)) as Type;
-            if (propertyType == null)
+            if (GetClrTypeFromPythonType(pyPropertyType) is Type clrType)
+            {
+                propClrType = clrType;
+            }
+            else
             {
                 throw new ArgumentException("_clr_property_type must be a CLR type");
             }
 
             PropertyBuilder propertyBuilder = typeBuilder.DefineProperty(propertyName,
                 PropertyAttributes.None,
-                propertyType,
+                propClrType,
                 null);
 
             if (func.HasAttr("fget"))
@@ -614,7 +630,7 @@ namespace Python.Runtime
                 {
                     MethodBuilder methodBuilder = typeBuilder.DefineMethod("get_" + propertyName,
                         methodAttribs,
-                        propertyType,
+                        propClrType,
                         null);
 
                     ILGenerator il = methodBuilder.GetILGenerator();
@@ -622,7 +638,7 @@ namespace Python.Runtime
                     il.Emit(OpCodes.Ldstr, propertyName);
 #pragma warning disable CS0618 // PythonDerivedType is for internal use only
                     il.Emit(OpCodes.Call,
-                        typeof(PythonDerivedType).GetMethod("InvokeGetProperty").MakeGenericMethod(propertyType));
+                        typeof(PythonDerivedType).GetMethod("InvokeGetProperty").MakeGenericMethod(propClrType));
 #pragma warning restore CS0618 // PythonDerivedType is for internal use only
                     il.Emit(OpCodes.Ret);
 
@@ -638,7 +654,7 @@ namespace Python.Runtime
                     MethodBuilder methodBuilder = typeBuilder.DefineMethod("set_" + propertyName,
                         methodAttribs,
                         null,
-                        new[] { propertyType });
+                        new[] { propClrType });
 
                     ILGenerator il = methodBuilder.GetILGenerator();
                     il.Emit(OpCodes.Ldarg_0);
@@ -646,7 +662,7 @@ namespace Python.Runtime
                     il.Emit(OpCodes.Ldarg_1);
 #pragma warning disable CS0618 // PythonDerivedType is for internal use only
                     il.Emit(OpCodes.Call,
-                        typeof(PythonDerivedType).GetMethod("InvokeSetProperty").MakeGenericMethod(propertyType));
+                        typeof(PythonDerivedType).GetMethod("InvokeSetProperty").MakeGenericMethod(propClrType));
 #pragma warning restore CS0618 // PythonDerivedType is for internal use only
                     il.Emit(OpCodes.Ret);
 
@@ -684,6 +700,26 @@ namespace Python.Runtime
             }
 
             return moduleBuilder;
+        }
+
+        private static Type? GetClrTypeFromPythonType(PyObject pyType)
+        {
+            try
+            {
+                if (Converter.GetTypeByAlias(pyType) is Type aliasClrType)
+                {
+                    return aliasClrType;
+                }
+                else if (pyType.AsManagedObject(typeof(Type)) is Type clrType)
+                {
+                    return clrType;
+                }
+            }
+            catch
+            {
+            }
+
+            return null;
         }
     }
 
