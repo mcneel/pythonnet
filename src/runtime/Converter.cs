@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -311,6 +312,12 @@ namespace Python.Runtime
                         result = tmp;
                         return true;
                     }
+                    else if (TryCast(tmp, obType, out object? cast))
+                    {
+                        result = cast;
+                        return true;
+                    }
+
                     if (setError)
                     {
                         string typeString = tmp is null ? "null" : tmp.GetType().ToString();
@@ -997,6 +1004,34 @@ namespace Python.Runtime
             || type == typeof(Int16) || type == typeof(UInt16)
             || type == typeof(Int32) || type == typeof(UInt32)
             || type == typeof(Int64) || type == typeof(UInt64);
+
+        static bool TryCast(object source, Type targetType, out object? cast)
+        {
+            cast = default;
+            Type sourceType = source.GetType();
+
+            // Search for a cast operator in the source type
+            MethodInfo castMethod = FindCastOperatorMethod(sourceType, targetType, sourceType)
+                                       // Search in the target type if not found in source type
+                                    ?? FindCastOperatorMethod(targetType, targetType, sourceType);
+
+            if (castMethod != null)
+            {
+                cast = castMethod.Invoke(null, new[] { source });
+                return true;
+            }
+
+            return false;
+        }
+
+        static MethodInfo FindCastOperatorMethod(Type typeToSearch, Type returnType, Type parameterType)
+        {
+            return typeToSearch.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                               .FirstOrDefault(m => (m.Name == "op_Implicit" || m.Name == "op_Explicit") &&
+                                                     m.ReturnType == returnType &&
+                                                     m.GetParameters().Length == 1 &&
+                                                     m.GetParameters()[0].ParameterType == parameterType);
+        }
     }
 
     public static class ConverterExtension
