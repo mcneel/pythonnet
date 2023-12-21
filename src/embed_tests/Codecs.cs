@@ -319,7 +319,7 @@ namespace Python.EmbeddingTest
             Assert.DoesNotThrow(() =>
             {
                 codec.TryDecode(pyList, out enumerable);
-                IEnumerable<int> ints = enumerable.Cast<PyInt>().Select(i => i.ToInt32());
+                IEnumerable<int> ints = enumerable.Cast<int>();
                 Assert.AreEqual(findIndex(ints, i => EqualityComparer<int>.Default.Equals(2, i)), 1);
             });
         }
