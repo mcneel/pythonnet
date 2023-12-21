@@ -39,7 +39,8 @@ namespace Python.Test
         public sbyte[] SByteArrayField;
         public readonly List<int> ListField = new List<int>();
 
-        public T? Echo<T>(T? arg) where T: struct {
+        public T? Echo<T>(T? arg) where T : struct
+        {
             return arg;
         }
 
@@ -93,5 +94,31 @@ namespace Python.Test
         {
             return 0;
         }
+    }
+
+    public class ImplicitCastTypeA
+    {
+        public ImplicitCastTypeA(int value) => Value = value;
+        public int Value { get; }
+
+        public static implicit operator ImplicitCastTypeB(ImplicitCastTypeA d) => new ImplicitCastTypeB(d.Value);
+        public static bool operator ==(ImplicitCastTypeA a, ImplicitCastTypeA b) => a.Value == b.Value;
+        public static bool operator !=(ImplicitCastTypeA a, ImplicitCastTypeA b) => a.Value != b.Value;
+        public static bool operator ==(ImplicitCastTypeA a, ImplicitCastTypeB b) => a.Value == b.Value;
+        public static bool operator !=(ImplicitCastTypeA a, ImplicitCastTypeB b) => a.Value != b.Value;
+        public static ImplicitCastTypeA operator +(ImplicitCastTypeA a, ImplicitCastTypeB b) => new ImplicitCastTypeA(a.Value + b.Value);
+    }
+
+    public class ImplicitCastTypeB
+    {
+        public ImplicitCastTypeB(int value) => Value = value;
+        public int Value { get; }
+
+        public static implicit operator ImplicitCastTypeA(ImplicitCastTypeB d) => new ImplicitCastTypeA(d.Value);
+        public static bool operator ==(ImplicitCastTypeB a, ImplicitCastTypeB b) => a.Value == b.Value;
+        public static bool operator !=(ImplicitCastTypeB a, ImplicitCastTypeB b) => a.Value != b.Value;
+        public static bool operator ==(ImplicitCastTypeB a, ImplicitCastTypeA b) => a.Value == b.Value;
+        public static bool operator !=(ImplicitCastTypeB a, ImplicitCastTypeA b) => a.Value != b.Value;
+        public static ImplicitCastTypeB operator +(ImplicitCastTypeB a, ImplicitCastTypeA b) => new ImplicitCastTypeB(a.Value + b.Value);
     }
 }
