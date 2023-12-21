@@ -297,12 +297,12 @@ namespace Python.Runtime
             result = null;
             switch (ManagedType.GetManagedObject(value))
             {
+                // NOTE:
+                // allows extracting ModuleObject references from python scope by calling `scope.TryGet`
+                // e.g. this is used for getting clr namespace members for autocompletion.
+                // if this does not exist here `ArgumentException` is thrown in `default` case
                 case ModuleObject mo:
                     result = mo;
-                    break;
-
-                case Iterator it:
-                    result = it;
                     break;
 
                 case CLRObject co:
@@ -417,6 +417,11 @@ namespace Python.Runtime
                 if (Runtime.PyFloat_CheckExact(value))
                 {
                     return ToPrimitive(value, doubleType, out result, setError);
+                }
+
+                if (Runtime.PyInt_CheckExact(value))
+                {
+                    return ToPrimitive(value, int32Type, out result, setError);
                 }
 
                 // give custom codecs a chance to take over conversion

@@ -25,6 +25,7 @@ namespace Python.Runtime.CollectionWrappers
                 iterObject = PyIter.GetIter(pyObject);
             }
 
+            using var _ = iterObject;
             while (true)
             {
                 using var GIL = Py.GIL();

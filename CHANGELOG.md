@@ -10,6 +10,7 @@ This document follows the conventions laid out in [Keep a CHANGELOG][].
 ### Added
 
 -   Support for Python 3.12
+- Added support for subclassing abstract classes ([#2055][p2055]).
 
 ### Changed
 
@@ -950,4 +951,4 @@ This version improves performance on benchmarks significantly compared to 2.3.
 [i238]: https://github.com/pythonnet/pythonnet/issues/238
 [i1481]: https://github.com/pythonnet/pythonnet/issues/1481
 [i1672]: https://github.com/pythonnet/pythonnet/pull/1672
-[p2015]: https://github.com/pythonnet/pythonnet/pull/2015
+[p2055]: https://github.com/pythonnet/pythonnet/pull/2055

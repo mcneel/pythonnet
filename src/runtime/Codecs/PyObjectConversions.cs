@@ -18,11 +18,6 @@ namespace Python.Runtime
         static readonly DecoderGroup decoders = new();
         static readonly EncoderGroup encoders = new();
 
-        static PyObjectConversions()
-        {
-            ListDecoder.Register();
-        }
-
         /// <summary>
         /// Registers specified encoder (marshaller)
         /// <para>Python.NET will pick suitable encoder/decoder registered first</para>
