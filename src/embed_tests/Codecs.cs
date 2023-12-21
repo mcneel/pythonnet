@@ -232,7 +232,7 @@ namespace Python.EmbeddingTest {
             //ensure a PyList can be converted to a plain IEnumerable
             System.Collections.IEnumerable plainEnumerable1 = null;
             Assert.DoesNotThrow(() => { codec.TryDecode(pyList, out plainEnumerable1); });
-            CollectionAssert.AreEqual(plainEnumerable1.Cast<PyInt>().Select(i => i.ToInt32()), new List<object> { 1, 2, 3 });
+            CollectionAssert.AreEqual(plainEnumerable1.Cast<int>(), new List<int> { 1, 2, 3 });
 
             //can convert to any generic ienumerable.  If the type is not assignable from the python element
             //it will lead to an empty iterable when decoding.  TODO - should it throw?
@@ -272,7 +272,7 @@ namespace Python.EmbeddingTest {
             var fooType = foo.GetPythonType();
             System.Collections.IEnumerable plainEnumerable2 = null;
             Assert.DoesNotThrow(() => { codec.TryDecode(pyList, out plainEnumerable2); });
-            CollectionAssert.AreEqual(plainEnumerable2.Cast<PyInt>().Select(i => i.ToInt32()), new List<object> { 1, 2, 3 });
+            CollectionAssert.AreEqual(plainEnumerable2.Cast<int>(), new List<int> { 1, 2, 3 });
 
             //can convert to any generic ienumerable.  If the type is not assignable from the python element
             //it will be an exception during TryDecode
