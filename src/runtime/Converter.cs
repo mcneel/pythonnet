@@ -398,6 +398,11 @@ namespace Python.Runtime
                     return ToPrimitive(value, doubleType, out result, setError);
                 }
 
+                if (Runtime.PyInt_CheckExact(value))
+                {
+                    return ToPrimitive(value, int32Type, out result, setError);
+                }
+
                 // give custom codecs a chance to take over conversion
                 // of ints, sequences, and types derived from primitives
                 BorrowedReference pyType = Runtime.PyObject_TYPE(value);
@@ -423,8 +428,7 @@ namespace Python.Runtime
 
                 if (Runtime.PyInt_Check(value))
                 {
-                    result = new PyInt(value);
-                    return true;
+                    return ToPrimitive(value, int32Type, out result, setError);
                 }
 
                 result = new PyObject(value);

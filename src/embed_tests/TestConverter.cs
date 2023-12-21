@@ -144,11 +144,12 @@ namespace Python.EmbeddingTest
         }
 
         [Test]
-        public void PyIntImplicit()
+        public void PyIntExplicit()
         {
-            var i = new PyInt(1);
-            var ni = (PyObject)i.As<object>();
-            Assert.IsTrue(PythonReferenceComparer.Instance.Equals(i, ni));
+            int val = 42;
+            var i = new PyInt(val);
+            var ni = i.As<int>();
+            Assert.AreEqual(val, ni);
         }
 
         [Test]
