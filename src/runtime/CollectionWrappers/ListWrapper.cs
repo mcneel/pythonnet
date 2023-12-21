@@ -140,8 +140,6 @@ namespace Python.Runtime.CollectionWrappers
         void IList.RemoveAt(int index) => RemoveAt(index);
 
         void ICollection.CopyTo(Array array, int index) => throw new InvalidTypeException();
-
-        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
         #endregion
     }
 }
