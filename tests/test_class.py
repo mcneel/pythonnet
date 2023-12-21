@@ -130,9 +130,11 @@ def test_struct_construction():
 
     from Python.Test import Point
 
-    # no default constructor, must supply arguments
-    with pytest.raises(TypeError):
-        p = Point()
+    # structs can be instantiated using default ctor
+    p = Point()
+    assert p.__class__.__name__ == 'Point'
+    assert p.__module__ == 'Python.Test'
+
 
     p = Point(0, 0)
     assert p.X == 0

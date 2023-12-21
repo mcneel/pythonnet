@@ -180,6 +180,11 @@ def test_generic_value_type():
     from System import Int32
     from Python.Test import GenericStructConstructorTest
 
+    # structs can be instantiated using default ctor
+    p = GenericStructConstructorTest[Int32]()
+    assert p.__class__.__name__ == 'GenericStructConstructorTest[Int32]'
+    assert p.__module__ == 'Python.Test'
+
     ob = GenericStructConstructorTest[Int32](42)
     assert ob.Value == 42
 
