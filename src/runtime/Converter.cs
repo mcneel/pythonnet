@@ -296,6 +296,14 @@ namespace Python.Runtime
             result = null;
             switch (ManagedType.GetManagedObject(value))
             {
+                // NOTE:
+                // allows extracting ModuleObject references from python scope by calling `scope.TryGet`
+                // e.g. this is used for getting clr namespace members for autocompletion.
+                // if this does not exist here `ArgumentException` is thrown in `default` case
+                case ModuleObject mo:
+                    result = mo;
+                    break;
+
                 case CLRObject co:
                     object tmp = co.inst;
                     if (obType.IsInstanceOfType(tmp))
