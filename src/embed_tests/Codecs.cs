@@ -1,8 +1,11 @@
-namespace Python.EmbeddingTest {
+namespace Python.EmbeddingTest
+{
     using System;
     using System.Collections.Generic;
     using System.Linq;
+
     using NUnit.Framework;
+
     using Python.Runtime;
     using Python.Runtime.Codecs;
 
@@ -170,7 +173,8 @@ namespace Python.EmbeddingTest {
             ICollection<string> stringCollection = null;
             Assert.DoesNotThrow(() => { codec.TryDecode(pyList, out stringCollection); });
             Assert.AreEqual(3, stringCollection.Count());
-            Assert.Throws(typeof(InvalidCastException), () => {
+            Assert.Throws(typeof(InvalidCastException), () =>
+            {
                 string[] array = new string[3];
                 stringCollection.CopyTo(array, 0);
             });
@@ -207,7 +211,8 @@ namespace Python.EmbeddingTest {
             ICollection<string> stringCollection2 = null;
             Assert.DoesNotThrow(() => { codec.TryDecode(pyTuple, out stringCollection2); });
             Assert.AreEqual(3, stringCollection2.Count());
-            Assert.Throws(typeof(InvalidCastException), () => {
+            Assert.Throws(typeof(InvalidCastException), () =>
+            {
                 string[] array = new string[3];
                 stringCollection2.CopyTo(array, 0);
             });
@@ -256,13 +261,15 @@ namespace Python.EmbeddingTest {
             IEnumerable<string> stringEnumerable = null;
             Assert.DoesNotThrow(() => { codec.TryDecode(pyList, out stringEnumerable); });
 
-            Assert.Throws(typeof(InvalidCastException), () => {
+            Assert.Throws(typeof(InvalidCastException), () =>
+            {
                 foreach (string item in stringEnumerable)
                 {
                     var x = item;
                 }
             });
-            Assert.Throws(typeof(InvalidCastException), () => {
+            Assert.Throws(typeof(InvalidCastException), () =>
+            {
                 stringEnumerable.Count();
             });
 
@@ -283,6 +290,38 @@ namespace Python.EmbeddingTest {
 
             Assert.DoesNotThrow(() => { codec.TryDecode(pyList, out intEnumerable); });
             CollectionAssert.AreEqual(intEnumerable, new List<object> { 1, 2, 3 });
+        }
+
+        [Test]
+        public void IterableDecoderTestMultipleIterations()
+        {
+            var codec = IterableDecoder.Instance;
+            var items = new List<PyObject>() { new PyInt(1), new PyInt(2), new PyInt(3) };
+
+            var pyList = new PyList(items.ToArray());
+            var pyListType = pyList.GetPythonType();
+
+            // This ensures python iterator wrapper is proparly disposed
+            // even when the iterator is not consumed fully
+            static int findIndex<T>(IEnumerable<T> items, Func<T, bool> match)
+            {
+                int retVal = 0;
+                foreach (var item in items)
+                {
+                    if (match(item))
+                        return retVal;
+                    retVal++;
+                }
+                return -1;
+            };
+
+            System.Collections.IEnumerable enumerable = Array.Empty<object>();
+            Assert.DoesNotThrow(() =>
+            {
+                codec.TryDecode(pyList, out enumerable);
+                IEnumerable<int> ints = enumerable.Cast<PyInt>().Select(i => i.ToInt32());
+                Assert.AreEqual(findIndex(ints, i => EqualityComparer<int>.Default.Equals(2, i)), 1);
+            });
         }
 
         // regression for https://github.com/pythonnet/pythonnet/issues/1427
@@ -391,7 +430,7 @@ DateTimeDecoder.Setup()
             }
         }
 
-        public static void AcceptsDateTime(DateTime v) {}
+        public static void AcceptsDateTime(DateTime v) { }
 
         [Test]
         public void As_Object_AffectedByDecoders()
