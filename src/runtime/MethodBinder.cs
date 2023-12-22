@@ -77,8 +77,8 @@ namespace Python.Runtime
                         return -1;
                 }
 
-                int p1 = MethodBinder.GetPrecedence(me1);
-                int p2 = MethodBinder.GetPrecedence(me2);
+                int p1 = GetPrecedence(me1);
+                int p2 = GetPrecedence(me2);
                 if (p1 < p2)
                 {
                     return -1;
@@ -88,6 +88,87 @@ namespace Python.Runtime
                     return 1;
                 }
                 return 0;
+            }
+
+            /// <summary>
+            /// Precedence algorithm largely lifted from Jython - the concerns are
+            /// generally the same so we'll start with this and tweak as necessary.
+            /// </summary>
+            /// <remarks>
+            /// Based from Jython `org.python.core.ReflectedArgs.precedence`
+            /// See: https://github.com/jythontools/jython/blob/master/src/org/python/core/ReflectedArgs.java#L192
+            /// </remarks>
+            static int GetPrecedence(MethodBase mi)
+            {
+                if (mi == null)
+                {
+                    return int.MaxValue;
+                }
+
+                ParameterInfo[] pi = mi.GetParameters();
+                int val = mi.IsStatic ? 3000 : 0;
+                int num = pi.Length;
+
+                val += mi.IsGenericMethod ? 1 : 0;
+                for (var i = 0; i < num; i++)
+                {
+                    val += ArgumentPrecedence(pi[i].ParameterType);
+                }
+
+                // NOTE:
+                // Ensure Original methods (e.g. _BASEVIRTUAL_get_Item()) are
+                // sorted after their Redirected counterpart. This makes sure when
+                // allowRedirected is false and the Redirected method is skipped
+                // in the Bind() loop, the Original method is right after and can
+                // match the method specs and create a bind
+                if (ClassDerivedObject.IsMethod<OriginalMethod>(mi))
+                    val += 1;
+
+                return val;
+            }
+
+            /// <summary>
+            /// Return a precedence value for a particular Type object.
+            /// </summary>
+            static int ArgumentPrecedence(Type t)
+            {
+                Type objectType = typeof(object);
+                if (t == objectType)
+                {
+                    return 3000;
+                }
+
+                if (t.IsArray)
+                {
+                    Type e = t.GetElementType();
+                    if (e == objectType)
+                    {
+                        return 2500;
+                    }
+                    return 100 + ArgumentPrecedence(e);
+                }
+
+                TypeCode tc = Type.GetTypeCode(t);
+
+                // TODO: Clean up
+                return tc switch
+                {
+                    TypeCode.Object => 1,
+                    TypeCode.UInt64 => 10,
+                    TypeCode.UInt32 => 11,
+                    TypeCode.UInt16 => 12,
+                    TypeCode.Int64 => 13,
+                    TypeCode.Int32 => 14,
+                    TypeCode.Int16 => 15,
+                    TypeCode.Char => 16,
+                    TypeCode.SByte => 17,
+                    TypeCode.Byte => 18,
+                    TypeCode.Single => 20,
+                    TypeCode.Double => 21,
+                    TypeCode.String => 30,
+                    TypeCode.Boolean => 40,
+                    _ => 2000,
+                };
             }
         }
 
@@ -960,86 +1041,6 @@ namespace Python.Runtime
             }
 
             return match;
-        }
-
-        /// <summary>
-        /// Precedence algorithm largely lifted from Jython - the concerns are
-        /// generally the same so we'll start with this and tweak as necessary.
-        /// </summary>
-        /// <remarks>
-        /// Based from Jython `org.python.core.ReflectedArgs.precedence`
-        /// See: https://github.com/jythontools/jython/blob/master/src/org/python/core/ReflectedArgs.java#L192
-        /// </remarks>
-        static int GetPrecedence(MethodBase mi)
-        {
-            if (mi == null)
-            {
-                return int.MaxValue;
-            }
-
-            ParameterInfo[] pi = mi.GetParameters();
-            int val = mi.IsStatic ? 3000 : 0;
-            int num = pi.Length;
-
-            val += mi.IsGenericMethod ? 1 : 0;
-            for (var i = 0; i < num; i++)
-            {
-                val += ArgumentPrecedence(pi[i].ParameterType);
-            }
-
-            // NOTE:
-            // Ensure Original methods (e.g. _BASEVIRTUAL_get_Item()) are
-            // sorted after their Redirected counterpart. This makes sure when
-            // allowRedirected is false and the Redirected method is skipped
-            // in the Bind() loop, the Original method is right after and can
-            // match the method specs and create a bind
-            if (ClassDerivedObject.IsMethod<OriginalMethod>(mi))
-                val += 1;
-
-            return val;
-        }
-
-        /// <summary>
-        /// Return a precedence value for a particular Type object.
-        /// </summary>
-        static int ArgumentPrecedence(Type t)
-        {
-            Type objectType = typeof(object);
-            if (t == objectType)
-            {
-                return 3000;
-            }
-
-            if (t.IsArray)
-            {
-                Type e = t.GetElementType();
-                if (e == objectType)
-                {
-                    return 2500;
-                }
-                return 100 + ArgumentPrecedence(e);
-            }
-
-            TypeCode tc = Type.GetTypeCode(t);
-            // TODO: Clean up
-            return tc switch
-            {
-                TypeCode.Object => 1,
-                TypeCode.UInt64 => 10,
-                TypeCode.UInt32 => 11,
-                TypeCode.UInt16 => 12,
-                TypeCode.Int64 => 13,
-                TypeCode.Int32 => 14,
-                TypeCode.Int16 => 15,
-                TypeCode.Char => 16,
-                TypeCode.SByte => 17,
-                TypeCode.Byte => 18,
-                TypeCode.Single => 20,
-                TypeCode.Double => 21,
-                TypeCode.String => 30,
-                TypeCode.Boolean => 40,
-                _ => 2000,
-            };
         }
 
         static void AppendArgumentTypes(StringBuilder to, BorrowedReference args)
