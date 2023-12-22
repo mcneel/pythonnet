@@ -158,7 +158,6 @@ namespace Python.Runtime
             }
         }
 
-
         /// <summary>
         /// MethodBinding  __call__ implementation.
         /// </summary>
@@ -254,7 +253,6 @@ namespace Python.Runtime
                 }
             }
         }
-
 
         /// <summary>
         /// MethodBinding  __hash__ implementation.

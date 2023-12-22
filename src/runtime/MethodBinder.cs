@@ -311,41 +311,9 @@ namespace Python.Runtime
         /// <param name="inst">The Python target of the method invocation.</param>
         /// <param name="args">The Python arguments.</param>
         /// <param name="kw">The Python keyword arguments.</param>
-        /// <returns>A Binding if successful.  Otherwise null.</returns>
-        internal Binding? Bind(BorrowedReference inst, BorrowedReference args, BorrowedReference kw)
-        {
-            return Bind(inst, args, kw, null, null);
-        }
-
-        /// <summary>
-        /// Bind the given Python instance and arguments to a particular method
-        /// overload in <see cref="list"/> and return a structure that contains the converted Python
-        /// instance, converted arguments and the correct method to call.
-        /// If unsuccessful, may set a Python error.
-        /// </summary>
-        /// <param name="inst">The Python target of the method invocation.</param>
-        /// <param name="args">The Python arguments.</param>
-        /// <param name="kw">The Python keyword arguments.</param>
         /// <param name="info">If not null, only bind to that method.</param>
         /// <returns>A Binding if successful.  Otherwise null.</returns>
         internal Binding? Bind(BorrowedReference inst, BorrowedReference args, BorrowedReference kw, MethodBase? info)
-        {
-            return Bind(inst, args, kw, info, null);
-        }
-
-        /// <summary>
-        /// Bind the given Python instance and arguments to a particular method
-        /// overload in <see cref="list"/> and return a structure that contains the converted Python
-        /// instance, converted arguments and the correct method to call.
-        /// If unsuccessful, may set a Python error.
-        /// </summary>
-        /// <param name="inst">The Python target of the method invocation.</param>
-        /// <param name="args">The Python arguments.</param>
-        /// <param name="kw">The Python keyword arguments.</param>
-        /// <param name="info">If not null, only bind to that method.</param>
-        /// <param name="methodinfo">If not null, additionally attempt to bind to the generic methods in this array by inferring generic type parameters.</param>
-        /// <returns>A Binding if successful.  Otherwise null.</returns>
-        internal Binding? Bind(BorrowedReference inst, BorrowedReference args, BorrowedReference kw, MethodBase? info, MethodBase[]? methodinfo)
         {
             // loop to find match, return invoker w/ or w/o error
             var kwargDict = new Dictionary<string, PyObject>();
@@ -913,7 +881,7 @@ namespace Python.Runtime
                 return Exceptions.RaiseTypeError(msg.ToString());
             }
 
-            Binding? binding = Bind(inst, args, kw, info, methodinfo);
+            Binding? binding = Bind(inst, args, kw, info);
             object result;
             IntPtr ts = IntPtr.Zero;
 
