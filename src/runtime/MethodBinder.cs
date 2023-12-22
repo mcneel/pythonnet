@@ -21,7 +21,7 @@ namespace Python.Runtime
         /// <summary>
         /// Context handler to provide invoke options to MethodBinder
         /// </summary>
-        public class InvokeContext : IDisposable
+        public sealed class InvokeContext : IDisposable
         {
             readonly MethodBinder _binder;
             readonly bool _original_allow_redirected;
@@ -45,6 +45,74 @@ namespace Python.Runtime
         }
 
         /// <summary>
+        /// Utility class to sort method info by parameter type precedence.
+        /// </summary>
+        private sealed class MethodSorter : IComparer<MaybeMethodBase>
+        {
+            int IComparer<MaybeMethodBase>.Compare(MaybeMethodBase m1, MaybeMethodBase m2)
+            {
+                MethodBase me1 = m1.UnsafeValue;
+                MethodBase me2 = m2.UnsafeValue;
+                if (me1 == null && me2 == null)
+                {
+                    return 0;
+                }
+                else if (me1 == null)
+                {
+                    return -1;
+                }
+                else if (me2 == null)
+                {
+                    return 1;
+                }
+
+                if (me1.DeclaringType != me2.DeclaringType)
+                {
+                    // m2's type derives from m1's type, favor m2
+                    if (me1.DeclaringType.IsAssignableFrom(me2.DeclaringType))
+                        return 1;
+
+                    // m1's type derives from m2's type, favor m1
+                    if (me2.DeclaringType.IsAssignableFrom(me1.DeclaringType))
+                        return -1;
+                }
+
+                int p1 = MethodBinder.GetPrecedence(me1);
+                int p2 = MethodBinder.GetPrecedence(me2);
+                if (p1 < p2)
+                {
+                    return -1;
+                }
+                if (p1 > p2)
+                {
+                    return 1;
+                }
+                return 0;
+            }
+        }
+
+        /// <summary>
+        /// A Binding is a utility instance that bundles together a MethodInfo
+        /// representing a method to call, a (possibly null) target instance for
+        /// the call, and the arguments for the call (all as managed values).
+        /// </summary>
+        private sealed class Binding
+        {
+            public MethodBase info;
+            public object?[] args;
+            public object? inst;
+            public int outs;
+
+            public Binding(MethodBase info, object? inst, object?[] args, int outs)
+            {
+                this.info = info;
+                this.inst = inst;
+                this.args = args;
+                this.outs = outs;
+            }
+        }
+
+        /// <summary>
         /// The overloads of this method
         /// </summary>
         [NonSerialized] MethodBase[]? methods = default;
@@ -56,6 +124,8 @@ namespace Python.Runtime
 
         public bool allow_threads = DefaultAllowThreads;
 
+        public int Count => list.Count;
+
         internal MethodBinder()
         {
             list = new List<MaybeMethodBase>();
@@ -66,12 +136,28 @@ namespace Python.Runtime
             list = new List<MaybeMethodBase> { new MaybeMethodBase(mi) };
         }
 
-        public int Count => list.Count;
-
         internal void AddMethod(MethodBase m)
         {
             list.Add(m);
             methodsInit = false;
+        }
+
+        /// <summary>
+        /// Return the array of MethodInfo for this method. The result array
+        /// is arranged in order of precedence (done lazily to avoid doing it
+        /// at all for methods that are never called).
+        /// </summary>
+        internal MethodBase[] GetMethods()
+        {
+            if (!methodsInit)
+            {
+                // I'm sure this could be made more efficient.
+                list.Sort(new MethodSorter());
+                methods = (from method in list where method.Valid select method.Value).ToArray();
+                methodsInit = true;
+            }
+
+            return methods!;
         }
 
         /// <summary>
@@ -197,104 +283,6 @@ namespace Python.Runtime
                 }
             }
             return null;
-        }
-
-        /// <summary>
-        /// Return the array of MethodInfo for this method. The result array
-        /// is arranged in order of precedence (done lazily to avoid doing it
-        /// at all for methods that are never called).
-        /// </summary>
-        internal MethodBase[] GetMethods()
-        {
-            if (!methodsInit)
-            {
-                // I'm sure this could be made more efficient.
-                list.Sort(new MethodSorter());
-                methods = (from method in list where method.Valid select method.Value).ToArray();
-                methodsInit = true;
-            }
-
-            return methods!;
-        }
-
-        /// <summary>
-        /// Precedence algorithm largely lifted from Jython - the concerns are
-        /// generally the same so we'll start with this and tweak as necessary.
-        /// </summary>
-        /// <remarks>
-        /// Based from Jython `org.python.core.ReflectedArgs.precedence`
-        /// See: https://github.com/jythontools/jython/blob/master/src/org/python/core/ReflectedArgs.java#L192
-        /// </remarks>
-        internal static int GetPrecedence(MethodBase mi)
-        {
-            if (mi == null)
-            {
-                return int.MaxValue;
-            }
-
-            ParameterInfo[] pi = mi.GetParameters();
-            int val = mi.IsStatic ? 3000 : 0;
-            int num = pi.Length;
-
-            val += mi.IsGenericMethod ? 1 : 0;
-            for (var i = 0; i < num; i++)
-            {
-                val += ArgPrecedence(pi[i].ParameterType);
-            }
-
-            // NOTE:
-            // Ensure Original methods (e.g. _BASEVIRTUAL_get_Item()) are
-            // sorted after their Redirected counterpart. This makes sure when
-            // allowRedirected is false and the Redirected method is skipped
-            // in the Bind() loop, the Original method is right after and can
-            // match the method specs and create a bind
-            if (ClassDerivedObject.IsMethod<OriginalMethod>(mi))
-                val += 1;
-
-            return val;
-        }
-
-        /// <summary>
-        /// Return a precedence value for a particular Type object.
-        /// </summary>
-        internal static int ArgPrecedence(Type t)
-        {
-            Type objectType = typeof(object);
-            if (t == objectType)
-            {
-                return 3000;
-            }
-
-            if (t.IsArray)
-            {
-                Type e = t.GetElementType();
-                if (e == objectType)
-                {
-                    return 2500;
-                }
-                return 100 + ArgPrecedence(e);
-            }
-
-            TypeCode tc = Type.GetTypeCode(t);
-            // TODO: Clean up
-            return tc switch
-            {
-                TypeCode.Object => 1,
-                TypeCode.UInt64 => 10,
-                TypeCode.UInt32 => 11,
-                TypeCode.UInt16 => 12,
-                TypeCode.Int64 => 13,
-                TypeCode.Int32 => 14,
-                TypeCode.Int16 => 15,
-                TypeCode.Char => 16,
-                TypeCode.SByte => 17,
-                TypeCode.Byte => 18,
-                TypeCode.Single => 20,
-                TypeCode.Double => 21,
-                TypeCode.String => 30,
-                TypeCode.Boolean => 40,
-                _ => 2000,
-            };
         }
 
         internal virtual NewReference Invoke(BorrowedReference inst, BorrowedReference args, BorrowedReference kw)
@@ -897,6 +885,7 @@ namespace Python.Runtime
 
             return clrtype;
         }
+
         /// <summary>
         /// Check whether the number of Python and .NET arguments match, and compute additional arg information.
         /// </summary>
@@ -909,11 +898,11 @@ namespace Python.Runtime
         /// <param name="defaultsNeeded">Number of non-null defaultsArgs.</param>
         /// <returns></returns>
         static bool MatchesArgumentCount(int positionalArgumentCount, ParameterInfo[] parameters,
-            Dictionary<string, PyObject> kwargDict,
-            out bool paramsArray,
-            out ArrayList? defaultArgList,
-            out int kwargsMatched,
-            out int defaultsNeeded)
+                                         Dictionary<string, PyObject> kwargDict,
+                                         out bool paramsArray,
+                                         out ArrayList? defaultArgList,
+                                         out int kwargsMatched,
+                                         out int defaultsNeeded)
         {
             defaultArgList = null;
             var match = false;
@@ -949,7 +938,7 @@ namespace Python.Runtime
                         // or if the parameter has the [Optional] attribute specified.
                         // The GetDefaultValue() extension method will return the value
                         // to be passed in as the parameter value
-                        defaultArgList.Add(parameters[v].GetDefaultValue());
+                        defaultArgList.Add(GetDefaultValue(parameters[v]));
                         defaultsNeeded++;
                     }
                     else if (parameters[v].IsOut)
@@ -973,7 +962,87 @@ namespace Python.Runtime
             return match;
         }
 
-        protected static void AppendArgumentTypes(StringBuilder to, BorrowedReference args)
+        /// <summary>
+        /// Precedence algorithm largely lifted from Jython - the concerns are
+        /// generally the same so we'll start with this and tweak as necessary.
+        /// </summary>
+        /// <remarks>
+        /// Based from Jython `org.python.core.ReflectedArgs.precedence`
+        /// See: https://github.com/jythontools/jython/blob/master/src/org/python/core/ReflectedArgs.java#L192
+        /// </remarks>
+        static int GetPrecedence(MethodBase mi)
+        {
+            if (mi == null)
+            {
+                return int.MaxValue;
+            }
+
+            ParameterInfo[] pi = mi.GetParameters();
+            int val = mi.IsStatic ? 3000 : 0;
+            int num = pi.Length;
+
+            val += mi.IsGenericMethod ? 1 : 0;
+            for (var i = 0; i < num; i++)
+            {
+                val += ArgumentPrecedence(pi[i].ParameterType);
+            }
+
+            // NOTE:
+            // Ensure Original methods (e.g. _BASEVIRTUAL_get_Item()) are
+            // sorted after their Redirected counterpart. This makes sure when
+            // allowRedirected is false and the Redirected method is skipped
+            // in the Bind() loop, the Original method is right after and can
+            // match the method specs and create a bind
+            if (ClassDerivedObject.IsMethod<OriginalMethod>(mi))
+                val += 1;
+
+            return val;
+        }
+
+        /// <summary>
+        /// Return a precedence value for a particular Type object.
+        /// </summary>
+        static int ArgumentPrecedence(Type t)
+        {
+            Type objectType = typeof(object);
+            if (t == objectType)
+            {
+                return 3000;
+            }
+
+            if (t.IsArray)
+            {
+                Type e = t.GetElementType();
+                if (e == objectType)
+                {
+                    return 2500;
+                }
+                return 100 + ArgumentPrecedence(e);
+            }
+
+            TypeCode tc = Type.GetTypeCode(t);
+            // TODO: Clean up
+            return tc switch
+            {
+                TypeCode.Object => 1,
+                TypeCode.UInt64 => 10,
+                TypeCode.UInt32 => 11,
+                TypeCode.UInt16 => 12,
+                TypeCode.Int64 => 13,
+                TypeCode.Int32 => 14,
+                TypeCode.Int16 => 15,
+                TypeCode.Char => 16,
+                TypeCode.SByte => 17,
+                TypeCode.Byte => 18,
+                TypeCode.Single => 20,
+                TypeCode.Double => 21,
+                TypeCode.String => 30,
+                TypeCode.Boolean => 40,
+                _ => 2000,
+            };
+        }
+
+        static void AppendArgumentTypes(StringBuilder to, BorrowedReference args)
         {
             Runtime.AssertNoErorSet();
 
@@ -1005,82 +1074,8 @@ namespace Python.Runtime
             }
             to.Append(')');
         }
-}
 
-
-    /// <summary>
-    /// Utility class to sort method info by parameter type precedence.
-    /// </summary>
-    internal class MethodSorter : IComparer<MaybeMethodBase>
-    {
-        int IComparer<MaybeMethodBase>.Compare(MaybeMethodBase m1, MaybeMethodBase m2)
-        {
-            MethodBase me1 = m1.UnsafeValue;
-            MethodBase me2 = m2.UnsafeValue;
-            if (me1 == null && me2 == null)
-            {
-                return 0;
-            }
-            else if (me1 == null)
-            {
-                return -1;
-            }
-            else if (me2 == null)
-            {
-                return 1;
-            }
-
-            if (me1.DeclaringType != me2.DeclaringType)
-            {
-                // m2's type derives from m1's type, favor m2
-                if (me1.DeclaringType.IsAssignableFrom(me2.DeclaringType))
-                    return 1;
-
-                // m1's type derives from m2's type, favor m1
-                if (me2.DeclaringType.IsAssignableFrom(me1.DeclaringType))
-                    return -1;
-            }
-
-            int p1 = MethodBinder.GetPrecedence(me1);
-            int p2 = MethodBinder.GetPrecedence(me2);
-            if (p1 < p2)
-            {
-                return -1;
-            }
-            if (p1 > p2)
-            {
-                return 1;
-            }
-            return 0;
-        }
-    }
-
-
-    /// <summary>
-    /// A Binding is a utility instance that bundles together a MethodInfo
-    /// representing a method to call, a (possibly null) target instance for
-    /// the call, and the arguments for the call (all as managed values).
-    /// </summary>
-    internal class Binding
-    {
-        public MethodBase info;
-        public object?[] args;
-        public object? inst;
-        public int outs;
-
-        internal Binding(MethodBase info, object? inst, object?[] args, int outs)
-        {
-            this.info = info;
-            this.inst = inst;
-            this.args = args;
-            this.outs = outs;
-        }
-    }
-
-
-    static internal class ParameterInfoExtensions
-    {
-        public static object? GetDefaultValue(this ParameterInfo parameterInfo)
+        static object? GetDefaultValue(ParameterInfo parameterInfo)
         {
             if (parameterInfo.HasDefaultValue)
             {
