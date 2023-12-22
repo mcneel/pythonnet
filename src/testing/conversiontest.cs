@@ -1,3 +1,5 @@
+#pragma warning disable IDE0090 // Use 'new(...)'
+
 namespace Python.Test
 {
     using System;
@@ -39,11 +41,12 @@ namespace Python.Test
         public sbyte[] SByteArrayField;
         public readonly List<int> ListField = new List<int>();
 
+#pragma warning disable CA1822 // Mark members as static
         public T? Echo<T>(T? arg) where T : struct
         {
             return arg;
         }
-
+#pragma warning restore CA1822 // Mark members as static
     }
 
 
@@ -55,7 +58,7 @@ namespace Python.Test
 
     public class Spam : ISpam
     {
-        private string value;
+        private readonly string value;
 
         public Spam(string value)
         {
@@ -83,6 +86,7 @@ namespace Python.Test
         }
     }
 
+#pragma warning disable CA1822 // Mark members as static
     public class MethodResolutionInt
     {
         public IEnumerable<byte> MethodA(ulong address, int size)
@@ -95,6 +99,7 @@ namespace Python.Test
             return 0;
         }
     }
+#pragma warning restore CA1822 // Mark members as static
 
     public class ImplicitCastTypeA
     {
@@ -107,6 +112,26 @@ namespace Python.Test
         public static bool operator ==(ImplicitCastTypeA a, ImplicitCastTypeB b) => a.Value == b.Value;
         public static bool operator !=(ImplicitCastTypeA a, ImplicitCastTypeB b) => a.Value != b.Value;
         public static ImplicitCastTypeA operator +(ImplicitCastTypeA a, ImplicitCastTypeB b) => new ImplicitCastTypeA(a.Value + b.Value);
+
+        public override bool Equals(object obj)
+        {
+            if (ReferenceEquals(this, obj))
+            {
+                return true;
+            }
+
+            if (obj is null)
+            {
+                return false;
+            }
+
+            throw new NotImplementedException();
+        }
+
+        public override int GetHashCode()
+        {
+            throw new NotImplementedException();
+        }
     }
 
     public class ImplicitCastTypeB
@@ -120,5 +145,25 @@ namespace Python.Test
         public static bool operator ==(ImplicitCastTypeB a, ImplicitCastTypeA b) => a.Value == b.Value;
         public static bool operator !=(ImplicitCastTypeB a, ImplicitCastTypeA b) => a.Value != b.Value;
         public static ImplicitCastTypeB operator +(ImplicitCastTypeB a, ImplicitCastTypeA b) => new ImplicitCastTypeB(a.Value + b.Value);
+
+        public override bool Equals(object obj)
+        {
+            if (ReferenceEquals(this, obj))
+            {
+                return true;
+            }
+
+            if (obj is null)
+            {
+                return false;
+            }
+
+            throw new NotImplementedException();
+        }
+
+        public override int GetHashCode()
+        {
+            throw new NotImplementedException();
+        }
     }
 }
