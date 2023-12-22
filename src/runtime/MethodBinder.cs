@@ -333,36 +333,6 @@ namespace Python.Runtime
             return Bind(inst, args, kw, info, null);
         }
 
-        private readonly struct MatchedMethod
-        {
-            public MatchedMethod(int kwargsMatched, int defaultsNeeded, object?[] margs, int outs, MethodBase mb)
-            {
-                KwargsMatched = kwargsMatched;
-                DefaultsNeeded = defaultsNeeded;
-                ManagedArgs = margs;
-                Outs = outs;
-                Method = mb;
-            }
-
-            public int KwargsMatched { get; }
-            public int DefaultsNeeded { get; }
-            public object?[] ManagedArgs { get; }
-            public int Outs { get; }
-            public MethodBase Method { get; }
-        }
-
-        private readonly struct MismatchedMethod
-        {
-            public MismatchedMethod(Exception exception, MethodBase mb)
-            {
-                Exception = exception;
-                Method = mb;
-            }
-
-            public Exception Exception { get; }
-            public MethodBase Method { get; }
-        }
-
         /// <summary>
         /// Bind the given Python instance and arguments to a particular method
         /// overload in <see cref="list"/> and return a structure that contains the converted Python
@@ -404,6 +374,36 @@ namespace Python.Runtime
             }
 
             return Bind(inst, args, kwargDict, _methods, matchGenerics: true, allowRedirected: allow_redirected);
+        }
+
+        private readonly struct MatchedMethod
+        {
+            public MatchedMethod(int kwargsMatched, int defaultsNeeded, object?[] margs, int outs, MethodBase mb)
+            {
+                KwargsMatched = kwargsMatched;
+                DefaultsNeeded = defaultsNeeded;
+                ManagedArgs = margs;
+                Outs = outs;
+                Method = mb;
+            }
+
+            public int KwargsMatched { get; }
+            public int DefaultsNeeded { get; }
+            public object?[] ManagedArgs { get; }
+            public int Outs { get; }
+            public MethodBase Method { get; }
+        }
+
+        private readonly struct MismatchedMethod
+        {
+            public MismatchedMethod(Exception exception, MethodBase mb)
+            {
+                Exception = exception;
+                Method = mb;
+            }
+
+            public Exception Exception { get; }
+            public MethodBase Method { get; }
         }
 
         static Binding? Bind(BorrowedReference inst, BorrowedReference args, Dictionary<string, PyObject> kwargDict, MethodBase[] methods, bool matchGenerics, bool allowRedirected)
