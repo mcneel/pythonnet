@@ -47,7 +47,7 @@ namespace Python.Runtime
         /// <summary>
         /// Utility class to sort method info by parameter type precedence.
         /// </summary>
-        private sealed class MethodSorter : IComparer<MaybeMethodBase>
+        readonly struct Sorter : IComparer<MaybeMethodBase>
         {
             int IComparer<MaybeMethodBase>.Compare(MaybeMethodBase m1, MaybeMethodBase m2)
             {
@@ -233,7 +233,7 @@ namespace Python.Runtime
             if (!methodsInit)
             {
                 // I'm sure this could be made more efficient.
-                list.Sort(new MethodSorter());
+                list.Sort(new Sorter());
                 methods = (from method in list where method.Valid select method.Value).ToArray();
                 methodsInit = true;
             }
@@ -366,13 +366,8 @@ namespace Python.Runtime
             return null;
         }
 
-        internal virtual NewReference Invoke(BorrowedReference inst, BorrowedReference args, BorrowedReference kw)
-        {
-            return Invoke(inst, args, kw, null, null);
-        }
-
         internal virtual NewReference Invoke(BorrowedReference inst, BorrowedReference args, BorrowedReference kw,
-                                             MethodBase? info, MethodBase[]? methodinfo)
+                                             MethodBase? info = null, MethodBase[]? methodinfo = null)
         {
             // No valid methods, nothing to bind.
             if (GetMethods().Length == 0)
