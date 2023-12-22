@@ -1,3 +1,6 @@
+#pragma warning disable IDE1006 // Naming style
+#pragma warning disable IDE0074 // Use compound assignment
+
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -27,7 +30,7 @@ namespace Python.Runtime
         internal PyString? doc;
         internal MaybeType type;
 
-        public MethodObject(MaybeType type, string name, MethodBase[] info, bool allow_threads)
+        protected MethodObject(MaybeType type, string name, MethodBase[] info, bool allow_threads)
         {
             this.type = type;
             this.name = name;
@@ -130,7 +133,6 @@ namespace Python.Runtime
             }
             return Runtime.PyString_FromString(names.First());
         }
-
 
         /// <summary>
         /// This is a little tricky: a class can actually have a static method

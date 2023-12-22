@@ -1,10 +1,9 @@
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
-using System.Reflection;
-using System.Runtime.InteropServices;
 using System.Security;
+using System.Reflection;
+using System.Diagnostics;
+using System.Collections.Generic;
 
 using Python.Runtime.StateSerialization;
 
@@ -182,6 +181,7 @@ namespace Python.Runtime
                 impl = new InterfaceObject(type);
             }
 
+#pragma warning disable CS0618 // Type or member is obsolete. OK for internal use.
             else if (type == typeof(Exception) ||
                      type.IsSubclassOf(typeof(Exception)))
             {
@@ -191,12 +191,11 @@ namespace Python.Runtime
                     impl = new ExceptionClassObject(type);
             }
 
-#pragma warning disable CS0618 // Type or member is obsolete. OK for internal use.
             else if (PythonDerivedType.IsPythonDerivedType(type))
-#pragma warning restore CS0618 // Type or member is obsolete
             {
                 impl = new ClassDerivedObject(type);
             }
+#pragma warning restore CS0618 // Type or member is obsolete. OK for internal use.
 
             else
             {

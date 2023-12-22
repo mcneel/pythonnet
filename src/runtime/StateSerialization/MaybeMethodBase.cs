@@ -1,3 +1,5 @@
+#pragma warning disable IDE0270 // Use coalesce expression
+
 using System;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -10,7 +12,7 @@ using Python.Runtime.Reflection;
 namespace Python.Runtime
 {
     [Serializable]
-    internal struct MaybeMethodBase<T> : ISerializable where T: MethodBase
+    internal readonly struct MaybeMethodBase<T> : ISerializable where T: MethodBase
     {
         // .ToString() of the serialized object
         const string SerializationName = "s";
@@ -22,7 +24,7 @@ namespace Python.Runtime
         const string SerializationGenericParamCount = "G";
         const string SerializationFlags = "V";
 
-        public static implicit operator MaybeMethodBase<T> (T? ob) => new (ob);
+        public static implicit operator MaybeMethodBase<T>(T? ob) => new(ob);
 
         readonly string? name;
         readonly MethodBase? info;
@@ -51,14 +53,11 @@ namespace Python.Runtime
         }
 
         public T UnsafeValue => (T)info!;
+
         public string? Name => name;
+
         [MemberNotNullWhen(true, nameof(info))]
         public bool Valid => info != null;
-
-        public override string ToString()
-        {
-            return (info != null ? info.ToString() : $"missing method info: {name}");
-        }
 
         public MaybeMethodBase(T? mi)
         {
@@ -101,6 +100,28 @@ namespace Python.Runtime
             }
         }
 
+        public void GetObjectData(SerializationInfo serializationInfo, StreamingContext context)
+        {
+            serializationInfo.AddValue(SerializationName, name);
+            if (Valid)
+            {
+                serializationInfo.AddValue(SerializationMethodName, info.Name);
+                serializationInfo.AddValue(SerializationGenericParamCount,
+                    info.ContainsGenericParameters ? info.GetGenericArguments().Length : 0);
+                serializationInfo.AddValue(SerializationFlags, (int)Flags(info));
+                string? typeName = info.ReflectedType.AssemblyQualifiedName;
+                Debug.Assert(typeName != null);
+                serializationInfo.AddValue(SerializationType, typeName);
+                ParameterHelper[] parameters = (from p in info.GetParameters() select new ParameterHelper(p)).ToArray();
+                serializationInfo.AddValue(SerializationParameters, parameters, typeof(ParameterHelper[]));
+            }
+        }
+
+        public override string ToString()
+        {
+            return (info != null ? info.ToString() : $"missing method info: {name}");
+        }
+
         static MethodBase ScanForMethod(Type declaringType, string name, int genericCount, MaybeMethodFlags flags, ParameterHelper[] parameters)
         {
             var bindingFlags = ClassManager.BindingFlags;
@@ -139,23 +160,6 @@ namespace Python.Runtime
             for (int i = 0; i < curr.Length; i++)
                 if (!parameters[i].Matches(curr[i])) return false;
             return true;
-        }
-
-        public void GetObjectData(SerializationInfo serializationInfo, StreamingContext context)
-        {
-            serializationInfo.AddValue(SerializationName, name);
-            if (Valid)
-            {
-                serializationInfo.AddValue(SerializationMethodName, info.Name);
-                serializationInfo.AddValue(SerializationGenericParamCount,
-                    info.ContainsGenericParameters ? info.GetGenericArguments().Length : 0);
-                serializationInfo.AddValue(SerializationFlags, (int)Flags(info));
-                string? typeName = info.ReflectedType.AssemblyQualifiedName;
-                Debug.Assert(typeName != null);
-                serializationInfo.AddValue(SerializationType, typeName);
-                ParameterHelper[] parameters = (from p in info.GetParameters() select new ParameterHelper(p)).ToArray();
-                serializationInfo.AddValue(SerializationParameters, parameters, typeof(ParameterHelper[]));
-            }
         }
 
         static MaybeMethodFlags Flags(MethodBase method)

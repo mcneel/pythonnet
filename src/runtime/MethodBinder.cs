@@ -1,11 +1,9 @@
 using System;
-using System.Collections;
-using System.Reflection;
 using System.Text;
-using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
-using System.IO;
+using System.Reflection;
+using System.Collections;
+using System.Collections.Generic;
 
 namespace Python.Runtime
 {
@@ -25,9 +23,8 @@ namespace Python.Runtime
         /// </summary>
         public class InvokeContext : IDisposable
         {
-            MethodBinder _binder;
-
-            bool _original_allow_redirected;
+            readonly MethodBinder _binder;
+            readonly bool _original_allow_redirected;
 
             public InvokeContext(MethodBinder binder)
             {
@@ -128,7 +125,7 @@ namespace Python.Runtime
             }
             int count = tp.Length;
             var result = new List<MethodInfo>();
-            foreach (MethodInfo t in mi)
+            foreach (var t in mi)
             {
                 if (!t.IsGenericMethodDefinition)
                 {
@@ -139,11 +136,15 @@ namespace Python.Runtime
                 {
                     continue;
                 }
+
                 try
                 {
                     // MakeGenericMethod can throw ArgumentException if the type parameters do not obey the constraints.
-                    MethodInfo method = t.MakeGenericMethod(tp);
-                    result.Add(method);
+                    if (t is MethodInfo minfo)
+                    {
+                        MethodInfo method = minfo.MakeGenericMethod(tp);
+                        result.Add(method);
+                    }
                 }
                 catch (ArgumentException)
                 {
@@ -166,7 +167,7 @@ namespace Python.Runtime
             }
             int genericCount = genericTp.Length;
             int signatureCount = sigTp.Length;
-            foreach (MethodInfo t in mi)
+            foreach (var t in mi)
             {
                 if (!t.IsGenericMethodDefinition)
                 {
@@ -188,9 +189,8 @@ namespace Python.Runtime
                     {
                         break;
                     }
-                    if (n == pi.Length - 1)
+                    if (n == pi.Length - 1 && t is MethodInfo match)
                     {
-                        MethodInfo match = t;
                         if (match.IsGenericMethodDefinition)
                         {
                             // FIXME: typeArgs not used

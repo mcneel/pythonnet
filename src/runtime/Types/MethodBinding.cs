@@ -1,7 +1,8 @@
+#pragma warning disable IDE1006 // Naming style
+
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
+using System.Collections.Generic;
 using System.Reflection;
 
 namespace Python.Runtime
@@ -109,7 +110,7 @@ namespace Python.Runtime
             }
         }
 
-        struct TypeSpecificityComparer : IComparer<Type>
+        readonly struct TypeSpecificityComparer : IComparer<Type>
         {
             public int Compare(Type a, Type b)
             {
