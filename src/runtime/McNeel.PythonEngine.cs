@@ -621,13 +621,21 @@ namespace Python.Runtime
                 case object[] array:
                     return array.Select(i => MarshOutput(i)).ToArray();
 
-                case IList list:
-                    var dotnetList = new List<object>();
-                    foreach (object obj in dotnetList)
+                case PyList list:
+                    var fromPylist = new List<object>();
+                    foreach (object obj in list)
                     {
-                        dotnetList.Append(MarshOutput(obj));
+                        fromPylist.Add(MarshOutput(obj));
                     }
-                    return dotnetList;
+                    return fromPylist;
+
+                case List<object> list:
+                    var fromClrList = new List<object>();
+                    foreach (object obj in list)
+                    {
+                        fromClrList.Add(MarshOutput(obj));
+                    }
+                    return fromClrList;
 
                 case IDictionary<object, object> dict:
                     return dict.Select(p =>
