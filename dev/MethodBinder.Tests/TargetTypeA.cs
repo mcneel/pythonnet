@@ -1,9 +1,11 @@
 using System;
-using System.Runtime.InteropServices;
 
 namespace MethodBinderTests
 {
-    public class TargetType
+    using O = System.Runtime.InteropServices.OptionalAttribute;
+    using D = System.Runtime.InteropServices.DefaultParameterValueAttribute;
+
+    public class TargetTypeA
     {
         // 0
         public Guid
@@ -86,7 +88,7 @@ namespace MethodBinderTests
 
         // 1, 2
         public Guid
-        Foo<T>(int _1, [Optional] T _2)
+        Foo<T>(int _1, [O] T _2)
         {
             return new Guid("575590fa-a11d-11ee-8c90-0242ac120002");
         }
@@ -100,21 +102,21 @@ namespace MethodBinderTests
 
         // 1, 2
         public Guid
-        Foo([Optional] int _1, uint _2)
+        Foo([O] int _1, uint _2)
         {
             return new Guid("57558786-a11d-11ee-8c90-0242ac120002");
         }
 
         // 1, 2
         public Guid
-        Foo([DefaultParameterValue((uint)12)] uint _1, uint _2)
+        Foo([D((uint)12)] uint _1, uint _2)
         {
             return new Guid("5755889e-a11d-11ee-8c90-0242ac120002");
         }
 
         // 1, 2
         public Guid
-        Foo([Optional, DefaultParameterValue(12)] nint _1, uint _2)
+        Foo([O, D(12)] nint _1, uint _2)
         {
             return new Guid("57558a1a-a11d-11ee-8c90-0242ac120002");
         }
@@ -142,7 +144,7 @@ namespace MethodBinderTests
 
         // 1, 2, 3
         public Guid
-        Foo<T>(long _1, long _2, [Optional] T _3)
+        Foo<T>(long _1, long _2, [O] T _3)
         {
             return new Guid("575595be-a11d-11ee-8c90-0242ac120002");
         }
