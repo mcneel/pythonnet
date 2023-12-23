@@ -1,5 +1,4 @@
 using System;
-using System.Runtime.InteropServices;
 
 using Python.Runtime;
 
@@ -96,6 +95,16 @@ namespace MethodBinderTests
             args = new object[] { IntPtr.Zero, 0 };
             t = I.Foo(IntPtr.Zero, 0);
             r = MethodInvoke.Invoke<Guid>(I, M, args, NoKwargs);
+            Assert.That(t, Is.EqualTo(r));
+
+            // Foo([Optional, DefaultParameterValue(12)] nint _1, uint _2)
+            args = new object[] { 0 };
+            var kwargs = new KeywordArgs
+            {
+                ["_1"] = IntPtr.Zero,
+            };
+            t = I.Foo(_1: IntPtr.Zero, 0);
+            r = MethodInvoke.Invoke<Guid>(I, M, args, kwargs);
             Assert.That(t, Is.EqualTo(r));
         }
     }

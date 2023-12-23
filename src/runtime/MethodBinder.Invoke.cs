@@ -6,6 +6,7 @@ using System.Collections.Generic;
 namespace Python.Runtime
 {
     using KeywordArgs = Dictionary<string, object?>;
+    using TypeDistMap = Dictionary<int, uint>;
 
 #if UNIT_TEST
     public static class MethodInvoke
@@ -22,6 +23,8 @@ namespace Python.Runtime
         static readonly Type PAAT = typeof(ParamArrayAttribute);
         static readonly Type UNINT = typeof(nuint);
         static readonly Type NINT = typeof(nint);
+
+        static readonly TypeDistMap s_distMap = new();
 
         private sealed class MatchArgSlot
         {
@@ -225,13 +228,17 @@ namespace Python.Runtime
             {
                 uint distance;
 
+                int key = from.GetHashCode() + to.GetHashCode();
+                if (s_distMap.TryGetValue(key, out uint dist))
+                {
+                    return dist;
+                }
+
                 if (from == to)
                 {
                     distance = 0;
                 }
                 else if (from.IsAssignableFrom(to))
-                            //|| CanCast(from, to)
-                            //|| CanCast(to, from))
                 {
                     distance = 1;
                 }
@@ -243,6 +250,8 @@ namespace Python.Runtime
                            -(int)GetDistance(from)
                         );
                 }
+
+                s_distMap[key] = distance;
 
                 return distance;
             }
