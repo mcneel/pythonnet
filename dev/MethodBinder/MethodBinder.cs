@@ -9,7 +9,17 @@ namespace MethodBinder
 
     public static class MethodInvoke
     {
+        const string OP_IMPLICIT = "op_Implicit";
+        const string OP_EXPLICIT = "op_Explicit";
+        static readonly BindingFlags FLAGS = BindingFlags.Static
+                                           | BindingFlags.Public
+                                           | BindingFlags.NonPublic;
+
         static readonly Type PAAT = typeof(ParamArrayAttribute);
+        static readonly Type UINTPTR = typeof(UIntPtr);
+        static readonly Type INTPTR = typeof(IntPtr);
+        static readonly Type UNINT = typeof(nuint);
+        static readonly Type NINT = typeof(nint);
         static readonly Type OBJT = typeof(object);
 
         private sealed class MatchArgSlot
@@ -48,6 +58,16 @@ namespace MethodBinder
             }
 
 
+            public object? Convert()
+            {
+                if (TryCast(Value, Type, out object? cast))
+                {
+                    return cast;
+                }
+
+                return null;
+            }
+
             static object? GetDefaultValue(ParameterInfo paramInfo)
             {
                 if (paramInfo.HasDefaultValue)
@@ -66,15 +86,40 @@ namespace MethodBinder
                 else
                     return null;
             }
+
+            static bool TryCast(object? source, Type to, out object? cast)
+            {
+                cast = default;
+
+                if (source is null)
+                {
+                    return false;
+                }
+
+                Type from = source.GetType();
+
+                MethodInfo castMethod =
+                    // search for a cast operator in the source type
+                    GetCast(from, from, to)
+                    // search in the target type if not found in source type
+                 ?? GetCast(to, from, to);
+
+                if (castMethod != null)
+                {
+                    cast = castMethod.Invoke(null, new[] { source });
+                    return true;
+                }
+
+                return false;
+            }
         }
 
         private sealed class MatchSpec
         {
-            const int STATIC_DISTANCE = 3000;
-            const int GENERIC_DISTANCE = 1;
-            const int ARRAY_DISTANCE = 100;
-            const int MISSING_ARG_DISTANCE = 0;
-            const int NULL_ARG_DISTANCE = 0;
+            const uint SECTOR_SIZE = uint.MaxValue / 4;
+            const uint STATIC_DISTANCE = SECTOR_SIZE;
+            const uint PARAMS_DISTANCE = SECTOR_SIZE;
+            const uint ARG_DISTANCE = 32; // reserved for TypeCode range
 
             public readonly MethodBase Method;
             public readonly uint Required;
@@ -96,22 +141,28 @@ namespace MethodBinder
             }
 
             public object?[] GetArguments()
-                => ArgumentSlots.Select(s => s.Value).ToArray();
+                => ArgumentSlots.Select(s => s.Convert()).ToArray();
 
-            // (0, 0, 0) -> (a, b=0, c=0)
-            // (0, a=0, c=0) -> (a, b, c)
-            public int GetPrecedence(object?[] args, KeywordArgs kwargs)
+            // no two specs should have the exact same distance as that means
+            // the signatures are exactly the same and that is not possible
+            public uint GetDistance(object?[] args, KeywordArgs kwargs)
             {
-                int precedence = 0;
+                uint score = 0;
 
                 if (Method.IsStatic)
                 {
-                    precedence += STATIC_DISTANCE;
+                    score += STATIC_DISTANCE;
+                }
+
+                if (Expands)
+                {
+                    score += PARAMS_DISTANCE;
                 }
 
                 if (Method.IsGenericMethod)
                 {
-                    precedence += GENERIC_DISTANCE;
+                    score += (ARG_DISTANCE *
+                                (uint)Method.GetGenericArguments().Length);
                 }
 
                 uint argidx = 0;
@@ -122,7 +173,7 @@ namespace MethodBinder
                         if (kwargs.TryGetValue(slot.Key, out object? kwargv))
                         {
                             slot.Value = kwargv;
-                            precedence += GetDistance(kwargv, slot.Type);
+                            score += GetDistance(kwargv, slot.Type);
                         }
 
                         else if (args.Length > 0
@@ -130,42 +181,112 @@ namespace MethodBinder
                                     && args[argidx] is object argv)
                         {
                             slot.Value = argv;
-                            precedence += GetDistance(argv, slot.Type);
+                            score += GetDistance(argv, slot.Type);
                             argidx++;
                         }
                         else
                         {
-                            precedence += MISSING_ARG_DISTANCE;
+                            score += ARG_DISTANCE;
                         }
                     }
                 }
 
-                return precedence;
+                return score;
             }
 
-            static int GetDistance(object? arg, Type paramType)
+            static uint GetDistance(object? arg, Type to)
             {
+                uint distance = ARG_DISTANCE;
+
+                if (to.IsGenericType)
+                {
+                    distance += 2;
+                }
+
                 if (arg is object argument)
                 {
-                    return (int)GetPrecedence(paramType)
-                         - (int)GetPrecedence(GetArgumentType(argument));
+                    Type argType = GetType(argument);
+
+                    if (to == argType)
+                    {
+                        distance += 1;
+                    }
+                    else
+                    {
+                        distance += 3 + GetDistance(argType, to);
+                    }
                 }
 
-                return NULL_ARG_DISTANCE;
+                return distance;
             }
 
-            static uint GetPrecedence(Type type)
+            static uint GetDistance(Type from, Type to)
             {
-                if (type.IsArray)
+                uint distance;
+
+                if (from == to)
                 {
-                    Type e = type.GetElementType();
-                    return ARRAY_DISTANCE + GetPrecedence(e);
+                    distance = 0;
+                }
+                else if (from.IsAssignableFrom(to))
+                            //|| CanCast(from, to)
+                            //|| CanCast(to, from))
+                {
+                    distance = 1;
+                }
+                else
+                {
+                    distance = 1 +
+                        (uint)Math.Abs(
+                            (int)GetDistance(to)
+                           -(int)GetDistance(from)
+                        );
                 }
 
-                return (uint)Type.GetTypeCode(type);
+                return distance;
             }
 
-            static Type GetArgumentType(object arg) => arg.GetType();
+            static uint GetDistance(Type of)
+            {
+                if (UINTPTR == of || UNINT == of)
+                {
+                    return 30;
+                }
+
+                if (INTPTR == of || NINT == of)
+                {
+                    return 31;
+                }
+
+                return Type.GetTypeCode(of) switch
+                {
+                    TypeCode.Object => 1,
+
+                    TypeCode.UInt64 => 12,
+                    TypeCode.UInt32 => 13,
+                    TypeCode.UInt16 => 14,
+                    TypeCode.Int64 => 15,
+                    TypeCode.Int32 => 16,
+                    TypeCode.Int16 => 17,
+                    TypeCode.Char => 18,
+                    TypeCode.SByte => 19,
+                    TypeCode.Byte => 20,
+
+                    //UIntPtr => 30,
+                    //IntPtr => 31,
+
+                    TypeCode.Single => 40,
+
+                    TypeCode.Double => 42,
+
+                    TypeCode.String => 50,
+
+                    TypeCode.Boolean => 60,
+                    _ => 2000,
+                };
+            }
+
+            static Type GetType(object arg) => arg.GetType();
         }
 
         public static T? Invoke<T>(object instance,
@@ -234,20 +355,34 @@ namespace MethodBinder
         {
             spec = null;
 
-            if (specs.Length > 0)
+            if (specs.Length == 0)
             {
-                int highest = 0;
-                foreach (MatchSpec mspec in specs.OfType<MatchSpec>())
+                return false;
+            }
+            else if (specs.Length == 1)
+            {
+                spec = specs[0];
+                return true;
+            }
+            else if (specs.Length > 1)
+            {
+                uint closest = uint.MaxValue;
+                foreach (MatchSpec? mspec in specs)
                 {
-                    int precedence = mspec.GetPrecedence(args, kwargs);
-                    if (precedence > highest)
+                    if (mspec is null)
                     {
-                        highest = precedence;
+                        break;
+                    }
+
+                    uint distance = mspec!.GetDistance(args, kwargs);
+                    if (distance < closest)
+                    {
+                        closest = distance;
                         spec = mspec;
                     }
                 }
 
-                return highest > 0;
+                return closest < uint.MaxValue;
             }
 
             return false;
@@ -368,5 +503,22 @@ namespace MethodBinder
             spec = new MatchSpec(m, required, optional, expands, argSpecs);
             return true;
         }
-}
+
+        static bool CanCast(Type from, Type to)
+            => GetCast(from, to, from) is MethodInfo;
+
+        static MethodInfo GetCast(Type @in, Type from, Type to)
+        {
+            return @in.GetMethods(FLAGS)
+                       .FirstOrDefault(m =>
+                       {
+                           return (m.Name == OP_IMPLICIT
+                                        || m.Name == OP_EXPLICIT)
+                                && m.ReturnType == to
+                                && m.GetParameters() is ParameterInfo[] pi
+                                && pi.Length == 1
+                                && pi[0].ParameterType == from;
+                       });
+        }
+    }
 }
