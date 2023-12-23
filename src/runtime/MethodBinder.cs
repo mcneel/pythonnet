@@ -16,7 +16,7 @@ namespace Python.Runtime
     /// ConstructorBinder, a minor variation used to invoke constructors.
     /// </summary>
     [Serializable]
-    internal class MethodBinder
+    internal partial class MethodBinder
     {
         /// <summary>
         /// Context handler to provide invoke options to MethodBinder

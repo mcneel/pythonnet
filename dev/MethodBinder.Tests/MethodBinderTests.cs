@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-using MethodBinder;
+using Python.Runtime;
 
 namespace MethodBinderTests
 {

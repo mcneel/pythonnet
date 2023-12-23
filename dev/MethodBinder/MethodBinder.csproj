@@ -3,6 +3,11 @@
   <PropertyGroup>
     <TargetFrameworks>netstandard2.0</TargetFrameworks>
     <Nullable>enable</Nullable>
+    <DefineConstants>$(DefineConstants);UNIT_TEST</DefineConstants>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\src\runtime\MethodBinder.Invoke.cs" Link="MethodBinder.Invoke.cs" />
+  </ItemGroup>
 
 </Project>

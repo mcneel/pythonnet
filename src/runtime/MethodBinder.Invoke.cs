@@ -1,13 +1,17 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Collections.Generic;
 
-namespace MethodBinder
+namespace Python.Runtime
 {
     using KeywordArgs = Dictionary<string, object?>;
 
+#if UNIT_TEST
     public static class MethodInvoke
+#else
+    internal partial class MethodBinder
+#endif
     {
         const string OP_IMPLICIT = "op_Implicit";
         const string OP_EXPLICIT = "op_Explicit";
@@ -16,11 +20,8 @@ namespace MethodBinder
                                            | BindingFlags.NonPublic;
 
         static readonly Type PAAT = typeof(ParamArrayAttribute);
-        static readonly Type UINTPTR = typeof(UIntPtr);
-        static readonly Type INTPTR = typeof(IntPtr);
         static readonly Type UNINT = typeof(nuint);
         static readonly Type NINT = typeof(nint);
-        static readonly Type OBJT = typeof(object);
 
         private sealed class MatchArgSlot
         {
@@ -248,12 +249,12 @@ namespace MethodBinder
 
             static uint GetDistance(Type of)
             {
-                if (UINTPTR == of || UNINT == of)
+                if (UNINT == of)
                 {
                     return 30;
                 }
 
-                if (INTPTR == of || NINT == of)
+                if (NINT == of)
                 {
                     return 31;
                 }
@@ -272,8 +273,8 @@ namespace MethodBinder
                     TypeCode.SByte => 19,
                     TypeCode.Byte => 20,
 
-                    //UIntPtr => 30,
-                    //IntPtr => 31,
+                    //UIntPtr|nuint => 30,
+                    //IntPtr|nint => 31,
 
                     TypeCode.Single => 40,
 
@@ -503,9 +504,6 @@ namespace MethodBinder
             spec = new MatchSpec(m, required, optional, expands, argSpecs);
             return true;
         }
-
-        static bool CanCast(Type from, Type to)
-            => GetCast(from, to, from) is MethodInfo;
 
         static MethodInfo GetCast(Type @in, Type from, Type to)
         {
