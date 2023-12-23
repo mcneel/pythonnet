@@ -14,21 +14,57 @@ namespace MethodBinder
 
         private sealed class MatchArgSlot
         {
+            readonly ParameterInfo _paramInfo;
+
+            bool _hasValue = false;
+            object? _value = default;
+
             public readonly uint Index;
             public readonly string Key;
             public readonly Type Type;
             public readonly bool IsOptional;
+            public readonly bool IsOut;
 
-            public object? Value;
+            public object? Value
+            {
+                get => _hasValue ? _value : GetDefaultValue(_paramInfo);
+                set
+                {
+                    _hasValue = true;
+                    _value = value;
+                }
+            }
 
             public MatchArgSlot(uint index, ParameterInfo paramInfo,
-                                bool isOptional = false)
+                                bool isOptional = false, bool isOut = false)
             {
+                _paramInfo = paramInfo;
+
                 Index = index;
                 Key = paramInfo.Name;
                 Type = paramInfo.ParameterType;
                 IsOptional = isOptional;
-                Value = default;
+                IsOut = isOut;
+            }
+
+
+            static object? GetDefaultValue(ParameterInfo paramInfo)
+            {
+                if (paramInfo.HasDefaultValue)
+                {
+                    return paramInfo.DefaultValue;
+                }
+
+                // [OptionalAttribute] was specified for the parameter.
+                // See https://stackoverflow.com/questions/3416216/optionalattribute-parameters-default-value
+                // for rules on determining the value to pass to the parameter
+                var type = paramInfo.ParameterType;
+                if (type == typeof(object))
+                    return Type.Missing;
+                else if (type.IsValueType)
+                    return Activator.CreateInstance(type);
+                else
+                    return null;
             }
         }
 
@@ -44,13 +80,13 @@ namespace MethodBinder
             public readonly uint Required;
             public readonly uint Optional;
             public readonly bool Expands;
-            public readonly MatchArgSlot?[] ArgumentSlots;
+            public readonly MatchArgSlot[] ArgumentSlots;
 
             public MatchSpec(MethodBase method,
                              uint required,
                              uint optional,
                              bool expands,
-                             MatchArgSlot?[] argSpecs)
+                             MatchArgSlot[] argSpecs)
             {
                 Method = method;
                 Required = required;
@@ -148,10 +184,10 @@ namespace MethodBinder
                         .Where(m => m.Name == name)
                         .ToArray();
 
-            if (TryBind(methods, args, kwargs, out MatchSpec spec))
+            if (TryBind(methods, args, kwargs, out MatchSpec? spec))
             {
                 object? result =
-                    spec.Method.Invoke(instance,
+                    spec!.Method.Invoke(instance,
                                        spec.GetArguments());
 
                 if (result != null
@@ -167,7 +203,7 @@ namespace MethodBinder
         static bool TryBind(MethodBase[] methods,
                             object?[] args,
                             KeywordArgs kwargs,
-                            out MatchSpec spec)
+                            out MatchSpec? spec)
         {
             spec = default;
 
@@ -181,7 +217,7 @@ namespace MethodBinder
             uint totalArgs = argsCount + kwargsCount;
             foreach (MethodBase mb in methods)
             {
-                if (TryMatch(mb, totalArgs, kwargKeys, out MatchSpec matched))
+                if (TryMatch(mb, totalArgs, kwargKeys, out MatchSpec? matched))
                 {
                     matches[index] = matched;
                     index++;
@@ -194,7 +230,7 @@ namespace MethodBinder
         static bool TryMatchClosest(MatchSpec?[] specs,
                                     object?[] args,
                                     KeywordArgs kwargs,
-                                    out MatchSpec spec)
+                                    out MatchSpec? spec)
         {
             spec = null;
 
@@ -220,7 +256,7 @@ namespace MethodBinder
         static bool TryMatch(MethodBase m,
                              uint givenArgs,
                              HashSet<string> kwargs,
-                             out MatchSpec spec)
+                             out MatchSpec? spec)
         {
             spec = default;
 
@@ -228,7 +264,7 @@ namespace MethodBinder
             uint optional = 0;
             bool expands = false;
 
-            MatchArgSlot?[] argSpecs;
+            MatchArgSlot[] argSpecs;
             ParameterInfo[] mparams = m.GetParameters();
             if (mparams.Length > 0)
             {
@@ -243,7 +279,7 @@ namespace MethodBinder
                     (uint)mparams.Length - 1 :
                     (uint)mparams.Length;
 
-                argSpecs = new MatchArgSlot?[length];
+                argSpecs = new MatchArgSlot[length];
 
                 for (uint i = 0; i < length; i++)
                 {
@@ -266,7 +302,9 @@ namespace MethodBinder
                     // `.IsOut` is false for `ref` parameters
                     if (param.IsOut)
                     {
-                        argSpecs[i] = default;
+                        argSpecs[i] =
+                            new MatchArgSlot(i, param, isOut: true);
+
                         continue;
                     }
                     // `.IsOptional` will be true if the parameter has
@@ -274,13 +312,17 @@ namespace MethodBinder
                     // attribute specified.
                     else if (param.IsOptional)
                     {
-                        argSpecs[i] = new MatchArgSlot(i, param, true);
+                        argSpecs[i] =
+                            new MatchArgSlot(i, param, isOptional: true);
+
                         optional++;
                     }
                     // otherwise this is a required parameter
                     else
                     {
-                        argSpecs[i] = new MatchArgSlot(i, param);
+                        argSpecs[i] =
+                            new MatchArgSlot(i, param);
+
                         required++;
                     }
                 }
@@ -295,7 +337,7 @@ namespace MethodBinder
             }
             else
             {
-                argSpecs = Array.Empty<MatchArgSlot?>();
+                argSpecs = Array.Empty<MatchArgSlot>();
             }
 
             // we compare required number of arguments for this
@@ -326,24 +368,5 @@ namespace MethodBinder
             spec = new MatchSpec(m, required, optional, expands, argSpecs);
             return true;
         }
-
-        static object? GetDefaultValue(ParameterInfo paramInfo)
-        {
-            if (paramInfo.HasDefaultValue)
-            {
-                return paramInfo.DefaultValue;
-            }
-
-            // [OptionalAttribute] was specified for the parameter.
-            // See https://stackoverflow.com/questions/3416216/optionalattribute-parameters-default-value
-            // for rules on determining the value to pass to the parameter
-            var type = paramInfo.ParameterType;
-            if (type == typeof(object))
-                return Type.Missing;
-            else if (type.IsValueType)
-                return Activator.CreateInstance(type);
-            else
-                return null;
-        }
-    }
+}
 }
