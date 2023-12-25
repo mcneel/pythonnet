@@ -58,18 +58,6 @@ namespace Python.Runtime
         public MethodObject WithOverloads(MethodBase[] overloads)
             => new(type, name, overloads, allow_threads: binder.allow_threads);
 
-        internal MethodBase[] info
-        {
-            get
-            {
-                if (_info == null)
-                {
-                    _info = (from i in infoList where i.Valid select i.Value).ToArray();
-                }
-                return _info;
-            }
-        }
-
         public virtual NewReference Invoke(BorrowedReference inst, BorrowedReference args, BorrowedReference kw)
         {
             return Invoke(inst, args, kw, null);
@@ -88,7 +76,7 @@ namespace Python.Runtime
                 return new NewReference(Runtime.PyNone);
             }
 
-            return binder.Invoke(target, args, kw, info, this.info);
+            return binder.Invoke(target, args, kw, info);
         }
 
         /// <summary>

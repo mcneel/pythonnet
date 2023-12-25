@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Reflection;
 using System.Collections.Generic;
+using System.Threading;
 
 namespace Python.Runtime
 {
@@ -137,6 +138,8 @@ namespace Python.Runtime
 
                 uint argidx = 0;
                 uint argsCount = (uint)Runtime.PyTuple_Size(args);
+                bool checkArgs = args != null;
+                bool checkKwargs = kwargs != null;
 
                 for (uint i = 0; i < Parameters.Length; i++)
                 {
@@ -144,28 +147,34 @@ namespace Python.Runtime
                     {
                         BorrowedReference item;
 
-                        item = Runtime.PyDict_GetItemString(kwargs, slot.Key);
-                        if (item != null)
+                        if (checkKwargs)
                         {
-                            slot.Value =
-                                PyObject.FromNullableReference(item);
-
-                            score += GetDistance(item, slot.Type);
-                            continue;
-                        }
-
-                        if (argsCount > 0
-                                && argidx < argsCount)
-                        {
-                            item = Runtime.PyTuple_GetItem(args, (nint)argidx);
+                            item = Runtime.PyDict_GetItemString(kwargs, slot.Key);
                             if (item != null)
                             {
                                 slot.Value =
                                     PyObject.FromNullableReference(item);
 
                                 score += GetDistance(item, slot.Type);
-                                argidx++;
                                 continue;
+                            }
+                        }
+
+                        if (checkArgs)
+                        {
+                            if (argsCount > 0
+                                && argidx < argsCount)
+                            {
+                                item = Runtime.PyTuple_GetItem(args, (nint)argidx);
+                                if (item != null)
+                                {
+                                    slot.Value =
+                                        PyObject.FromNullableReference(item);
+
+                                    score += GetDistance(item, slot.Type);
+                                    argidx++;
+                                    continue;
+                                }
                             }
                         }
 
@@ -280,9 +289,11 @@ namespace Python.Runtime
         {
             spec = default;
 
-            uint argsCount = (uint)Runtime.PyTuple_Size(args);
-            uint kwargsCount = (uint)Runtime.PyDict_Size(kwargs);
-            HashSet<string> kwargKeys = GetKeys(kwargs);
+            int argSize = args == null ? 0 : (int)Runtime.PyTuple_Size(args);
+            int kwargSize = kwargs == null ? 0 : (int)Runtime.PyDict_Size(kwargs);
+            uint argsCount = (uint)(argSize == -1 ? 0 : argSize);
+            uint kwargsCount = (uint)(kwargSize == -1 ? 0 : kwargSize);
+            HashSet<string> kwargKeys = kwargSize > 0 ? GetKeys(kwargs) : new();
 
             // Find any method that could accept this many args and kwargs
             int index = 0;
@@ -313,8 +324,12 @@ namespace Python.Runtime
             }
             else if (specs.Length == 1)
             {
-                spec = specs[0];
-                return spec is not null;
+                if (specs[0] is BindSpec onlySpec)
+                {
+                    spec = onlySpec;
+                    spec!.GetDistance(args, kwargs);
+                    return true;
+                }
             }
             else if (specs.Length > 1)
             {

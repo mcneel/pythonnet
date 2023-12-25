@@ -48,7 +48,7 @@ namespace Python.Runtime
                 ? self.m.type.Value.GetConstructor(types) is { } ctor
                     ? new[] { ctor }
                     : Array.Empty<MethodBase>()
-                : MethodBinder.MatchParameters(self.m.info, types);
+                : MethodBinder.MatchParameters(self.m.binder.GetMethods(), types);
             if (overloads.Length == 0)
             {
                 return Exceptions.RaiseTypeError("No match found for given type params");
@@ -63,7 +63,7 @@ namespace Python.Runtime
         {
             get
             {
-                var infos = this.info.Valid ? new[] { this.info.Value } : this.m.info;
+                var infos = this.info.Valid ? new[] { this.info.Value } : this.m.binder.GetMethods();
                 Type type = infos.Select(i => i.DeclaringType)
                     .OrderByDescending(t => t, new TypeSpecificityComparer())
                     .First();
@@ -176,7 +176,7 @@ namespace Python.Runtime
                     if (sigTp != null)
                     {
                         Type[] genericTp = info.GetGenericArguments();
-                        MethodInfo? betterMatch = MethodBinder.MatchSignatureAndParameters(self.m.info, genericTp, sigTp);
+                        MethodInfo? betterMatch = MethodBinder.MatchSignatureAndParameters(self.m.binder.GetMethods(), genericTp, sigTp);
                         if (betterMatch != null)
                         {
                             self.info = betterMatch;
