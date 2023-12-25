@@ -27,13 +27,13 @@ namespace MethodBinderTests
         {
             object[] args;
             Guid t;
-            Guid r;
+            NewReference r;
 
             // Foo()
             args = new object[0];
             t = A.Foo();
-            r = MethodInvoke.Invoke<Guid>(A, FOO, args, NoKwargs);
-            Assert.That(t, Is.EqualTo(r));
+            r = MethodBinder.Invoke(A, FOO, args, NoKwargs);
+            Assert.That(t, Is.EqualTo(r.Value));
         }
 
         [Test]
@@ -41,25 +41,25 @@ namespace MethodBinderTests
         {
             object[] args;
             Guid t;
-            Guid r;
+            NewReference r;
 
             // Foo(int _1)
             args = new object[] { 0 };
             t = A.Foo(0);
-            r = MethodInvoke.Invoke<Guid>(A, FOO, args, NoKwargs);
-            Assert.That(t, Is.EqualTo(r));
+            r = MethodBinder.Invoke(A, FOO, args, NoKwargs);
+            Assert.That(t, Is.EqualTo(r.Value));
 
             // Foo(double _1)
             args = new object[] { 0.0F };
             t = A.Foo(0.0F);
-            r = MethodInvoke.Invoke<Guid>(A, FOO, args, NoKwargs);
-            Assert.That(t, Is.EqualTo(r));
+            r = MethodBinder.Invoke(A, FOO, args, NoKwargs);
+            Assert.That(t, Is.EqualTo(r.Value));
 
             // Foo(double[] _1)
             args = new object[] { new double[] { 0.0D } };
             t = A.Foo(new double[] { 0.0D });
-            r = MethodInvoke.Invoke<Guid>(A, FOO, args, NoKwargs);
-            Assert.That(t, Is.EqualTo(r));
+            r = MethodBinder.Invoke(A, FOO, args, NoKwargs);
+            Assert.That(t, Is.EqualTo(r.Value));
 
             // Foo(double[] _1)
             var kwargs = new KeywordArgs
@@ -67,8 +67,8 @@ namespace MethodBinderTests
                 ["_1"] = 0.0F,
             };
             t = A.Foo(_1: 0.0F);
-            r = MethodInvoke.Invoke<Guid>(A, FOO, NoArgs, kwargs);
-            Assert.That(t, Is.EqualTo(r));
+            r = MethodBinder.Invoke(A, FOO, NoArgs, kwargs);
+            Assert.That(t, Is.EqualTo(r.Value));
         }
 
         [Test]
@@ -76,31 +76,31 @@ namespace MethodBinderTests
         {
             object[] args;
             Guid t;
-            Guid r;
+            NewReference r;
 
             // Foo(int _1, int _2)
             args = new object[] { 0, 1 };
             t = A.Foo(0, 1);
-            r = MethodInvoke.Invoke<Guid>(A, FOO, args, NoKwargs);
-            Assert.That(t, Is.EqualTo(r));
+            r = MethodBinder.Invoke(A, FOO, args, NoKwargs);
+            Assert.That(t, Is.EqualTo(r.Value));
 
             // Foo(float _1, float _2)
             args = new object[] { 0.0F, 1.0F };
             t = A.Foo(0.0F, 1.0F);
-            r = MethodInvoke.Invoke<Guid>(A, FOO, args, NoKwargs);
-            Assert.That(t, Is.EqualTo(r));
+            r = MethodBinder.Invoke(A, FOO, args, NoKwargs);
+            Assert.That(t, Is.EqualTo(r.Value));
 
             // Foo(int _1, bool _2 = false)
             args = new object[] { 0, false };
             t = A.Foo(0, false);
-            r = MethodInvoke.Invoke<Guid>(A, FOO, args, NoKwargs);
-            Assert.That(t, Is.EqualTo(r));
+            r = MethodBinder.Invoke(A, FOO, args, NoKwargs);
+            Assert.That(t, Is.EqualTo(r.Value));
 
             // Foo([Optional, DefaultParameterValue(12)] nint _1, uint _2)
             args = new object[] { IntPtr.Zero, 0 };
             t = A.Foo(IntPtr.Zero, 0);
-            r = MethodInvoke.Invoke<Guid>(A, FOO, args, NoKwargs);
-            Assert.That(t, Is.EqualTo(r));
+            r = MethodBinder.Invoke(A, FOO, args, NoKwargs);
+            Assert.That(t, Is.EqualTo(r.Value));
 
             // Foo([Optional, DefaultParameterValue(12)] nint _1, uint _2)
             args = new object[] { 0 };
@@ -109,14 +109,14 @@ namespace MethodBinderTests
                 ["_1"] = IntPtr.Zero,
             };
             t = A.Foo(_1: IntPtr.Zero, 0);
-            r = MethodInvoke.Invoke<Guid>(A, FOO, args, kwargs);
-            Assert.That(t, Is.EqualTo(r));
+            r = MethodBinder.Invoke(A, FOO, args, kwargs);
+            Assert.That(t, Is.EqualTo(r.Value));
 
             // Foo(float _1, float _2)
             args = new object[] { 0, 1 };
             t = B.Foo(0, 1);
-            r = MethodInvoke.Invoke<Guid>(B, FOO, args, NoKwargs);
-            Assert.That(t, Is.EqualTo(r));
+            r = MethodBinder.Invoke(B, FOO, args, NoKwargs);
+            Assert.That(t, Is.EqualTo(r.Value));
         }
     }
 }

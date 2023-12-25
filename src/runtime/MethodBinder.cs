@@ -18,6 +18,78 @@ namespace Python.Runtime
     [Serializable]
     internal partial class MethodBinder
     {
+        static bool TryGetManagedValue(BorrowedReference op, Type type, out object? value)
+        {
+            return TryConvertArgument(op, type, out value, out bool _);
+        }
+
+        static Type? GetCLRType(BorrowedReference op, Type type)
+        {
+            return TryComputeClrArgumentType(type, op);
+        }
+
+        NewReference Invoke(BorrowedReference inst,
+                            BorrowedReference args,
+                            BorrowedReference kwargs)
+        {
+            // No valid methods, nothing to bind.
+            MethodBase[] methods = GetMethods();
+            if (methods.Length == 0)
+            {
+                var msg = new StringBuilder("The underlying C# method(s) have been deleted");
+                if (list.Count > 0
+                        && list[0].Name != null)
+                {
+                    msg.Append($": {list[0]}");
+                }
+                return Exceptions.RaiseTypeError(msg.ToString());
+            }
+
+            if (TryBind(methods, args, kwargs, out BindSpec? spec))
+            {
+                MethodBase match = spec!.Method;
+                Type rtype = match.IsConstructor ? typeof(void) : ((MethodInfo)match).ReturnType;
+
+                object? instance = default;
+                if (!match.IsStatic)
+                {
+                    if (ManagedType.GetManagedObject(inst) is CLRObject co)
+                    {
+                        instance = co.inst;
+                    }
+                    else
+                    {
+                        Exceptions.SetError(Exceptions.TypeError, "Invoked a non-static method with an invalid instance");
+                        return new NewReference(Runtime.PyNone);
+                    }
+                }
+
+                object? res =
+                    match.Invoke(instance, spec.GetArguments());
+
+                return Converter.ToPython(res, rtype);
+            }
+            else
+            {
+                var value = new StringBuilder("No method matches given arguments");
+                if (list.Count > 0 && list[0].Valid)
+                {
+                    value.Append($" for {list[0].Value.DeclaringType?.Name}.{list[0].Value.Name}");
+                }
+
+                value.Append(": ");
+                Runtime.PyErr_Fetch(out var errType, out var errVal, out var errTrace);
+                AppendArgumentTypes(to: value, args);
+                Runtime.PyErr_Restore(errType.StealNullable(), errVal.StealNullable(), errTrace.StealNullable());
+                return Exceptions.RaiseTypeError(value.ToString());
+            }
+        }
+
+
+
+
+
+
         /// <summary>
         /// Context handler to provide invoke options to MethodBinder
         /// </summary>
@@ -369,6 +441,8 @@ namespace Python.Runtime
         internal virtual NewReference Invoke(BorrowedReference inst, BorrowedReference args, BorrowedReference kw,
                                              MethodBase? info = null, MethodBase[]? methodinfo = null)
         {
+            return Invoke(inst, args, kw);
+
             // No valid methods, nothing to bind.
             if (GetMethods().Length == 0)
             {

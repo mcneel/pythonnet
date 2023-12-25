@@ -5,33 +5,19 @@ using System.Collections.Generic;
 
 namespace Python.Runtime
 {
-    using KeywordArgs = Dictionary<string, object?>;
-    using TypeDistMap = Dictionary<int, uint>;
+    using TypeDistanceMap = Dictionary<int, uint>;
 
-#if UNIT_TEST
-    public static class MethodInvoke
-#else
-    internal partial class MethodBinder
-#endif
+    partial class MethodBinder
     {
-        const string OP_IMPLICIT = "op_Implicit";
-        const string OP_EXPLICIT = "op_Explicit";
-        static readonly BindingFlags FLAGS = BindingFlags.Static
-                                           | BindingFlags.Public
-                                           | BindingFlags.NonPublic;
-
         static readonly Type PAAT = typeof(ParamArrayAttribute);
         static readonly Type UNINT = typeof(nuint);
         static readonly Type NINT = typeof(nint);
 
-        static readonly TypeDistMap s_distMap = new();
+        static readonly TypeDistanceMap s_distMap = new();
 
-        private sealed class MatchArgSlot
+        private sealed class BindParam
         {
-            readonly ParameterInfo _paramInfo;
-
-            bool _hasValue = false;
-            object? _value = default;
+            readonly ParameterInfo _param;
 
             public readonly uint Index;
             public readonly string Key;
@@ -39,20 +25,12 @@ namespace Python.Runtime
             public readonly bool IsOptional;
             public readonly bool IsOut;
 
-            public object? Value
-            {
-                get => _hasValue ? _value : GetDefaultValue(_paramInfo);
-                set
-                {
-                    _hasValue = true;
-                    _value = value;
-                }
-            }
+            public PyObject? Value { get; set; } = default;
 
-            public MatchArgSlot(uint index, ParameterInfo paramInfo,
+            public BindParam(uint index, ParameterInfo paramInfo,
                                 bool isOptional = false, bool isOut = false)
             {
-                _paramInfo = paramInfo;
+                _param = paramInfo;
 
                 Index = index;
                 Key = paramInfo.Name;
@@ -61,12 +39,19 @@ namespace Python.Runtime
                 IsOut = isOut;
             }
 
-
             public object? Convert()
             {
-                if (TryCast(Value, Type, out object? cast))
+                if (Value is null)
                 {
-                    return cast;
+                    if (IsOptional)
+                    {
+                        return GetDefaultValue(_param);
+                    }
+                }
+
+                else if (TryGetManagedValue(Value, Type, out object? value))
+                {
+                    return value;
                 }
 
                 return null;
@@ -83,42 +68,24 @@ namespace Python.Runtime
                 // See https://stackoverflow.com/questions/3416216/optionalattribute-parameters-default-value
                 // for rules on determining the value to pass to the parameter
                 var type = paramInfo.ParameterType;
+
                 if (type == typeof(object))
+                {
                     return Type.Missing;
+                }
                 else if (type.IsValueType)
+                {
                     return Activator.CreateInstance(type);
+                }
                 else
+                {
                     return null;
+                }
             }
 
-            static bool TryCast(object? source, Type to, out object? cast)
-            {
-                cast = default;
-
-                if (source is null)
-                {
-                    return false;
-                }
-
-                Type from = source.GetType();
-
-                MethodInfo castMethod =
-                    // search for a cast operator in the source type
-                    GetCast(from, from, to)
-                    // search in the target type if not found in source type
-                 ?? GetCast(to, from, to);
-
-                if (castMethod != null)
-                {
-                    cast = castMethod.Invoke(null, new[] { source });
-                    return true;
-                }
-
-                return false;
-            }
         }
 
-        private sealed class MatchSpec
+        private sealed class BindSpec
         {
             const uint SECTOR_SIZE = uint.MaxValue / 4;
             const uint STATIC_DISTANCE = SECTOR_SIZE;
@@ -129,27 +96,26 @@ namespace Python.Runtime
             public readonly uint Required;
             public readonly uint Optional;
             public readonly bool Expands;
-            public readonly MatchArgSlot[] ArgumentSlots;
+            public readonly BindParam[] Parameters;
 
-            public MatchSpec(MethodBase method,
+            public BindSpec(MethodBase method,
                              uint required,
                              uint optional,
                              bool expands,
-                             MatchArgSlot[] argSpecs)
+                             BindParam[] argSpecs)
             {
                 Method = method;
                 Required = required;
                 Optional = optional;
                 Expands = expands;
-                ArgumentSlots = argSpecs;
+                Parameters = argSpecs;
             }
 
             public object?[] GetArguments()
-                => ArgumentSlots.Select(s => s.Convert()).ToArray();
+                => Parameters.Select(s => s.Convert()).ToArray();
 
-            // no two specs should have the exact same distance as that means
-            // the signatures are exactly the same and that is not possible
-            public uint GetDistance(object?[] args, KeywordArgs kwargs)
+            public uint GetDistance(BorrowedReference args,
+                                    BorrowedReference kwargs)
             {
                 uint score = 0;
 
@@ -170,35 +136,47 @@ namespace Python.Runtime
                 }
 
                 uint argidx = 0;
-                for (uint i = 0; i < ArgumentSlots.Length; i++)
+                uint argsCount = (uint)Runtime.PyTuple_Size(args);
+
+                for (uint i = 0; i < Parameters.Length; i++)
                 {
-                    if (ArgumentSlots[i] is MatchArgSlot slot)
+                    if (Parameters[i] is BindParam slot)
                     {
-                        if (kwargs.TryGetValue(slot.Key, out object? kwargv))
+                        BorrowedReference item;
+
+                        item = Runtime.PyDict_GetItemString(kwargs, slot.Key);
+                        if (item != null)
                         {
-                            slot.Value = kwargv;
-                            score += GetDistance(kwargv, slot.Type);
+                            slot.Value =
+                                PyObject.FromNullableReference(item);
+
+                            score += GetDistance(item, slot.Type);
+                            continue;
                         }
 
-                        else if (args.Length > 0
-                                    && argidx < args.Length
-                                    && args[argidx] is object argv)
+                        if (argsCount > 0
+                                && argidx < argsCount)
                         {
-                            slot.Value = argv;
-                            score += GetDistance(argv, slot.Type);
-                            argidx++;
+                            item = Runtime.PyTuple_GetItem(args, (nint)argidx);
+                            if (item != null)
+                            {
+                                slot.Value =
+                                    PyObject.FromNullableReference(item);
+
+                                score += GetDistance(item, slot.Type);
+                                argidx++;
+                                continue;
+                            }
                         }
-                        else
-                        {
-                            score += ARG_DISTANCE;
-                        }
+
+                        score += ARG_DISTANCE;
                     }
                 }
 
                 return score;
             }
 
-            static uint GetDistance(object? arg, Type to)
+            static uint GetDistance(BorrowedReference from, Type to)
             {
                 uint distance = ARG_DISTANCE;
 
@@ -207,10 +185,8 @@ namespace Python.Runtime
                     distance += 2;
                 }
 
-                if (arg is object argument)
+                if (GetCLRType(from, to) is Type argType)
                 {
-                    Type argType = GetType(argument);
-
                     if (to == argType)
                     {
                         distance += 1;
@@ -246,8 +222,8 @@ namespace Python.Runtime
                 {
                     distance = 1 +
                         (uint)Math.Abs(
-                            (int)GetDistance(to)
-                           -(int)GetDistance(from)
+                            (int)GetPrecedence(to)
+                           - (int)GetPrecedence(from)
                         );
                 }
 
@@ -256,7 +232,7 @@ namespace Python.Runtime
                 return distance;
             }
 
-            static uint GetDistance(Type of)
+            static uint GetPrecedence(Type of)
             {
                 if (UNINT == of)
                 {
@@ -295,73 +271,39 @@ namespace Python.Runtime
                     _ => 2000,
                 };
             }
-
-            static Type GetType(object arg) => arg.GetType();
-        }
-
-        public static T? Invoke<T>(object instance,
-                                   string name,
-                                   object?[] args,
-                                   KeywordArgs kwargs)
-        {
-            if (instance is null)
-            {
-                return default;
-            }
-
-            MethodInfo[] methods =
-                instance.GetType()
-                        .GetMethods()
-                        .Where(m => m.Name == name)
-                        .ToArray();
-
-            if (TryBind(methods, args, kwargs, out MatchSpec? spec))
-            {
-                object? result =
-                    spec!.Method.Invoke(instance,
-                                       spec.GetArguments());
-
-                if (result != null
-                    && typeof(T).IsAssignableFrom(result.GetType()))
-                {
-                    return (T)result;
-                }
-            }
-
-            throw new MethodAccessException(name);
         }
 
         static bool TryBind(MethodBase[] methods,
-                            object?[] args,
-                            KeywordArgs kwargs,
-                            out MatchSpec? spec)
+                            BorrowedReference args,
+                            BorrowedReference kwargs,
+                            out BindSpec? spec)
         {
             spec = default;
 
-            uint argsCount = (uint)args.Count();
-            uint kwargsCount = (uint)kwargs.Count();
-            HashSet<string> kwargKeys = new(kwargs.Keys);
+            uint argsCount = (uint)Runtime.PyTuple_Size(args);
+            uint kwargsCount = (uint)Runtime.PyDict_Size(kwargs);
+            HashSet<string> kwargKeys = GetKeys(kwargs);
 
             // Find any method that could accept this many args and kwargs
             int index = 0;
-            MatchSpec?[] matches = new MatchSpec?[methods.Count()];
+            BindSpec?[] bindSpecs = new BindSpec?[methods.Count()];
             uint totalArgs = argsCount + kwargsCount;
             foreach (MethodBase mb in methods)
             {
-                if (TryMatch(mb, totalArgs, kwargKeys, out MatchSpec? matched))
+                if (TryBindByParams(mb, totalArgs, kwargKeys, out BindSpec? bindSpec))
                 {
-                    matches[index] = matched;
+                    bindSpecs[index] = bindSpec;
                     index++;
                 }
             }
 
-            return TryMatchClosest(matches, args, kwargs, out spec);
+            return TryBindByDistance(bindSpecs, args, kwargs, out spec);
         }
 
-        static bool TryMatchClosest(MatchSpec?[] specs,
-                                    object?[] args,
-                                    KeywordArgs kwargs,
-                                    out MatchSpec? spec)
+        static bool TryBindByDistance(BindSpec?[] specs,
+                                      BorrowedReference args,
+                                      BorrowedReference kwargs,
+                                      out BindSpec? spec)
         {
             spec = null;
 
@@ -372,12 +314,12 @@ namespace Python.Runtime
             else if (specs.Length == 1)
             {
                 spec = specs[0];
-                return true;
+                return spec is not null;
             }
             else if (specs.Length > 1)
             {
                 uint closest = uint.MaxValue;
-                foreach (MatchSpec? mspec in specs)
+                foreach (BindSpec? mspec in specs)
                 {
                     if (mspec is null)
                     {
@@ -392,16 +334,16 @@ namespace Python.Runtime
                     }
                 }
 
-                return closest < uint.MaxValue;
+                return spec is not null;
             }
 
             return false;
         }
 
-        static bool TryMatch(MethodBase m,
-                             uint givenArgs,
-                             HashSet<string> kwargs,
-                             out MatchSpec? spec)
+        static bool TryBindByParams(MethodBase m,
+                                    uint givenArgs,
+                                    HashSet<string> kwargs,
+                                    out BindSpec? spec)
         {
             spec = default;
 
@@ -409,7 +351,7 @@ namespace Python.Runtime
             uint optional = 0;
             bool expands = false;
 
-            MatchArgSlot[] argSpecs;
+            BindParam[] argSpecs;
             ParameterInfo[] mparams = m.GetParameters();
             if (mparams.Length > 0)
             {
@@ -424,7 +366,7 @@ namespace Python.Runtime
                     (uint)mparams.Length - 1 :
                     (uint)mparams.Length;
 
-                argSpecs = new MatchArgSlot[length];
+                argSpecs = new BindParam[length];
 
                 for (uint i = 0; i < length; i++)
                 {
@@ -448,7 +390,7 @@ namespace Python.Runtime
                     if (param.IsOut)
                     {
                         argSpecs[i] =
-                            new MatchArgSlot(i, param, isOut: true);
+                            new BindParam(i, param, isOut: true);
 
                         continue;
                     }
@@ -458,7 +400,7 @@ namespace Python.Runtime
                     else if (param.IsOptional)
                     {
                         argSpecs[i] =
-                            new MatchArgSlot(i, param, isOptional: true);
+                            new BindParam(i, param, isOptional: true);
 
                         optional++;
                     }
@@ -466,7 +408,7 @@ namespace Python.Runtime
                     else
                     {
                         argSpecs[i] =
-                            new MatchArgSlot(i, param);
+                            new BindParam(i, param);
 
                         required++;
                     }
@@ -479,10 +421,16 @@ namespace Python.Runtime
                 {
                     goto not_matched;
                 }
+
+                // no point in processing the rest if we know this
+                if (required > givenArgs)
+                {
+                    goto not_matched;
+                }
             }
             else
             {
-                argSpecs = Array.Empty<MatchArgSlot>();
+                argSpecs = Array.Empty<BindParam>();
             }
 
             // we compare required number of arguments for this
@@ -496,8 +444,7 @@ namespace Python.Runtime
             // (0, 0) -> (a, b=0, c=0)
             // (0, 0) -> (a=0, b=0)
             else if (required < givenArgs
-                        && (expands
-                                || givenArgs <= (required + optional)))
+                        && (givenArgs <= (required + optional) || expands))
             {
                 goto matched;
             }
@@ -510,22 +457,30 @@ namespace Python.Runtime
             return false;
 
         matched:
-            spec = new MatchSpec(m, required, optional, expands, argSpecs);
+            spec = new BindSpec(m, required, optional, expands, argSpecs);
             return true;
         }
 
-        static MethodInfo GetCast(Type @in, Type from, Type to)
+        static HashSet<string> GetKeys(BorrowedReference kwargs)
         {
-            return @in.GetMethods(FLAGS)
-                       .FirstOrDefault(m =>
-                       {
-                           return (m.Name == OP_IMPLICIT
-                                        || m.Name == OP_EXPLICIT)
-                                && m.ReturnType == to
-                                && m.GetParameters() is ParameterInfo[] pi
-                                && pi.Length == 1
-                                && pi[0].ParameterType == from;
-                       });
+            var keys = new HashSet<string>();
+            if (kwargs == null)
+            {
+                return keys;
+            }
+
+            using NewReference keyList = Runtime.PyDict_Keys(kwargs);
+            using NewReference valueList = Runtime.PyDict_Values(kwargs);
+            for (int i = 0; i < Runtime.PyDict_Size(kwargs); ++i)
+            {
+                string keyStr = Runtime.GetManagedString(
+                        Runtime.PyList_GetItem(keyList.Borrow(), i)
+                    )!;
+
+                keys.Add(keyStr);
+            }
+
+            return keys;
         }
     }
 }
