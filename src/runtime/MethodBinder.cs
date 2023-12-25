@@ -509,10 +509,10 @@ namespace Python.Runtime
                 }
 
                 // If there are out parameters, we return a tuple containing
-                // the result, if any, followed by the out parameters. If there is only
-                // one out parameter and the return type of the method is void,
-                // we return the out parameter as the result to Python (for
-                // code compatibility with ironpython).
+                // the result (if not void), followed by the out parameters.
+                // If there is only one out parameter and the return type of
+                // the method is void, we return the out parameter as the result
+                // to Python (for code compatibility with ironpython).
                 int outParamsCount = spec.Parameters.Count(p => p.IsOut);
                 if (outParamsCount > 0)
                 {
