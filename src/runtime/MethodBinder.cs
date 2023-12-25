@@ -475,13 +475,16 @@ namespace Python.Runtime
                     threadState = PythonEngine.BeginAllowThreads();
                 }
 
+                BindParam[] bindParams = spec.Parameters;
+                object?[] bindArgs = spec.GetArguments();
+
                 try
                 {
                     result =
                         match.Invoke(instance,
                                      invokeAttr: BindingFlags.Default,
                                      binder: null,
-                                     parameters: spec.GetArguments(),
+                                     parameters: bindArgs,
                                      culture: null);
                 }
                 catch (Exception e)
@@ -524,11 +527,13 @@ namespace Python.Runtime
                         tupleIndex++;
                     }
 
-                    foreach (BindParam param in spec.Parameters)
+                    for (int i = 0; i < bindParams.Length; i++)
                     {
+                        BindParam param = bindParams[i];
                         if (param.Type.IsByRef)
                         {
-                            using var v = Converter.ToPython(param.Value, param.Type.GetElementType());
+                            object? value = bindArgs[i];
+                            using var v = Converter.ToPython(value, param.Type.GetElementType());
                             Runtime.PyTuple_SetItem(tuple.Borrow(), tupleIndex, v.Steal());
                             tupleIndex++;
                         }
