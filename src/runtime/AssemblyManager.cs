@@ -401,7 +401,23 @@ namespace Python.Runtime
         /// type.
         /// </summary>
         public static IEnumerable<Type> LookupTypes(string qualifiedName)
-            => assemblies.Select(assembly => assembly.GetType(qualifiedName)).Where(type => type != null && IsExported(type));
+        {
+            foreach(Assembly assembly in assemblies)
+            {
+                Type? maybeType = default;
+
+                try
+                {
+                    maybeType = assembly.GetType(qualifiedName);
+                }
+                catch { }
+
+                if (maybeType is Type type && IsExported(type))
+                {
+                    yield return type;
+                }
+            }
+        }
 
         internal static Type[] GetTypes(Assembly a)
         {
