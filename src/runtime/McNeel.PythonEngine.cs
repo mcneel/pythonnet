@@ -290,7 +290,8 @@ namespace Python.Runtime
         public class PyException : Exception
         {
             static readonly Regex s_msgParser = new Regex(@"(?<message>.+)\(.+line\s(?<line>\d+?)\)");
-            static readonly Regex s_tbParser = new Regex(@"File "".+,\sline\s(?<line>\d+?),\sin\s(?<module>.+)");
+            static readonly Regex s_pathParser = new Regex(@"File ""(?<path>.+)"",\sline");
+            static readonly Regex s_tbParser = new Regex(@"File "".+"",\sline\s(?<line>\d+?),\sin\s(?<module>.+)");
 
             readonly string _message;
             readonly string _pyStackTrace;
@@ -301,21 +302,51 @@ namespace Python.Runtime
 
             public PyException(PythonException pyEx) : base()
             {
-                string traceback = pyEx.Traceback is null ? string.Empty : PythonException.TracebackToString(pyEx.Traceback);
+                string traceback = pyEx.Traceback is null ?
+                    string.Empty
+                  : PythonException.TracebackToString(pyEx.Traceback);
 
-                _message = ParseMessage(pyEx);
-                _pyStackTrace = pyEx.Traceback is null ? string.Empty : string.Join(
-                    Environment.NewLine,
-                    "Traceback (most recent call last):",
-                    traceback,
-                    $"{pyEx.Type.Name}: {Message}"
-                );
+                // NOTE:
+                // assumes the first line in traceback is pointing to a line
+                // in the executing script.
 
-                Match m = s_tbParser.Matches(traceback)
-                                    .OfType<Match>()
-                                    .LastOrDefault();
-                if (m is Match
-                        && m.Success
+                // Example (Error on line importing a module):
+                //   File "schema:///990e0d1a/f15866f6", line 2, in <module>
+                //   File "C:\module\__init__.py", line 87, in <module>
+                //     lib = CDLL(libpath)
+                //   File "ctypes\__init__.py", line 364, in __init__
+
+                // Example (Error on line calling method in script):
+                //   File "C:\scripts\script.py", line 4, in <module>
+                //   File "C:\scripts\script.py", line 3, in foo
+
+                // lets find the last line number before exiting the script.
+                // first we need the file path. lets grab that from the first
+                // line of the traceback. see notes above.
+                string scriptTraceback = traceback;
+                string scriptPath = string.Empty;
+                Match um = s_pathParser.Match(traceback);
+                if (um.Success
+                        && um.Groups["path"].Value is string path)
+                {
+                    scriptPath = path;
+                }
+                // if file path is found, iterate over traceback lines,
+                // and find the last line that references the executing script
+                // before the stack dives outside, into imported modules
+                if (!string.IsNullOrEmpty(scriptPath))
+                {
+                    foreach (string tbl in traceback.Split('\n'))
+                    {
+                        if (tbl.Contains(scriptPath))
+                            scriptTraceback = tbl;
+                        else
+                            break;
+                    }
+                }
+
+                Match m = s_tbParser.Match(scriptTraceback);
+                if (m.Success
                         && int.TryParse(m.Groups["line"].Value, out int line))
                 {
                     LineNumber = line;
@@ -330,6 +361,14 @@ namespace Python.Runtime
                         LineNumber = line;
                     }
                 }
+
+                _message = ParseMessage(pyEx);
+                _pyStackTrace = pyEx.Traceback is null ? string.Empty : string.Join(
+                    Environment.NewLine,
+                    "Traceback (most recent call last):",
+                    traceback,
+                    $"{pyEx.Type.Name}: {Message}"
+                );
             }
 
             public override string ToString() => _pyStackTrace;
