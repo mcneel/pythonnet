@@ -24,7 +24,7 @@ namespace Python.Runtime
             => !br.IsNull;
 
         public static implicit operator BorrowedReference(PyObject pyObject)
-            => new BorrowedReference(pyObject.Value);
+            => new(pyObject.Value);
 
         public override bool Equals(object? obj)
             => ReferenceEquals(Value, obj);
@@ -182,17 +182,33 @@ namespace Python.Runtime
 
             if (TryBind(methods, argsRef, kwargsRef, out BindSpec? spec))
             {
-                object? result =
-                    spec!.Method.Invoke(instance,
-                                       spec.GetArguments());
-
-                if (result is null)
+                if (spec!.TryGetArguments(instance, out object?[] arguments))
                 {
-                    return new NewReference(BorrowedReference.Null);
+                    try
+                    {
+                        object? result = spec!.Method.Invoke(instance, arguments);
+
+                        if (result is null)
+                        {
+                            return new NewReference(BorrowedReference.Null);
+                        }
+                        else
+                        {
+                            return new NewReference(result);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new MethodAccessException(
+                                $"Error invoking {spec!.Method} | {ex}"
+                            );
+                    }
                 }
                 else
                 {
-                    return new NewReference(result);
+                    throw new MethodAccessException(
+                            $"Bad arguments for {spec!.Method}"
+                        );
                 }
             }
 
@@ -206,6 +222,36 @@ namespace Python.Runtime
         static readonly BindingFlags FLAGS = BindingFlags.Static
                                            | BindingFlags.Public
                                            | BindingFlags.NonPublic;
+
+        static readonly HashSet<string> s_opMap = new()
+        {
+            "op_Addition",
+            "op_Subtraction",
+            "op_Multiply",
+            "op_Division",
+            "op_Modulus",
+            "op_BitwiseAnd",
+            "op_BitwiseOr",
+            "op_ExclusiveOr",
+            "op_LeftShift",
+            "op_RightShift",
+            "op_OnesComplement",
+            "op_UnaryNegation",
+            "op_UnaryPlus",
+            "__int__",
+            "__float__",
+            "__index__",
+        };
+
+        static readonly HashSet<string> s_compOpMap = new()
+        {
+            "op_Equality",
+            "op_Inequality",
+            "op_LessThanOrEqual",
+            "op_GreaterThanOrEqual",
+            "op_LessThan",
+            "op_GreaterThan",
+        };
 
         static Type? GetCLRType(BorrowedReference br, Type _)
             => br.Value?.GetType();
@@ -227,6 +273,13 @@ namespace Python.Runtime
 
             Type from = source.GetType();
 
+            if (from == to
+                    || to.IsAssignableFrom(from))
+            {
+                cast = source;
+                return true;
+            }
+
             MethodInfo castMethod =
                 GetCast(from, from, to) ?? // cast operator in from type
                 GetCast(to, from, to);     // cast operator in to type
@@ -236,6 +289,13 @@ namespace Python.Runtime
                 cast = castMethod.Invoke(null, new[] { source });
                 return true;
             }
+
+            try
+            {
+                cast = Convert.ChangeType(source, to);
+                return true;
+            }
+            catch { }
 
             return false;
         }
@@ -252,6 +312,28 @@ namespace Python.Runtime
                                 && pi.Length == 1
                                 && pi[0].ParameterType == from;
                        });
+        }
+
+        static bool IsOperatorMethod(MethodBase method)
+        {
+            if (!method.IsSpecialName)
+            {
+                return false;
+            }
+
+            return s_opMap.Contains(method.Name)
+                || s_compOpMap.Contains(method.Name);
+        }
+
+        static bool IsComparisonOp(MethodBase method)
+        {
+            return s_compOpMap.Contains(method.Name);
+        }
+
+        static bool IsReverse(MethodBase method)
+        {
+            Type leftOperandType = method.GetParameters()[0].ParameterType;
+            return leftOperandType != method.DeclaringType;
         }
     }
 }
