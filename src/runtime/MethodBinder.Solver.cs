@@ -1,3 +1,4 @@
+#define METHODBINDER_SOLVER_NEW_CACHE_DIST
 using System;
 using System.Linq;
 using System.Reflection;
@@ -6,8 +7,6 @@ using System.Diagnostics;
 
 namespace Python.Runtime
 {
-    using TypeDistanceMap = Dictionary<int, uint>;
-
     /*
     ┌── INPUT ARGS/KWARGS
     │
@@ -73,7 +72,9 @@ namespace Python.Runtime
         static readonly Type UNINT = typeof(nuint);
         static readonly Type NINT = typeof(nint);
 
-        static readonly TypeDistanceMap s_distMap = new();
+#if METHODBINDER_SOLVER_NEW_CACHE_DIST
+        static readonly Dictionary<int, uint> s_distMap = new();
+#endif
 
         private enum BindParamKind
         {
@@ -425,11 +426,13 @@ namespace Python.Runtime
 
             static uint GetTypeDistance(Type from, Type to)
             {
+#if METHODBINDER_SOLVER_NEW_CACHE_DIST
                 int key = from.GetHashCode() + to.GetHashCode();
                 if (s_distMap.TryGetValue(key, out uint dist))
                 {
                     return dist;
                 }
+#endif
 
                 uint distance = 0;
 
@@ -481,7 +484,9 @@ namespace Python.Runtime
                 distance = ARG_MAX_DIST;
 
             computed:
+#if METHODBINDER_SOLVER_NEW_CACHE_DIST
                 s_distMap[key] = distance;
+#endif
                 return distance;
             }
 
