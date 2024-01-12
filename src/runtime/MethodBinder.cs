@@ -381,6 +381,12 @@ namespace Python.Runtime
             return TryComputeClrArgumentType(type, op);
         }
 
+        static bool IsOperatorMethod(MethodBase method) => OperatorMethod.IsOperatorMethod(method);
+
+        static bool IsComparisonOp(MethodBase method) => OperatorMethod.IsComparisonOp(method);
+
+        static bool IsReverse(MethodBase method) => OperatorMethod.IsReverse(method);
+
 #if METHODBINDER_SOLVER_NEW
         internal NewReference Invoke(BorrowedReference inst,
                                      BorrowedReference args,
@@ -422,9 +428,10 @@ namespace Python.Runtime
                 return Exceptions.RaiseTypeError(msg.ToString());
             }
 
-            if (TryBind(methods, args, kwargs, out BindSpec? spec))
+            if (TryBind(methods, args, kwargs, allow_redirected, out BindSpec ? spec))
             {
                 MethodBase match = spec!.Method;
+                BindParam[] bindParams = spec.Parameters;
 
                 // NOTE: requiring event handlers to be instances of System.Delegate
                 // Currently if event handlers accept any callable object, the dynamically generated
@@ -454,29 +461,27 @@ namespace Python.Runtime
                 Type resultType = match.IsConstructor ? s_voidType : ((MethodInfo)match).ReturnType;
                 bool isVoid = resultType == s_voidType;
 
-                object? instance = default;
+                object? instance = (ManagedType.GetManagedObject(inst) as CLRObject)?.inst;
                 object? result = default;
 
-                if (!match.IsStatic)
+                if (!match.IsStatic && instance is null)
                 {
-                    if (ManagedType.GetManagedObject(inst) is CLRObject co)
-                    {
-                        instance = co.inst;
-                    }
-                    else
-                    {
-                        Exceptions.SetError(Exceptions.TypeError, "Invoked a non-static method with an invalid instance");
-                        return new NewReference(Runtime.PyNone);
-                    }
+                    return Exceptions.RaiseTypeError("Invoked a non-static method with an invalid instance");
+                }
+
+                // NOTE:
+                // arg conversion needs to happen before GIL is possibly released
+                bool converted = spec.TryGetArguments(instance, out object?[] bindArgs);
+                if (!converted)
+                {
+                    Exception convertEx = PythonException.FetchCurrent();
+                    return Exceptions.RaiseTypeError($"{convertEx.Message} in method {match}");
                 }
 
                 if (allow_threads)
                 {
                     threadState = PythonEngine.BeginAllowThreads();
                 }
-
-                BindParam[] bindParams = spec.Parameters;
-                object?[] bindArgs = spec.GetArguments();
 
                 try
                 {
@@ -513,11 +518,11 @@ namespace Python.Runtime
                 // If there is only one out parameter and the return type of
                 // the method is void, we return the out parameter as the result
                 // to Python (for code compatibility with ironpython).
-                int outParamsCount = spec.Parameters.Count(p => p.IsOut);
-                if (outParamsCount > 0)
+                int returnParams = spec.Parameters.Where(p => p.Kind == BindParamKind.Return).Count();
+                if (returnParams > 0)
                 {
                     var tupleIndex = 0;
-                    int tupleSize = outParamsCount + (isVoid ? 0 : 1);
+                    int tupleSize = returnParams + (isVoid ? 0 : 1);
                     using var tuple = Runtime.PyTuple_New(tupleSize);
 
                     if (!isVoid)
@@ -527,16 +532,19 @@ namespace Python.Runtime
                         tupleIndex++;
                     }
 
-                    for (int i = 0; i < bindParams.Length; i++)
+                    for (int i = 0; i < spec.Parameters.Length; i++)
                     {
-                        BindParam param = bindParams[i];
-                        if (param.Type.IsByRef)
+                        BindParam param = spec.Parameters[i];
+
+                        if (param.Kind != BindParamKind.Return)
                         {
-                            object? value = bindArgs[i];
-                            using var v = Converter.ToPython(value, param.Type.GetElementType());
-                            Runtime.PyTuple_SetItem(tuple.Borrow(), tupleIndex, v.Steal());
-                            tupleIndex++;
+                            continue;
                         }
+
+                        object? value = bindArgs[i];
+                        using var v = Converter.ToPython(value, param.Type.GetElementType());
+                        Runtime.PyTuple_SetItem(tuple.Borrow(), tupleIndex, v.Steal());
+                        tupleIndex++;
                     }
 
                     if (tupleSize == 1)

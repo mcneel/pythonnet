@@ -14,8 +14,7 @@ namespace Python.Runtime
     ▼
 
     HORIZONTAL FILTER:
-    Filter functions based on number of arguments provided
-    and parameter count and kinds of function.
+    Filter functions based on number of arguments provided and parameter count.
 
         ──────────────────────────►
         FOO<T,T,T,T,...>(X,Y,Z,...)
@@ -24,9 +23,9 @@ namespace Python.Runtime
     ▼
 
     VERTICAL FILTER:
-    Filter functions based on argument types, and function parameter type.
-    Compute a distance value for each potential function based on
-    given argument type and parameter type.
+    Filter functions based on kind (static vs instance), argument types,
+    function parameter type, and type of parameter match. Compute a distance
+    value for each potential function based on aforementioned properties.
     
             │ │ │ │      │ │ │
             ▼ ▼ ▼ ▼      ▼ ▼ ▼
@@ -204,6 +203,9 @@ namespace Python.Runtime
             static readonly uint ARG_MAX_DIST = FUNC_MAX_DIST / MAX_ARGS;
             static readonly uint TYPE_MAX_DIST = ARG_MAX_DIST / 4;
             static readonly uint MATCH_MAX_DIST = TYPE_MAX_DIST / 4;
+
+            public static bool IsRedirected(MethodBase method) =>
+                method.GetCustomAttributes<RedirectedMethod>().Any();
 
             public readonly MethodBase Method;
             public readonly uint Required;
@@ -602,6 +604,7 @@ namespace Python.Runtime
         static bool TryBind(MethodBase[] methods,
                             BorrowedReference args,
                             BorrowedReference kwargs,
+                            bool allowRedirected,
                             out BindSpec? spec)
         {
             spec = default;
@@ -619,8 +622,17 @@ namespace Python.Runtime
 
             foreach (MethodBase method in methods)
             {
+                // NOTE:
+                // methods could be marked as Original, or Redirected.
+                // lets skip redirected methods if redirection is not allowed.
+                // redirection is usuall allowed so we check that first.
+                if (!allowRedirected && BindSpec.IsRedirected(method))
+                {
+                    continue;
+                }
+
                 if (TryBindByCount(method, totalArgs, kwargKeys,
-                                    out BindSpec? bindSpec))
+                                   out BindSpec? bindSpec))
                 {
                     // if givenArgs==0 find the method with zero params.
                     // that should take precedence over any other method
@@ -654,45 +666,67 @@ namespace Python.Runtime
             {
                 return false;
             }
-            else if (specs.Length == 1)
+
+            if (specs.Length > 1
+                    && specs[0] is BindSpec onlySpec
+                    && specs[1] is null)
             {
-                if (specs[0] is BindSpec onlySpec)
-                {
-                    spec = onlySpec;
-                    spec!.SetArgs(args, kwargs);
-                    return true;
-                }
+                spec = onlySpec;
+                spec!.SetArgs(args, kwargs);
+                return true;
             }
-            else if (specs.Length > 1)
+
+            uint closest = uint.MaxValue;
+            foreach (BindSpec? mspec in specs)
             {
-                uint closest = uint.MaxValue;
-                foreach (BindSpec? mspec in specs)
+                if (mspec is null)
                 {
-                    if (mspec is null)
+                    break;
+                }
+
+                uint distance = mspec!.SetArgsAndGetDistance(args, kwargs);
+
+                // NOTE:
+                // if method has the exact same distance,
+                // lets look at a few other properties to determine which
+                // method should be used.
+                if (distance == closest
+                        && distance != uint.MaxValue)
+                {
+                    // NOTE:
+                    // if there is a redirected method with same distance,
+                    // lets use that. redirected methods should be in order
+                    // or redirection e.g. origial->redirected->redirected
+                    if (BindSpec.IsRedirected(mspec!.Method))
                     {
-                        break;
+                        spec = mspec;
                     }
 
-                    uint distance = mspec!.SetArgsAndGetDistance(args, kwargs);
-                    if (distance == closest
-                            && distance != uint.MaxValue)
+                    // NOTE:
+                    // if method has the same distance, lets use the one
+                    // with the least amount of optional parameters.
+                    // e.g. between .Foo(int) and .Foo(int, float=0)
+                    // we would pick the former since it is shorter.
+                    // we do not compute the optional parameters that do not
+                    // have a matching input arguments in the distance.
+                    // otherwise .Foo(double) might end up closer than
+                    // .Foo(float, float=0) when passing a float input, since
+                    // including optional float mightpush distance further
+                    // away from computed distance for .Foo(double), depending
+                    // on the computed distance for the types.
+                    if (mspec!.Optional < spec!.Optional)
                     {
-                        if (mspec!.Optional < spec!.Optional)
-                        {
-                            spec = mspec;
-                        }
-                    }
-                    else if (distance < closest)
-                    {
-                        closest = distance;
                         spec = mspec;
                     }
                 }
-
-                return spec is not null;
+                else if (distance < closest)
+                {
+                    closest = distance;
+                    spec = mspec;
+                }
             }
 
-            return false;
+            return spec is not null;
         }
 
         // horizontal filter
@@ -721,22 +755,39 @@ namespace Python.Runtime
 
             if (isOperator)
             {
-                required = 1;
-
-                if (isReverse)
+                // binary operators
+                if (mparams.Length == 2)
                 {
-                    argSpecs = new BindParam[]
+                    required = 1;
+
+                    if (isReverse)
                     {
+                        argSpecs = new BindParam[]
+                        {
                         new BindParam(mparams[0], BindParamKind.Argument),
                         new BindParam(mparams[1], BindParamKind.Self),
-                    };
+                        };
+                    }
+                    else
+                    {
+                        argSpecs = new BindParam[]
+                        {
+                        new BindParam(mparams[0], BindParamKind.Self),
+                        new BindParam(mparams[1], BindParamKind.Argument),
+                        };
+                    }
                 }
+
+                // unary operators
+                // NOTE:
+                // we are not checking for mparams.Length == 0 since that
+                // should never happen. Operator methods must have at least
+                // one parameter (operand) defined.
                 else
                 {
                     argSpecs = new BindParam[]
                     {
                         new BindParam(mparams[0], BindParamKind.Self),
-                        new BindParam(mparams[1], BindParamKind.Argument),
                     };
                 }
 

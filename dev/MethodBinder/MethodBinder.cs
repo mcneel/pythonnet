@@ -163,6 +163,10 @@ namespace Python.Runtime
         }
     }
 
+    public class OriginalMethod : Attribute { }
+
+    public class RedirectedMethod : Attribute { }
+
     public partial class MethodBinder
     {
         public static NewReference Invoke(object instance,
@@ -180,7 +184,7 @@ namespace Python.Runtime
                         .Where(m => m.Name == name)
                         .ToArray();
 
-            if (TryBind(methods, argsRef, kwargsRef, out BindSpec? spec))
+            if (TryBind(methods, argsRef, kwargsRef, true, out BindSpec ? spec))
             {
                 if (spec!.TryGetArguments(instance, out object?[] arguments))
                 {
@@ -335,5 +339,7 @@ namespace Python.Runtime
             Type leftOperandType = method.GetParameters()[0].ParameterType;
             return leftOperandType != method.DeclaringType;
         }
+
+        static bool IsValid(MethodBase _) => true;
     }
 }
