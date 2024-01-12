@@ -427,7 +427,7 @@ namespace Python.Runtime
             static uint GetTypeDistance(Type from, Type to)
             {
 #if METHODBINDER_SOLVER_NEW_CACHE_DIST
-                int key = from.GetHashCode() + to.GetHashCode();
+                int key = ComputeKey(from, to);
                 if (s_distMap.TryGetValue(key, out uint dist))
                 {
                     return dist;
@@ -603,6 +603,17 @@ namespace Python.Runtime
                 }
 
                 return false;
+            }
+
+            static int ComputeKey(Type from, Type to)
+            {
+                unchecked
+                {
+                    int hash = 17;
+                    hash = hash * 23 + from.GetHashCode();
+                    hash = hash * 23 + to.GetHashCode();
+                    return hash;
+                }
             }
         }
 
