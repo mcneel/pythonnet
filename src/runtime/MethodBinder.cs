@@ -371,14 +371,87 @@ namespace Python.Runtime
 
         static readonly Type s_voidType = typeof(void);
 
-        static bool TryGetManagedValue(BorrowedReference op, Type type, out object? value)
+        static bool TryGetManagedValue(BorrowedReference op, out object? value)
         {
-            return TryConvertArgument(op, type, out value, out bool _);
+            value = default;
+
+            Type? clrType = GetCLRType(op);
+            if (clrType == null)
+            {
+                return false;
+            }
+
+            return Converter.ToManaged(op, clrType, out value, true);
         }
 
-        static Type? GetCLRType(BorrowedReference op, Type type)
+        static bool TryGetManagedValue(BorrowedReference op, Type type, out object? value)
         {
-            return TryComputeClrArgumentType(type, op);
+            value = default;
+
+            Type? clrType = GetCLRType(op, type);
+            if (clrType == null)
+            {
+                return false;
+            }
+
+            return Converter.ToManaged(op, clrType, out value, true);
+        }
+
+        static Type? GetCLRType(BorrowedReference op)
+        {
+            ManagedType? mt = ManagedType.GetManagedObject(op);
+
+            if (mt is ClassBase b)
+            {
+                MaybeType _type = b.type;
+                return _type.Valid ? _type.Value : null;
+            }
+            else if (mt is CLRObject ob)
+            {
+                object inst = ob.inst;
+                if (inst is Type ty)
+                {
+                    return ty;
+                }
+                else
+                {
+                    return inst?.GetType() ?? typeof(object);
+                }
+            }
+            else
+            {
+                if (Runtime.PyType_Check(op))
+                {
+                    return Converter.GetTypeByAlias(op);
+                }
+
+                return Converter.GetTypeByAlias(Runtime.PyObject_TYPE(op), op);
+            }
+        }
+
+        static Type? GetCLRType(BorrowedReference op, Type expected)
+        {
+            if (expected == typeof(object))
+            {
+                return expected;
+            }
+
+            BorrowedReference pyType = Runtime.PyObject_TYPE(op);
+            BorrowedReference pyBuiltinType = Converter.GetPythonTypeByAlias(expected);
+
+            if (pyType != null
+                    && pyBuiltinType == pyType)
+            {
+                return expected;
+            }
+
+            TypeCode typeCode = Type.GetTypeCode(expected);
+            if (TypeCode.Empty != typeCode)
+            {
+                return expected;
+            }
+
+            return null;
         }
 
         static bool IsOperatorMethod(MethodBase method) => OperatorMethod.IsOperatorMethod(method);
@@ -428,7 +501,7 @@ namespace Python.Runtime
                 return Exceptions.RaiseTypeError(msg.ToString());
             }
 
-            if (TryBind(methods, args, kwargs, allow_redirected, out BindSpec ? spec))
+            if (TryBind(methods, args, kwargs, allow_redirected, out BindSpec? spec))
             {
                 MethodBase match = spec!.Method;
                 BindParam[] bindParams = spec.Parameters;
@@ -471,7 +544,7 @@ namespace Python.Runtime
 
                 // NOTE:
                 // arg conversion needs to happen before GIL is possibly released
-                bool converted = spec.TryGetArguments(instance, out object?[] bindArgs);
+                bool converted = spec.TryGetArguments(instance, out MethodBase method, out object?[] bindArgs);
                 if (!converted)
                 {
                     Exception convertEx = PythonException.FetchCurrent();
@@ -486,11 +559,11 @@ namespace Python.Runtime
                 try
                 {
                     result =
-                        match.Invoke(instance,
-                                     invokeAttr: BindingFlags.Default,
-                                     binder: null,
-                                     parameters: bindArgs,
-                                     culture: null);
+                        method.Invoke(instance,
+                                      invokeAttr: BindingFlags.Default,
+                                      binder: null,
+                                      parameters: bindArgs,
+                                      culture: null);
                 }
                 catch (Exception e)
                 {

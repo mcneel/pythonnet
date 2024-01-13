@@ -186,11 +186,13 @@ namespace Python.Runtime
 
             if (TryBind(methods, argsRef, kwargsRef, true, out BindSpec ? spec))
             {
-                if (spec!.TryGetArguments(instance, out object?[] arguments))
+                if (spec!.TryGetArguments(instance,
+                                          out MethodBase method,
+                                          out object?[] arguments))
                 {
                     try
                     {
-                        object? result = spec!.Method.Invoke(instance, arguments);
+                        object? result = method.Invoke(instance, arguments);
 
                         if (result is null)
                         {
@@ -257,13 +259,31 @@ namespace Python.Runtime
             "op_GreaterThan",
         };
 
-        static Type? GetCLRType(BorrowedReference br, Type _)
-            => br.Value?.GetType();
+        static Type? GetCLRType(BorrowedReference br) => br.Value?.GetType();
+
+        static bool TryGetManagedValue(BorrowedReference br,
+                                       out object? value)
+        {
+            return TryCast(br.Value, out value);
+        }
 
         static bool TryGetManagedValue(BorrowedReference br, Type type,
                                        out object? value)
         {
             return TryCast(br.Value, type, out value);
+        }
+
+        static bool TryCast(object? source, out object? cast)
+        {
+            cast = default;
+
+            if (source is null)
+            {
+                return false;
+            }
+
+            cast = source;
+            return true;
         }
 
         static bool TryCast(object? source, Type to, out object? cast)
@@ -339,7 +359,5 @@ namespace Python.Runtime
             Type leftOperandType = method.GetParameters()[0].ParameterType;
             return leftOperandType != method.DeclaringType;
         }
-
-        static bool IsValid(MethodBase _) => true;
     }
 }

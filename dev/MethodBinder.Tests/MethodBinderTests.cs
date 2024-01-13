@@ -20,6 +20,7 @@ namespace MethodBinder.Tests
         protected static readonly TargetTypeA A = new();
         protected static readonly TargetTypeB B = new();
         protected static readonly TargetTypeC C = new();
+        protected static readonly TargetTypeD D = new();
 
         protected static readonly object[] NoArgs = Array.Empty<object>();
         protected static readonly KeywordArgs NoKwargs = new();
@@ -42,6 +43,16 @@ namespace MethodBinder.Tests
 
     public sealed class InvokeTests_1 : InvokeTests
     {
+        [Test]
+        public void TestFooParam_1_ShortAsGeneric()
+        {
+            // Foo(int _1)
+            object[] args = new object[] { (ushort)0 };
+            Guid t = A.Foo((ushort)0);
+            NewReference r = BINDER.Invoke(A, M, args, NoKwargs);
+            Assert.That(r.Value, Is.EqualTo(t));
+        }
+
         [Test]
         public void TestFooParam_1_Int()
         {
@@ -168,7 +179,6 @@ namespace MethodBinder.Tests
 
     public sealed class InvokeTests_2 : InvokeTests
     {
-
         [Test]
         public void TestFooParam_2_Int_Int()
         {
@@ -247,6 +257,29 @@ namespace MethodBinder.Tests
         }
     }
 
+    public sealed class InvokeTests_2_Ambig : InvokeTests
+    {
+        [Test]
+        public void TestFooParam_2_Int16_Int32()
+        {
+            // Foo(short _1, short _2)
+            object[] args = new object[] { (short)0, (int)1 };
+            Guid t = D.Foo((short)0, (short)1);
+            NewReference r = BINDER.Invoke(D, M, args, NoKwargs);
+            Assert.That(r.Value, Is.EqualTo(t));
+        }
+
+        [Test]
+        public void TestFooParam_2_Int64_Int32()
+        {
+            // Foo(long _1, long _2)
+            object[] args = new object[] { (long)0, 1 };
+            Guid t = D.Foo((long)0, 1);
+            NewReference r = BINDER.Invoke(D, M, args, NoKwargs);
+            Assert.That(r.Value, Is.EqualTo(t));
+        }
+    }
+
     public sealed class InvokeTests_N : InvokeTests
     {
         [Test]
@@ -304,11 +337,6 @@ namespace MethodBinder.Tests
 
 /*
  * UNUSED GUIDS
-return new Guid("5755a950-a11d-11ee-8c90-0242ac120002");
-return new Guid("5755aa86-a11d-11ee-8c90-0242ac120002");
-return new Guid("5755ab9e-a11d-11ee-8c90-0242ac120002");
-return new Guid("5755acac-a11d-11ee-8c90-0242ac120002");
-return new Guid("5755adc4-a11d-11ee-8c90-0242ac120002");
 return new Guid("5755aedc-a11d-11ee-8c90-0242ac120002");
 return new Guid("5755afea-a11d-11ee-8c90-0242ac120002");
 return new Guid("5755b2b0-a11d-11ee-8c90-0242ac120002");

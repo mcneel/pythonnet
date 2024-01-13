@@ -1,3 +1,4 @@
+#pragma warning disable CA1822
 using System;
 
 namespace MethodBinder.Tests
@@ -15,6 +16,18 @@ namespace MethodBinder.Tests
         }
 
         // 1
+        public Guid
+        Foo(short _1)
+        {
+            return new Guid("5755ab9e-a11d-11ee-8c90-0242ac120002");
+        }
+
+        public Guid
+        Foo<T>(T _1)
+        {
+            return new Guid("5755acac-a11d-11ee-8c90-0242ac120002");
+        }
+
         public Guid
         Foo(int _1)
         {

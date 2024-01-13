@@ -40,18 +40,19 @@ namespace Python.Runtime
     The groups are:
 
     FUNCTION GROUP: Kind of function e.g. static vs instance
-    ARGS     GROUP: Dedicated slot for each parameter. See BindSpec.MAX_ARGS
+                    (*) <T> methods here are method with no generic parameters.
+    ARGS     GROUP: Dedicated slot for each parameter. See MethodBinder.MAX_ARGS
     TYPE     GROUP: Kind of Type e.g. ByRef
     MATCH    GROUP: Kind of type match e.g. an exact match has a lower distance
 
                   MIN
     ┌───────────────┐       ┌───┐       ┌────────┐       ┌──────────────┐
-    │               │ ───── │   │ ───── │        │ ───── │              │
+    │               │ ────► │   │ ────► │        │ ───── │              │
   D │  INSTANCE     │       │   │       │        │       │ EXACT        │
   I │               │ ──┐   │   │ ──┐   │        │ ──┐   │              │
   S ├───────────────┤   │   ├───┤   │   │        │   │   ├──────────────┤
   T │               │   │   │┼┼┼│   │   │        │   │   │              │
-  A │  INSTANCE<T>  │   │   │┼┼┼│   │   │        │   │   │ DERIVED      │
+  A │  INSTANCE<T>* │   │   │┼┼┼│   │   │        │   │   │ DERIVED      │
   N │               │   │   │┼┼┼│   │   │        │   │   │              │
   C ├───────────────┤   │   │┼┼┼│   │   ├────────┤   │   ├──────────────┤
   E │               │   │   │┼┼┼│   │   │        │   │   │              │
@@ -59,8 +60,8 @@ namespace Python.Runtime
   R │               │   │   │┼┼┼│   │   │        │   │   │              │
   A ├───────────────┤   │   │┼┼┼│   │   │ BY REF │   │   ├──────────────┤
   N │               │   │   │┼┼┼│   │   │        │   │   │              │
-  G │  STATIC<T>    │   │   │┼┼┼│   │   │        │   │   │ CAST/CONVERT │
-  E │               │   └── │┼┼┼│   └── │        │   └── │              │
+  G │  STATIC<T>*   │   │   │┼┼┼│   │   │        │   │   │ CAST/CONVERT │
+  E │               │   └─► │┼┼┼│   └── │        │   └── │              │
     └───────────────┘       └───┘       └────────┘       └──────────────┘
     FUNCTION      MAX       ARGS        TYPE             MATCH
     GROUP                   GROUP       GROUP            GROUP
@@ -68,14 +69,6 @@ namespace Python.Runtime
     */
     partial class MethodBinder
     {
-        static readonly Type PAAT = typeof(ParamArrayAttribute);
-        static readonly Type UNINT = typeof(nuint);
-        static readonly Type NINT = typeof(nint);
-
-#if METHODBINDER_SOLVER_NEW_CACHE_DIST
-        static readonly Dictionary<int, uint> s_distMap = new();
-#endif
-
         private enum BindParamKind
         {
             Argument,
@@ -93,7 +86,9 @@ namespace Python.Runtime
             public readonly string Key;
             public readonly Type Type;
 
-            public object? Value { get; set; } = default;
+            public object? Value { get; private set; } = default;
+
+            public uint Distance { get; private set; } = uint.MaxValue;
 
             public BindParam(ParameterInfo paramInfo, BindParamKind kind)
             {
@@ -115,12 +110,38 @@ namespace Python.Runtime
                 }
             }
 
+            public void AssignValue(BorrowedReference item, bool computeDist)
+            {
+                Value = new PyObject(item);
+
+                if (computeDist)
+                {
+                    Distance = GetTypeDistance(item, Type);
+                }
+            }
+
+            public void AssignParamsValue(PyObject[] items)
+            {
+                Value = items;
+            }
+
             public bool TryConvert(out object? value)
             {
                 // NOTE:
                 // value is either a PyObject for standard parameters,
                 // or a PyObject[] for a capturing params[]
                 object? v = Value;
+
+                if (Type.IsGenericParameter)
+                {
+                    if (v is null)
+                    {
+                        value = null;
+                        return true;
+                    }
+
+                    return TryGetManagedValue((PyObject)v, out value);
+                }
 
                 if (v is null)
                 {
@@ -193,48 +214,43 @@ namespace Python.Runtime
 
         private sealed class BindSpec
         {
-            // https://stackoverflow.com/a/17268854/2350244
-            // assumes two groups of parameters, hence *2
-            // Foo<generic-params>(params)
-            static readonly uint MAX_ARGS =
-                Convert.ToUInt32(Math.Pow(2, 16)) * 2;
-
-            static readonly uint TOTAL_MAX_DIST = uint.MaxValue;
-            static readonly uint FUNC_MAX_DIST = TOTAL_MAX_DIST / 4;
-            static readonly uint ARG_MAX_DIST = FUNC_MAX_DIST / MAX_ARGS;
-            static readonly uint TYPE_MAX_DIST = ARG_MAX_DIST / 4;
-            static readonly uint MATCH_MAX_DIST = TYPE_MAX_DIST / 4;
-
             public static bool IsRedirected(MethodBase method) =>
                 method.GetCustomAttributes<RedirectedMethod>().Any();
 
             public readonly MethodBase Method;
             public readonly uint Required;
             public readonly uint Optional;
-            public readonly bool Expands;
             public readonly BindParam[] Parameters;
 
             public BindSpec(MethodBase method,
                             uint required,
                             uint optional,
-                            bool expands,
                             BindParam[] argSpecs)
             {
                 Method = method;
                 Required = required;
                 Optional = optional;
-                Expands = expands;
                 Parameters = argSpecs;
             }
 
             public bool TryGetArguments(object? instance,
+                                        out MethodBase method,
                                         out object?[] arguments)
             {
+                method = Method;
                 arguments = new object?[Parameters.Length];
+
+                Type[] genericTypes =
+                    new Type[
+                        Method.IsGenericMethod ?
+                            Method.GetGenericArguments().Length
+                          : 0
+                    ];
 
                 for (int i = 0; i < Parameters.Length; i++)
                 {
                     BindParam param = Parameters[i];
+
                     if (param.Kind == BindParamKind.Self)
                     {
                         arguments[i] = instance;
@@ -242,6 +258,11 @@ namespace Python.Runtime
                     else if (param.TryConvert(out object? value))
                     {
                         arguments[i] = value;
+
+                        if (param.Type.IsGenericParameter)
+                        {
+                            genericTypes[i] = value?.GetType() ?? typeof(object);
+                        }
                     }
                     else
                     {
@@ -249,29 +270,54 @@ namespace Python.Runtime
                     }
                 }
 
+                if (Method.IsGenericMethod
+                        && method.ContainsGenericParameters)
+                {
+                    try
+                    {
+                        // .MakeGenericMethod can throw ArgumentException if
+                        // the type parameters do not obey the constraints.
+                        if (Method is MethodInfo minfo)
+                        {
+                            method = minfo.MakeGenericMethod(genericTypes);
+                        }
+                    }
+                    catch (ArgumentException)
+                    {
+                    }
+                }
+
                 return true;
             }
 
             public void SetArgs(BorrowedReference args,
-                                     BorrowedReference kwargs)
+                                BorrowedReference kwargs)
             {
                 ExtractParameters(args, kwargs, computeDist: false);
             }
 
             public uint SetArgsAndGetDistance(BorrowedReference args,
-                                                   BorrowedReference kwargs)
+                                              BorrowedReference kwargs)
             {
                 uint distance = 0;
 
                 if (Method.IsStatic)
                 {
-                    distance += FUNC_MAX_DIST;
+                    distance += FUNC_GROUP_SIZE;
                 }
 
-                if (Method.IsGenericMethod)
+                // NOTE:
+                // if method contains generic parameters, the distance
+                // compute logic will take that into consideration.
+                // but methods can be generic with no generic paramerers,
+                // e.g. Foo<T>(int, float).
+                // this ensures these methods are furthur away from
+                // non-generic instance methods with matching parameters
+                if (Method.IsGenericMethod
+                        && !Method.ContainsGenericParameters)
                 {
-                    distance += FUNC_MAX_DIST;
-                    distance += (ARG_MAX_DIST *
+                    distance += FUNC_GROUP_SIZE;
+                    distance += (ARG_GROUP_SIZE *
                                 (uint)Method.GetGenericArguments().Length);
                 }
 
@@ -289,10 +335,12 @@ namespace Python.Runtime
                 uint distance = 0;
 
                 uint argidx = 0;
-                uint argsCount = args != null ? (uint)Runtime.PyTuple_Size(args) : 0;
+                uint argsCount =
+                    args != null ? (uint)Runtime.PyTuple_Size(args) : 0;
                 bool checkArgs = argsCount > 0;
 
-                uint kwargsCount = kwargs != null ? (uint)Runtime.PyDict_Size(kwargs) : 0;
+                uint kwargsCount =
+                    kwargs != null ? (uint)Runtime.PyDict_Size(kwargs) : 0;
                 bool checkKwargs = kwargsCount > 0;
 
                 for (uint i = 0; i < Parameters.Length; i++)
@@ -322,12 +370,11 @@ namespace Python.Runtime
                         item = Runtime.PyDict_GetItemString(kwargs, slot.Key);
                         if (item != null)
                         {
-                            slot.Value = new PyObject(item);
+                            slot.AssignValue(item, computeDist);
 
                             if (computeDist)
                             {
-                                distance +=
-                                   GetTypeDistance(item, slot.Type);
+                                distance += slot.Distance;
                             }
 
                             continue;
@@ -374,14 +421,14 @@ namespace Python.Runtime
                                     }
                                 }
 
-                                slot.Value = values;
+                                slot.AssignParamsValue(values);
                             }
 
                             // if args are already processsed, compute
                             // a default distance for this param slot
                             else if (argidx > argsCount)
                             {
-                                distance += computeDist ? ARG_MAX_DIST : 0;
+                                distance += computeDist ? ARG_GROUP_SIZE : 0;
                             }
 
                             continue;
@@ -396,12 +443,11 @@ namespace Python.Runtime
                             item = Runtime.PyTuple_GetItem(args, (nint)argidx);
                             if (item != null)
                             {
-                                slot.Value = new PyObject(item);
+                                slot.AssignValue(item, computeDist);
 
                                 if (computeDist)
                                 {
-                                    distance +=
-                                       GetTypeDistance(item, slot.Type);
+                                    distance += slot.Distance;
                                 }
 
                                 argidx++;
@@ -412,208 +458,6 @@ namespace Python.Runtime
                 }
 
                 return distance;
-            }
-
-            static uint GetTypeDistance(BorrowedReference from, Type to)
-            {
-                if (GetCLRType(from, to) is Type argType)
-                {
-                    return GetTypeDistance(argType, to);
-                }
-
-                return ARG_MAX_DIST;
-            }
-
-            static uint GetTypeDistance(Type from, Type to)
-            {
-#if METHODBINDER_SOLVER_NEW_CACHE_DIST
-                int key = ComputeKey(from, to);
-                if (s_distMap.TryGetValue(key, out uint dist))
-                {
-                    return dist;
-                }
-#endif
-
-                uint distance = 0;
-
-                // NOTE:
-                // shift distance based on type kind
-                if (to.IsByRef)
-                {
-                    distance += TYPE_MAX_DIST;
-                }
-
-                // NOTE:
-                // shift distance based on match kind
-                // exact match
-                if (from == to)
-                {
-                    goto computed;
-                }
-
-                if (from.IsArray != to.IsArray)
-                {
-                    distance = ARG_MAX_DIST;
-                    goto computed;
-                }
-
-                // derived match
-                distance += MATCH_MAX_DIST;
-                if (to.IsAssignableFrom(from))
-                {
-                    distance += GetDerivedTypeDistance(from, to);
-                    goto computed;
-                }
-
-                // generic match
-                distance += MATCH_MAX_DIST;
-                if (to.IsGenericType)
-                {
-                    goto computed;
-                }
-
-                // cast/convert match
-                distance += MATCH_MAX_DIST;
-                if (TryGetTypePrecedence(from, out uint fromPrec)
-                        && TryGetTypePrecedence(to, out uint toPrec))
-                {
-                    distance += GetConvertTypeDistance(fromPrec, toPrec);
-                    goto computed;
-                }
-
-                distance = ARG_MAX_DIST;
-
-            computed:
-#if METHODBINDER_SOLVER_NEW_CACHE_DIST
-                s_distMap[key] = distance;
-#endif
-                return distance;
-            }
-
-            // zero when types are equal.
-            // assumes derived is assignable to @base
-            // 0 <= x < MATCH_MAX_DIST
-            static uint GetDerivedTypeDistance(Type derived, Type @base)
-            {
-                uint depth = 0;
-
-                Type t = derived;
-                while (t != null
-                            && t != @base
-                            && depth < MATCH_MAX_DIST)
-                {
-                    depth++;
-                    t = t.BaseType;
-                }
-
-                return depth;
-            }
-
-            // zero when types are equal.
-            // 0 <= x < MATCH_MAX_DIST
-            static uint GetConvertTypeDistance(uint from, uint to)
-            {
-                return (uint)Math.Abs((int)to - (int)from);
-            }
-
-            static bool TryGetTypePrecedence(Type of, out uint predecence)
-            {
-                predecence = 0;
-
-                if (UNINT == of)
-                {
-                    predecence = 30;
-                    return true;
-                }
-
-                if (NINT == of)
-                {
-                    predecence = 31;
-                    return true;
-                }
-
-                switch (Type.GetTypeCode(of))
-                {
-                    // 0-9
-                    case TypeCode.Object:
-                        predecence = 1;
-                        return true;
-
-                    // 10-19
-                    case TypeCode.UInt64:
-                        predecence = 10;
-                        return true;
-
-                    case TypeCode.UInt32:
-                        predecence = 11;
-                        return true;
-
-                    case TypeCode.UInt16:
-                        predecence = 12;
-                        return true;
-
-                    case TypeCode.Int64:
-                        predecence = 13;
-                        return true;
-
-                    case TypeCode.Int32:
-                        predecence = 14;
-                        return true;
-
-                    case TypeCode.Int16:
-                        predecence = 15;
-                        return true;
-
-                    case TypeCode.Char:
-                        predecence = 16;
-                        return true;
-
-                    case TypeCode.SByte:
-                        predecence = 17;
-                        return true;
-
-                    case TypeCode.Byte:
-                        predecence = 18;
-                        return true;
-
-                    // 20-29
-
-                    // 30-39
-                    // UIntPtr  |   nuint
-                    // IntPtr   |   nint
-
-                    // 40-49
-                    case TypeCode.Single:
-                        predecence = 40;
-                        return true;
-
-                    case TypeCode.Double:
-                        predecence = 41;
-                        return true;
-
-                    // 50-59
-                    case TypeCode.String:
-                        predecence = 50;
-                        return true;
-
-                    // 60-69
-                    case TypeCode.Boolean:
-                        predecence = 60;
-                        return true;
-                }
-
-                return false;
-            }
-
-            static int ComputeKey(Type from, Type to)
-            {
-                unchecked
-                {
-                    int hash = 17;
-                    hash = hash * 23 + from.GetHashCode();
-                    hash = hash * 23 + to.GetHashCode();
-                    return hash;
-                }
             }
         }
 
@@ -667,38 +511,34 @@ namespace Python.Runtime
                 }
             }
 
-            return TryBindByValue(bindSpecs, args, kwargs, out spec);
+            return TryBindByValue(index, bindSpecs, args, kwargs, out spec);
         }
 
         // vertical filter
-        static bool TryBindByValue(BindSpec?[] specs,
+        static bool TryBindByValue(int count,
+                                   BindSpec?[] specs,
                                    BorrowedReference args,
                                    BorrowedReference kwargs,
                                    out BindSpec? spec)
         {
             spec = null;
 
-            if (specs.Length == 0)
+            if (count == 0)
             {
                 return false;
             }
 
-            if (specs.Length > 1
-                    && specs[0] is BindSpec onlySpec
-                    && specs[1] is null)
+            if (count == 1)
             {
-                spec = onlySpec;
+                spec = specs[0];
                 spec!.SetArgs(args, kwargs);
                 return true;
             }
 
             uint closest = uint.MaxValue;
-            foreach (BindSpec? mspec in specs)
+            for (int sidx = 0; sidx < count; sidx++)
             {
-                if (mspec is null)
-                {
-                    break;
-                }
+                BindSpec mspec = specs[sidx]!;
 
                 uint distance = mspec!.SetArgsAndGetDistance(args, kwargs);
 
@@ -733,6 +573,39 @@ namespace Python.Runtime
                     if (mspec!.Optional < spec!.Optional)
                     {
                         spec = mspec;
+                    }
+
+                    // NOTE:
+                    // if method has the same distance, and have the least
+                    // optional parameters, lets look at distance computed
+                    // for each parameter and choose method which starts with
+                    // parameters closer to the given args.
+                    // dotnet compiler usually does not allow compiling such
+                    // method calls and calls it ambiguous but we need to make
+                    // a decision eitherway in python.
+                    // e.g. when passing (short, int) or (int, short)
+                    // compiler will complain about ambiguous call between:
+                    // .Foo(short, short)
+                    // .Foo(int, int)
+                    if (spec.Parameters.Length == mspec!.Parameters.Length)
+                    {
+                        int pcount = spec.Parameters.Length;
+                        for (int pidx = 0; pidx < pcount; pidx++)
+                        {
+                            if (pidx < spec.Parameters.Length)
+                            {
+                                BindParam mp = mspec!.Parameters[pidx];
+                                BindParam sp = spec.Parameters[pidx];
+
+                                if (mp.Distance >= sp.Distance)
+                                {
+                                    break;
+                                }
+
+                                spec = mspec;
+                                break;
+                            }
+                        }
                     }
                 }
                 else if (distance < closest)
@@ -820,7 +693,8 @@ namespace Python.Runtime
                 // this means method can accept parameters
                 // beyond what is required.
                 expands =
-                    Attribute.IsDefined(mparams[mparams.Length - 1], PAAT);
+                    Attribute.IsDefined(mparams[mparams.Length - 1],
+                                        typeof(ParamArrayAttribute));
 
                 argSpecs = new BindParam[length];
 
@@ -920,7 +794,7 @@ namespace Python.Runtime
             return false;
 
         matched:
-            spec = new BindSpec(method, required, optional, expands, argSpecs);
+            spec = new BindSpec(method, required, optional, argSpecs);
             return true;
         }
 
@@ -945,5 +819,253 @@ namespace Python.Runtime
 
             return keys;
         }
+
+        #region Distance Compute Logic
+        static Dictionary<(TypeCode, TypeCode), uint> s_builtinDistMap =
+            new Dictionary<(TypeCode, TypeCode), uint>
+            {
+                [(TypeCode.UInt64, TypeCode.UInt64)] = 0,
+                [(TypeCode.UInt64, TypeCode.Int64)] = 1,
+                [(TypeCode.UInt64, TypeCode.UInt32)] = 2,
+                [(TypeCode.UInt64, TypeCode.Int32)] = 3,
+                [(TypeCode.UInt64, TypeCode.UInt16)] = 4,
+                [(TypeCode.UInt64, TypeCode.Int16)] = 5,
+                [(TypeCode.UInt64, TypeCode.Double)] = 6,
+                [(TypeCode.UInt64, TypeCode.Single)] = 7,
+                [(TypeCode.UInt64, TypeCode.Decimal)] = 7,
+                [(TypeCode.UInt64, TypeCode.Object)] = uint.MaxValue - 1,
+                [(TypeCode.UInt64, TypeCode.DateTime)] = uint.MaxValue,
+
+                [(TypeCode.UInt32, TypeCode.UInt32)] = 0,
+                [(TypeCode.UInt32, TypeCode.Int32)] = 1,
+                [(TypeCode.UInt32, TypeCode.UInt16)] = 2,
+                [(TypeCode.UInt32, TypeCode.Int16)] = 3,
+
+                [(TypeCode.UInt16, TypeCode.UInt16)] = 0,
+                [(TypeCode.UInt16, TypeCode.Int16)] = 1,
+
+                [(TypeCode.Int64, TypeCode.Int64)] = 0,
+                [(TypeCode.Int32, TypeCode.Int32)] = 0,
+                [(TypeCode.Int16, TypeCode.Int16)] = 0,
+            };
+
+#if METHODBINDER_SOLVER_NEW_CACHE_DIST
+        static readonly Dictionary<int, uint> s_distMap = new();
+#endif
+
+        // https://stackoverflow.com/a/17268854/2350244
+        // assumes two groups of parameters, hence *2
+        // Foo<generic-params>(params)
+        static readonly uint MAX_ARGS =
+            Convert.ToUInt32(Math.Pow(2, 16)) * 2;
+
+        static readonly uint TOTAL_MAX_DIST = uint.MaxValue;
+        static readonly uint FUNC_GROUP_SIZE = TOTAL_MAX_DIST / 4;
+        static readonly uint ARG_GROUP_SIZE = FUNC_GROUP_SIZE / MAX_ARGS;
+        static readonly uint TYPE_GROUP_SIZE = ARG_GROUP_SIZE / 4;
+        static readonly uint MATCH_GROUP_SIZE = TYPE_GROUP_SIZE / 4;
+
+        public static uint GetTypeDistance(BorrowedReference from, Type to)
+        {
+            if (GetCLRType(from) is Type argType)
+            {
+                return GetTypeDistance(argType, to);
+            }
+
+            return ARG_GROUP_SIZE;
+        }
+
+        static uint GetTypeDistance(Type from, Type to)
+        {
+#if METHODBINDER_SOLVER_NEW_CACHE_DIST
+            int key = ComputeKey(from, to);
+            if (s_distMap.TryGetValue(key, out uint dist))
+            {
+                return dist;
+            }
+#endif
+
+            uint distance = 0;
+
+            // NOTE:
+            // shift distance based on type kind
+            if (to.IsByRef)
+            {
+                distance += TYPE_GROUP_SIZE;
+            }
+
+            // NOTE:
+            // shift distance based on match kind
+            // exact match
+            if (from == to)
+            {
+                goto computed;
+            }
+
+            if (from.IsArray != to.IsArray)
+            {
+                distance = ARG_GROUP_SIZE;
+                goto computed;
+            }
+
+            // derived match
+            distance += MATCH_GROUP_SIZE;
+            if (to.IsAssignableFrom(from))
+            {
+                distance += GetDerivedTypeDistance(from, to);
+                goto computed;
+            }
+
+            // generic match
+            distance += MATCH_GROUP_SIZE;
+            if (to.IsGenericParameter)
+            {
+                goto computed;
+            }
+
+            // cast/convert match
+            distance += MATCH_GROUP_SIZE;
+            if (TryGetTypePrecedence(from, out uint fromPrec)
+                    && TryGetTypePrecedence(to, out uint toPrec))
+            {
+                distance += GetConvertTypeDistance(fromPrec, toPrec);
+                goto computed;
+            }
+
+            distance = ARG_GROUP_SIZE;
+
+        computed:
+#if METHODBINDER_SOLVER_NEW_CACHE_DIST
+            s_distMap[key] = distance;
+#endif
+            return distance;
+        }
+
+        // zero when types are equal.
+        // assumes derived is assignable to @base
+        // 0 <= x < MATCH_MAX_DIST
+        static uint GetDerivedTypeDistance(Type derived, Type @base)
+        {
+            uint depth = 0;
+
+            Type t = derived;
+            while (t != null
+                        && t != @base
+                        && depth < MATCH_GROUP_SIZE)
+            {
+                depth++;
+                t = t.BaseType;
+            }
+
+            return depth;
+        }
+
+        // zero when types are equal.
+        // 0 <= x < MATCH_MAX_DIST
+        static uint GetConvertTypeDistance(uint from, uint to)
+        {
+            return (uint)Math.Abs((int)to - (int)from);
+        }
+
+        static bool TryGetTypePrecedence(Type of, out uint predecence)
+        {
+            predecence = 0;
+
+            if (typeof(nuint) == of)
+            {
+                predecence = 30;
+                return true;
+            }
+
+            if (typeof(nint) == of)
+            {
+                predecence = 31;
+                return true;
+            }
+
+            switch (Type.GetTypeCode(of))
+            {
+                // 0-9
+                case TypeCode.Object:
+                    predecence = 1;
+                    return true;
+
+                // 10-19
+                case TypeCode.UInt64:
+                    predecence = 10;
+                    return true;
+
+                case TypeCode.UInt32:
+                    predecence = 11;
+                    return true;
+
+                case TypeCode.UInt16:
+                    predecence = 12;
+                    return true;
+
+                case TypeCode.Int64:
+                    predecence = 13;
+                    return true;
+
+                case TypeCode.Int32:
+                    predecence = 14;
+                    return true;
+
+                case TypeCode.Int16:
+                    predecence = 15;
+                    return true;
+
+                case TypeCode.Char:
+                    predecence = 16;
+                    return true;
+
+                case TypeCode.SByte:
+                    predecence = 17;
+                    return true;
+
+                case TypeCode.Byte:
+                    predecence = 18;
+                    return true;
+
+                // 20-29
+
+                // 30-39
+                // UIntPtr  |   nuint
+                // IntPtr   |   nint
+
+                // 40-49
+                case TypeCode.Single:
+                    predecence = 40;
+                    return true;
+
+                case TypeCode.Double:
+                    predecence = 41;
+                    return true;
+
+                // 50-59
+                case TypeCode.String:
+                    predecence = 50;
+                    return true;
+
+                // 60-69
+                case TypeCode.Boolean:
+                    predecence = 60;
+                    return true;
+            }
+
+            return false;
+        }
+
+        static int ComputeKey(Type from, Type to)
+        {
+            unchecked
+            {
+                int hash = 17;
+                hash = hash * 23 + from.GetHashCode();
+                hash = hash * 23 + to.GetHashCode();
+                return hash;
+            }
+        }
+        #endregion
     }
 }
