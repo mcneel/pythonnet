@@ -296,8 +296,8 @@ namespace MethodBinder.Tests
         public void TestFooParam_X_FiveIntAsArray()
         {
             // Foo(params int[] _2)
-            object[] args = new object[] { 0, 1, 2, 3, 4 };
-            Guid t = A.Foo(new int[] { 0, 1, 2, 3, 4 });
+            object[] args = new object[] { new int[] { 0, 1, 2, 3, 4 } };
+            Guid t = A.Foo(0, 1, 2, 3, 4, 5);
             NewReference r = BINDER.Invoke(A, M, args, NoKwargs);
             Assert.That(r.Value, Is.EqualTo(t));
         }
@@ -326,8 +326,8 @@ namespace MethodBinder.Tests
         public void TestFooParam_X_Object_TwoIntAsArray()
         {
             // Foo(object _1, params int[] _2)
-            object[] args = new object[] { new DataA(), 0, 1 };
-            Guid t = C.Foo(new DataA(), new int[] { 0, 1 });
+            object[] args = new object[] { new DataA(), new int[] { 0, 1 } };
+            Guid t = C.Foo(new DataA(), 0, 1);
             NewReference r = BINDER.Invoke(C, M, args, NoKwargs);
             Assert.That(r.Value, Is.EqualTo(t));
         }

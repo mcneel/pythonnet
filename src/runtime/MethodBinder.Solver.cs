@@ -164,8 +164,24 @@ namespace Python.Runtime
                 if (Kind == BindParamKind.Params)
                 {
                     PyObject[] values = (PyObject[])v;
-                    var parray = Array.CreateInstance(Type, values.Length);
 
+                    // NOTE:
+                    // if param is a capturing params[] and there
+                    // is only one argument of sequence type provided,
+                    // then lets convert that sequence to params[] type
+                    // and pass that as the array of arguments.
+                    // e.g. Calling .Foo(params int[]) as .Foo([1,2,3])
+                    if (values.Length == 1
+                            && values[0] is PyObject arg
+                            && Runtime.PySequence_Check(arg))
+                    {
+                        Type ptype = _param.ParameterType;
+                        return TryGetManagedValue(arg, ptype, out value);
+                    }
+
+                    // otherwise, lets build an array and add each arg
+                    // e.g. Calling .Foo(params int[]) as .Foo(1,2,3)
+                    var parray = Array.CreateInstance(Type, values.Length);
                     for (int i = 0; i < values.Length; i++)
                     {
                         if (TryGetManagedValue(values[i], Type, out object? p))
@@ -925,8 +941,8 @@ namespace Python.Runtime
 
             // cast/convert match
             distance += MATCH_GROUP_SIZE;
-            if (TryGetTypePrecedence(from, out uint fromPrec)
-                    && TryGetTypePrecedence(to, out uint toPrec))
+            if (TryGetPrecedence(from, out uint fromPrec)
+                    && TryGetPrecedence(to, out uint toPrec))
             {
                 distance += GetConvertTypeDistance(fromPrec, toPrec);
                 goto computed;
@@ -967,9 +983,19 @@ namespace Python.Runtime
             return (uint)Math.Abs((int)to - (int)from);
         }
 
-        static bool TryGetTypePrecedence(Type of, out uint predecence)
+        static bool TryGetPrecedence(Type of, out uint predecence)
         {
             predecence = 0;
+
+            if (of is null)
+            {
+                return false;
+            }
+
+            if (of.IsArray)
+            {
+                return TryGetPrecedence(of.GetElementType(), out predecence);
+            }
 
             if (typeof(nuint) == of)
             {

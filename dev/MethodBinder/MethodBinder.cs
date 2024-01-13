@@ -161,6 +161,17 @@ namespace Python.Runtime
 
             return string.Empty;
         }
+
+        public static bool
+        PySequence_Check(BorrowedReference br)
+        {
+            if (br.Value is object?[])
+            {
+                return true;
+            }
+
+            return false;
+        }
     }
 
     public class OriginalMethod : Attribute { }
