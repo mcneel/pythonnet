@@ -760,8 +760,12 @@ namespace Python.Runtime
                     // otherwise this is a required parameter
                     else
                     {
+                        BindParamKind kind = param.ParameterType.IsByRef ?
+                            BindParamKind.Return
+                          : BindParamKind.Argument;
+
                         argSpecs[i] =
-                            new BindParam(param, BindParamKind.Argument);
+                            new BindParam(param, kind);
 
                         required++;
                     }

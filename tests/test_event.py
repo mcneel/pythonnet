@@ -304,12 +304,12 @@ def test_out_function_handler():
         return value
 
     ob.OutIntEvent += handler
-    result = ob.OnOutIntEvent(55)
+    result = ob.OnOutIntEvent()
     assert result == value
 
     ob.OutStringEvent += handler
     value = 'This is the event data'
-    result = ob.OnOutStringEvent('Hello')
+    result = ob.OnOutStringEvent()
     assert result == value
 
 def test_ref_function_handler():
