@@ -494,14 +494,16 @@ namespace Python.Runtime
             {
                 var msg = new StringBuilder("The underlying C# method(s) have been deleted");
                 if (list.Count > 0
-                        && list[0].Name != null)
+                        && list[0] is MaybeMethodBase mmb
+                        && mmb.Name != null)
                 {
-                    msg.Append($": {list[0]}");
+                    msg.Append($": {mmb}");
                 }
+
                 return Exceptions.RaiseTypeError(msg.ToString());
             }
 
-            if (TryBind(methods, args, kwargs, allow_redirected, out BindSpec? spec))
+            if (TryBind(methods, args, kwargs, allow_redirected, out BindSpec? spec, out BindError? error))
             {
                 MethodBase match = spec!.Method;
                 BindParam[] bindParams = spec.Parameters;
@@ -633,19 +635,53 @@ namespace Python.Runtime
 
                 return Converter.ToPython(result, resultType);
             }
-            else
+
+            else if (error is AmbiguousBindError ambigErr)
             {
-                var value = new StringBuilder("No method matches given arguments");
-                if (methods.Length > 0)
+                // https://learn.microsoft.com/en-us/dotnet/csharp/misc/cs0121
+                var msg = new StringBuilder("The call is ambiguous between the following methods or properties: \n");
+                for (int i = 0; i < ambigErr.Methods.Length; i++)
                 {
-                    value.Append($" for {methods[0].DeclaringType?.Name}.{list[0].Value.Name}");
+                    MethodBase m = ambigErr.Methods[i];
+
+                    // build method signature
+                    // e.g MethodTest.DefaultParamsWithOverloading(Int32, Int32)
+                    msg.Append('\'');
+                    msg.Append(m.DeclaringType.Name);
+                    msg.Append('.');
+                    // take method signature without return type
+                    string msig = m.ToString();
+                    msig = msig.Substring(msig.IndexOf(' ') + 1);
+                    msg.Append(msig);
+                    msg.Append('\'');
+                    if (ambigErr.Methods.Length - (i + 1) > 0)
+                    {
+                        msg.Append(" and ");
+                        msg.AppendLine();
+                    }
                 }
 
-                value.Append(": ");
+                //Runtime.PyErr_Fetch(out var errType, out var errVal, out var errTrace);
+                //Runtime.PyErr_Restore(errType.StealNullable(), errVal.StealNullable(), errTrace.StealNullable());
+                return Exceptions.RaiseTypeError(msg.ToString());
+            }
+
+            else
+            {
+                // https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/compiler-messages/cs1501
+                MethodBase m = methods[0];
+                var msg = new StringBuilder("No overload for method '");
+                msg.Append(m.DeclaringType.Name);
+                msg.Append('.');
+                msg.Append(m.Name);
+                msg.Append("{}' takes '");
+                msg.Append(args == null ? 0 : (int)Runtime.PyTuple_Size(args));
+                msg.Append("' arguments");
+
                 Runtime.PyErr_Fetch(out var errType, out var errVal, out var errTrace);
-                AppendArgumentTypes(to: value, args);
+                AppendArgumentTypes(msg: msg, args);
                 Runtime.PyErr_Restore(errType.StealNullable(), errVal.StealNullable(), errTrace.StealNullable());
-                return Exceptions.RaiseTypeError(value.ToString());
+                return Exceptions.RaiseTypeError(msg.ToString());
             }
         }
 #endif
@@ -744,12 +780,13 @@ namespace Python.Runtime
             return clrtype;
         }
 
-        static void AppendArgumentTypes(StringBuilder to, BorrowedReference args)
+        static void AppendArgumentTypes(StringBuilder msg, BorrowedReference args)
         {
             Runtime.AssertNoErorSet();
 
             nint argCount = Runtime.PyTuple_Size(args);
-            to.Append("(");
+            msg.Append('(');
+
             for (nint argIndex = 0; argIndex < argCount; argIndex++)
             {
                 BorrowedReference arg = Runtime.PyTuple_GetItem(args, argIndex);
@@ -762,19 +799,19 @@ namespace Python.Runtime
                         if (description.IsNull())
                         {
                             Exceptions.Clear();
-                            to.Append(Util.BadStr);
+                            msg.Append(Util.BadStr);
                         }
                         else
                         {
-                            to.Append(Runtime.GetManagedString(description.Borrow()));
+                            msg.Append(Runtime.GetManagedString(description.Borrow()));
                         }
                     }
                 }
 
                 if (argIndex + 1 < argCount)
-                    to.Append(", ");
+                    msg.Append(", ");
             }
-            to.Append(')');
+            msg.Append(')');
         }
     }
 }

@@ -267,13 +267,7 @@ def test_params_method_with_lists():
 
 def test_string_out_params():
     """Test use of string out-parameters."""
-    result = MethodTest.TestStringOutParams("hi", "there")
-    assert isinstance(result, tuple)
-    assert len(result) == 2
-    assert result[0] is True
-    assert result[1] == "output string"
-
-    result = MethodTest.TestStringOutParams("hi", None)
+    result = MethodTest.TestStringOutParams("hi")
     assert isinstance(result, tuple)
     assert len(result) == 2
     assert result[0] is True
@@ -307,15 +301,11 @@ def test_string_ref_params():
 
 def test_value_out_params():
     """Test use of value type out-parameters."""
-    result = MethodTest.TestValueOutParams("hi", 1)
+    result = MethodTest.TestValueOutParams("hi")
     assert isinstance(result, tuple)
     assert len(result) == 2
     assert result[0] is True
     assert result[1] == 42
-
-    # None cannot be converted to a value type like int, long, etc.
-    with pytest.raises(TypeError):
-        MethodTest.TestValueOutParams("hi", None)
 
 
 def test_value_out_params_without_passing_string_value():
@@ -343,21 +333,6 @@ def test_value_ref_params():
 
 def test_object_out_params():
     """Test use of object out-parameters."""
-    result = MethodTest.TestObjectOutParams("hi", MethodTest())
-    assert isinstance(result, tuple)
-    assert len(result) == 2
-    assert result[0] is True
-    assert isinstance(result[1], System.Exception)
-
-    result = MethodTest.TestObjectOutParams("hi", None)
-    assert isinstance(result, tuple)
-    assert len(result) == 2
-    assert result[0] is True
-    assert isinstance(result[1], System.Exception)
-
-
-def test_object_out_params_without_passing_string_value():
-    """Test use of object out-parameters."""
     result = MethodTest.TestObjectOutParams("hi")
     assert isinstance(result, tuple)
     assert len(result) == 2
@@ -382,19 +357,6 @@ def test_object_ref_params():
 
 def test_struct_out_params():
     """Test use of struct out-parameters."""
-    result = MethodTest.TestStructOutParams("hi", System.Guid.NewGuid())
-    assert isinstance(result, tuple)
-    assert len(result) == 2
-    assert result[0] is True
-    assert isinstance(result[1], System.Guid)
-
-    # None cannot be converted to a value type like a struct
-    with pytest.raises(TypeError):
-        MethodTest.TestValueRefParams("hi", None)
-
-
-def test_struct_out_params_without_passing_string_value():
-    """Test use of struct out-parameters."""
     result = MethodTest.TestStructOutParams("hi")
     assert isinstance(result, tuple)
     assert len(result) == 2
@@ -417,7 +379,7 @@ def test_struct_ref_params():
 
 def test_void_single_out_param():
     """Test void method with single out-parameter."""
-    result = MethodTest.TestVoidSingleOutParam(9)
+    result = MethodTest.TestVoidSingleOutParam()
     assert result == 42
 
     # None cannot be converted to a value type
@@ -428,7 +390,7 @@ def test_void_single_out_param():
 def test_void_single_ref_param():
     """Test void method with single ref-parameter."""
     result = MethodTest.TestVoidSingleRefParam(9)
-    assert result == 42
+    assert result == 42 + 9
 
     # None cannot be converted to a value type
     with pytest.raises(TypeError):
@@ -468,37 +430,37 @@ def test_two_default_param():
 def test_explicit_selection_with_out_modifier():
     """Check explicit overload selection with out modifiers."""
     refstr = System.String("").GetType().MakeByRefType()
-    result = MethodTest.TestStringOutParams.__overloads__[str, refstr](
-        "hi", "there")
+    result = MethodTest.TestExplicitOutParams.__overloads__[str, refstr]("hi")
     assert isinstance(result, tuple)
     assert len(result) == 2
     assert result[0] is True
     assert result[1] == "output string"
 
-    result = MethodTest.TestStringOutParams.__overloads__[str, refstr](
-        "hi", None)
+    refint = System.Int32(0).GetType().MakeByRefType()
+    result = MethodTest.TestExplicitOutParams.__overloads__[str, refint]("hi")
     assert isinstance(result, tuple)
     assert len(result) == 2
     assert result[0] is True
-    assert result[1] == "output string"
+    assert result[1] == 42
 
 
 def test_explicit_selection_with_ref_modifier():
     """Check explicit overload selection with ref modifiers."""
     refstr = System.String("").GetType().MakeByRefType()
-    result = MethodTest.TestStringRefParams.__overloads__[str, refstr](
+    result = MethodTest.TestExplicitRefParams.__overloads__[str, refstr](
         "hi", "there")
     assert isinstance(result, tuple)
     assert len(result) == 2
     assert result[0] is True
-    assert result[1] == "output string"
+    assert result[1] == "thereoutput string"
 
-    result = MethodTest.TestStringRefParams.__overloads__[str, refstr](
-        "hi", None)
+    refint = System.Int32(0).GetType().MakeByRefType()
+    result = MethodTest.TestExplicitRefParams.__overloads__[str, refint](
+        "hi", 42)
     assert isinstance(result, tuple)
     assert len(result) == 2
     assert result[0] is True
-    assert result[1] == "output string"
+    assert result[1] == 42 + 42
 
 
 def test_explicit_overload_selection():
@@ -911,13 +873,9 @@ def test_object_in_multiparam():
 def test_object_in_multiparam_exception():
     """Test method with object multiparams behaves"""
 
-    with pytest.raises(TypeError) as excinfo:
+    with pytest.raises(TypeError):
         MethodTest.TestOverloadedObjectThree("foo", "bar")
 
-    e = excinfo.value
-    c = e.__cause__
-    assert c.GetType().FullName == 'System.AggregateException'
-    assert len(c.InnerExceptions) == 2
 
 def test_case_sensitive():
     """Test that case-sensitivity is respected. GH#81"""

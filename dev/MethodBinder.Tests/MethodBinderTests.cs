@@ -21,6 +21,7 @@ namespace MethodBinder.Tests
         protected static readonly TargetTypeB B = new();
         protected static readonly TargetTypeC C = new();
         protected static readonly TargetTypeD D = new();
+        protected static readonly TargetTypeE E = new();
 
         protected static readonly object[] NoArgs = Array.Empty<object>();
         protected static readonly KeywordArgs NoKwargs = new();
@@ -33,10 +34,21 @@ namespace MethodBinder.Tests
         public void TestFooParam_0()
         {
             // Foo()
-            object[] args = new object[0];
+            object[] args = Array.Empty<object>();
             Guid t = A.Foo();
             NewReference r = BINDER.Invoke(A, M, args, NoKwargs);
             Assert.That(r.Value, Is.EqualTo(t));
+        }
+
+        [Test]
+        public void TestFooParam_0_Missing()
+        {
+            // Missing Foo()
+            Assert.Throws<MethodAccessException>(() =>
+            {
+                object[] args = Array.Empty<object>();
+                NewReference r = BINDER.Invoke(E, M, args, NoKwargs);
+            });
         }
 
     }
@@ -280,6 +292,20 @@ namespace MethodBinder.Tests
         }
     }
 
+    public sealed class InvokeTests_3 : InvokeTests
+    {
+        [Test]
+        public void TestFooParam_3()
+        {
+            // Foo()
+            object[] args = new object[] { Array.Empty<byte>(), 5, 5 };
+            Guid t = D.Foo(Array.Empty<byte>(), 5, 5);
+            NewReference r = BINDER.Invoke(D, M, args, NoKwargs);
+            Assert.That(r.Value, Is.EqualTo(t));
+        }
+    }
+
+
     public sealed class InvokeTests_N : InvokeTests
     {
         [Test]
@@ -337,10 +363,6 @@ namespace MethodBinder.Tests
 
 /*
  * UNUSED GUIDS
-return new Guid("5755aedc-a11d-11ee-8c90-0242ac120002");
-return new Guid("5755afea-a11d-11ee-8c90-0242ac120002");
-return new Guid("5755b2b0-a11d-11ee-8c90-0242ac120002");
-return new Guid("5755b3c8-a11d-11ee-8c90-0242ac120002");
 return new Guid("5755b4d6-a11d-11ee-8c90-0242ac120002");
 return new Guid("5755b5e4-a11d-11ee-8c90-0242ac120002");
 return new Guid("5755b6f2-a11d-11ee-8c90-0242ac120002");

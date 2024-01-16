@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 namespace Python.Runtime
 {
@@ -50,17 +51,17 @@ namespace Python.Runtime
     │               │ ────► │   │ ────► │        │ ───── │              │
   D │  INSTANCE     │       │   │       │        │       │ EXACT        │
   I │               │ ──┐   │   │ ──┐   │        │ ──┐   │              │
-  S ├───────────────┤   │   ├───┤   │   │        │   │   ├──────────────┤
+  S ├───────────────┤   │   ├───┤   │   ├────────┤   │   ├──────────────┤
   T │               │   │   │┼┼┼│   │   │        │   │   │              │
-  A │  INSTANCE<T>* │   │   │┼┼┼│   │   │        │   │   │ DERIVED      │
+  A │  INSTANCE<T>  │   │   │┼┼┼│   │   │ BY REF │   │   │ DERIVED      │
   N │               │   │   │┼┼┼│   │   │        │   │   │              │
   C ├───────────────┤   │   │┼┼┼│   │   ├────────┤   │   ├──────────────┤
   E │               │   │   │┼┼┼│   │   │        │   │   │              │
-    │  STATIC       │   │   │┼┼┼│   │   │        │   │   │ GENERIC      │
+    │  STATIC       │   │   │┼┼┼│   │   │ PARAMS │   │   │ GENERIC      │
   R │               │   │   │┼┼┼│   │   │        │   │   │              │
-  A ├───────────────┤   │   │┼┼┼│   │   │ BY REF │   │   ├──────────────┤
+  A ├───────────────┤   │   │┼┼┼│   │   ├────────┤   │   ├──────────────┤
   N │               │   │   │┼┼┼│   │   │        │   │   │              │
-  G │  STATIC<T>*   │   │   │┼┼┼│   │   │        │   │   │ CAST/CONVERT │
+  G │  STATIC<T>    │   │   │┼┼┼│   │   │ resvd. │   │   │ CAST/CONVERT │
   E │               │   └─► │┼┼┼│   └── │        │   └── │              │
     └───────────────┘       └───┘       └────────┘       └──────────────┘
     FUNCTION      MAX       ARGS        TYPE             MATCH
@@ -71,7 +72,7 @@ namespace Python.Runtime
     {
         private enum BindParamKind
         {
-            Argument,
+            Default,
             Option,
             Params,
             Return,
@@ -82,13 +83,13 @@ namespace Python.Runtime
         {
             readonly ParameterInfo _param;
 
-            public readonly BindParamKind Kind = BindParamKind.Argument;
+            public readonly BindParamKind Kind = BindParamKind.Default;
             public readonly string Key;
             public readonly Type Type;
 
-            public object? Value { get; private set; } = default;
+            public object? Value { get; set; } = default;
 
-            public uint Distance { get; private set; } = uint.MaxValue;
+            public uint Distance { get; set; } = uint.MaxValue;
 
             public BindParam(ParameterInfo paramInfo, BindParamKind kind)
             {
@@ -108,21 +109,6 @@ namespace Python.Runtime
                 {
                     Type = paramInfo.ParameterType;
                 }
-            }
-
-            public void AssignValue(BorrowedReference item, bool computeDist)
-            {
-                Value = new PyObject(item);
-
-                if (computeDist)
-                {
-                    Distance = GetTypeDistance(item, Type);
-                }
-            }
-
-            public void AssignParamsValue(PyObject[] items)
-            {
-                Value = items;
             }
 
             public bool TryConvert(out object? value)
@@ -236,16 +222,22 @@ namespace Python.Runtime
             public readonly MethodBase Method;
             public readonly uint Required;
             public readonly uint Optional;
+            public readonly uint Returns;
+            public readonly bool Expands;
             public readonly BindParam[] Parameters;
 
             public BindSpec(MethodBase method,
                             uint required,
                             uint optional,
+                            uint returns,
+                            bool expands,
                             BindParam[] argSpecs)
             {
                 Method = method;
                 Required = required;
                 Optional = optional;
+                Returns = returns;
+                Expands = expands;
                 Parameters = argSpecs;
             }
 
@@ -386,10 +378,26 @@ namespace Python.Runtime
                         item = Runtime.PyDict_GetItemString(kwargs, slot.Key);
                         if (item != null)
                         {
-                            slot.AssignValue(item, computeDist);
+                            PyObject value = new PyObject(item);
+
+                            // NOTE:
+                            // if this param is a capturing params[], expect
+                            // a tuple or a list as value for this parameter.
+                            // e.g. From python calling .Foo(paramsArray=[])
+                            if (slot.Kind == BindParamKind.Params)
+                            {
+                                slot.Value = new PyObject[] { value };
+                            }
+                            else
+                            {
+                                slot.Value = value;
+                            }
 
                             if (computeDist)
                             {
+                                slot.Distance =
+                                    GetTypeDistance(item, slot);
+
                                 distance += slot.Distance;
                             }
 
@@ -429,7 +437,7 @@ namespace Python.Runtime
                                         if (computeDist && ai == argidx)
                                         {
                                             distance +=
-                                               GetTypeDistance(item, slot.Type);
+                                               GetTypeDistance(item, slot);
                                         }
 
                                         argidx++;
@@ -437,7 +445,7 @@ namespace Python.Runtime
                                     }
                                 }
 
-                                slot.AssignParamsValue(values);
+                                slot.Value = values;
                             }
 
                             // if args are already processsed, compute
@@ -459,10 +467,13 @@ namespace Python.Runtime
                             item = Runtime.PyTuple_GetItem(args, (nint)argidx);
                             if (item != null)
                             {
-                                slot.AssignValue(item, computeDist);
+                                slot.Value = new PyObject(item);
 
                                 if (computeDist)
                                 {
+                                    slot.Distance =
+                                        GetTypeDistance(item, slot);
+
                                     distance += slot.Distance;
                                 }
 
@@ -471,9 +482,31 @@ namespace Python.Runtime
                             }
                         }
                     }
+
+                    if (slot.Kind == BindParamKind.Default)
+                    {
+                        distance += ARG_GROUP_SIZE;
+                    }
                 }
 
                 return distance;
+            }
+        }
+
+        private abstract class BindError : Exception
+        {
+            public static NoMatchBindError NoMatchBindError { get; } = new();
+        }
+
+        private sealed class NoMatchBindError : BindError { }
+
+        private sealed class AmbiguousBindError : BindError
+        {
+            public MethodBase[] Methods { get; }
+
+            public AmbiguousBindError(MethodBase[] methods)
+            {
+                Methods = methods;
             }
         }
 
@@ -481,9 +514,11 @@ namespace Python.Runtime
                             BorrowedReference args,
                             BorrowedReference kwargs,
                             bool allowRedirected,
-                            out BindSpec? spec)
+                            out BindSpec? spec,
+                            out BindError? error)
         {
             spec = default;
+            error = default;
 
             int argSize = args == null ? 0 : (int)Runtime.PyTuple_Size(args);
             int kwargSize = kwargs == null ? 0 : (int)Runtime.PyDict_Size(kwargs);
@@ -493,7 +528,7 @@ namespace Python.Runtime
 
             // Find any method that could accept this many args and kwargs
             int index = 0;
-            BindSpec?[] bindSpecs = new BindSpec?[methods.Length];
+            BindSpec?[] specs = new BindSpec?[methods.Length];
             uint totalArgs = argsCount + kwargsCount;
 
             foreach (MethodBase method in methods)
@@ -522,25 +557,30 @@ namespace Python.Runtime
                         return true;
                     }
 
-                    bindSpecs[index] = bindSpec;
+                    specs[index] = bindSpec;
                     index++;
                 }
             }
 
-            return TryBindByValue(index, bindSpecs, args, kwargs, out spec);
+            return TryBindByValue(index, specs, totalArgs, args, kwargs,
+                                  out spec, out error);
         }
 
         // vertical filter
         static bool TryBindByValue(int count,
                                    BindSpec?[] specs,
+                                   uint givenArgs,
                                    BorrowedReference args,
                                    BorrowedReference kwargs,
-                                   out BindSpec? spec)
+                                   out BindSpec? spec,
+                                   out BindError? error)
         {
             spec = null;
+            error = null;
 
             if (count == 0)
             {
+                error = BindError.NoMatchBindError;
                 return false;
             }
 
@@ -551,6 +591,8 @@ namespace Python.Runtime
                 return true;
             }
 
+            uint ambigCount = 0;
+            MethodBase?[] ambigMethods = new MethodBase?[count];
             uint closest = uint.MaxValue;
             for (int sidx = 0; sidx < count; sidx++)
             {
@@ -561,17 +603,36 @@ namespace Python.Runtime
                 // NOTE:
                 // if method has the exact same distance,
                 // lets look at a few other properties to determine which
-                // method should be used.
+                // method should be used. if can not automatically resolve
+                // the ambiguity, it will return an error with a list of
+                // ambiguous matches for the given args and kwargs.
                 if (distance == closest
                         && distance != uint.MaxValue)
                 {
                     // NOTE:
                     // if there is a redirected method with same distance,
                     // lets use that. redirected methods should be in order
-                    // or redirection e.g. origial->redirected->redirected
+                    // of redirection e.g. origial->redirected->redirected
                     if (BindSpec.IsRedirected(mspec!.Method))
                     {
+                        ambigCount = 0;
                         spec = mspec;
+                        continue;
+                    }
+
+                    // NOTE:
+                    // if method expands and other method does not, choose
+                    // the non-expanding one as it is more specific
+                    if (mspec!.Expands != spec!.Expands)
+                    {
+                        ambigCount = 0;
+                        spec = mspec!.Expands ? spec : mspec!;
+                        continue;
+                    }
+
+                    if (givenArgs == 0)
+                    {
+                        goto ambiguousError;
                     }
 
                     // NOTE:
@@ -581,57 +642,124 @@ namespace Python.Runtime
                     // we would pick the former since it is shorter.
                     // we do not compute the optional parameters that do not
                     // have a matching input arguments in the distance.
-                    // otherwise .Foo(double) might end up closer than
-                    // .Foo(float, float=0) when passing a float input, since
-                    // including optional float mightpush distance further
+                    // otherwise for example .Foo(double) might end up closer
+                    // than .Foo(float, float=0) when passing a float input,
+                    // since including optional float might push it further
                     // away from computed distance for .Foo(double), depending
-                    // on the computed distance for the types.
-                    if (mspec!.Optional < spec!.Optional)
+                    // on the computed distance for the actual types.
+                    uint mspecOpts = mspec!.Required + mspec!.Optional;
+                    uint specOpts = spec!.Required + spec!.Optional;
+                    if (mspecOpts < specOpts)
                     {
+                        ambigCount = 0;
                         spec = mspec;
+                        continue;
+                    }
+                    else if (mspecOpts > specOpts)
+                    {
+                        continue;
+                    }
+
+                    // NOTE:
+                    // if method has the same distance, lets use the one
+                    // with the least amount of 'out' parameters.
+                    if (mspec!.Returns < spec!.Returns)
+                    {
+                        ambigCount = 0;
+                        spec = mspec;
+                        continue;
+                    }
+                    else if (mspec!.Returns > spec!.Returns)
+                    {
+                        continue;
                     }
 
                     // NOTE:
                     // if method has the same distance, and have the least
-                    // optional parameters, lets look at distance computed
-                    // for each parameter and choose method which starts with
-                    // parameters closer to the given args.
-                    // dotnet compiler usually does not allow compiling such
-                    // method calls and calls it ambiguous but we need to make
-                    // a decision eitherway in python.
+                    // optional parameters, and least amount of 'out' params,
+                    // lets look at distance computed for each parameter and
+                    // choose method which starts with closer params.
+                    // dotnet compiler detects this as ambiguous but since
+                    // python is dynamically typed, we can make an selection
+                    // in certain conditions and avoid the error.
                     // e.g. when passing (short, int) or (int, short)
                     // compiler will complain about ambiguous call between:
                     // .Foo(short, short)
                     // .Foo(int, int)
-                    if (spec.Parameters.Length == mspec!.Parameters.Length)
+                    // but we can choose the method with closer parameters
+                    // in order and therefore call:
+                    // .Foo(short, short) for (short, int) args
+                    // .Foo(int, int) for (int, short) args
+                    BindParam[] sparams = spec.Parameters;
+                    BindParam[] msparams = mspec!.Parameters;
+                    if (sparams.Length == msparams.Length)
                     {
-                        int pcount = spec.Parameters.Length;
-                        for (int pidx = 0; pidx < pcount; pidx++)
+                        for (int pidx = 0; pidx < sparams.Length; pidx++)
                         {
-                            if (pidx < spec.Parameters.Length)
+                            BindParam sp = sparams[pidx];
+                            BindParam mp = msparams[pidx];
+
+                            if (mp.Distance == sp.Distance)
                             {
-                                BindParam mp = mspec!.Parameters[pidx];
-                                BindParam sp = spec.Parameters[pidx];
-
-                                if (mp.Distance >= sp.Distance)
-                                {
-                                    break;
-                                }
-
+                                continue;
+                            }
+                            else if (mp.Distance > sp.Distance)
+                            {
+                                break;
+                            }
+                            else
+                            {
+                                ambigCount = 0;
                                 spec = mspec;
                                 break;
                             }
                         }
+
+                        continue;
                     }
+
+                // NOTE:
+                // if we get here, two methods have the same distance,
+                // and we were not able to resolve the ambiguity and choose
+                // one of the two. so lets add this to the list of
+                // ambiguous methods and increate the count.
+                // if a closer match is not later found, this method will
+                // return an ambiguous call error with these methods.
+                ambiguousError:
+                    if (ambigCount == 0)
+                    {
+                        ambigMethods[0] = spec.Method;
+                        ambigCount++;
+                    }
+
+                    ambigMethods[ambigCount] = mspec!.Method;
+                    ambigCount++;
                 }
                 else if (distance < closest)
                 {
+                    ambigCount = 0;
                     closest = distance;
                     spec = mspec;
                 }
             }
 
-            return spec is not null;
+            if (ambigCount > 0)
+            {
+                error = new AmbiguousBindError(
+                        ambigMethods.Take((int)ambigCount)
+                                    .Select(m => m!)
+                                    .ToArray()
+                    );
+                return false;
+            }
+
+            if (spec is null)
+            {
+                error = new NoMatchBindError();
+                return false;
+            }
+
+            return true;
         }
 
         // horizontal filter
@@ -646,20 +774,21 @@ namespace Python.Runtime
 
             uint required = 0;
             uint optional = 0;
+            uint returns = 0;
             bool expands = false;
             bool isOperator = IsOperatorMethod(method)
                                 && givenArgs == mparams.Length - 1;
-            bool isReverse = isOperator && IsReverse(method);
-
-            if (isReverse && IsComparisonOp(method))
-            {
-                return false;
-            }
-
             BindParam[] argSpecs;
 
             if (isOperator)
             {
+                bool isReverse = isOperator && IsReverse(method);
+
+                if (isReverse && IsComparisonOp(method))
+                {
+                    return false;
+                }
+
                 // binary operators
                 if (mparams.Length == 2)
                 {
@@ -669,7 +798,7 @@ namespace Python.Runtime
                     {
                         argSpecs = new BindParam[]
                         {
-                        new BindParam(mparams[0], BindParamKind.Argument),
+                        new BindParam(mparams[0], BindParamKind.Default),
                         new BindParam(mparams[1], BindParamKind.Self),
                         };
                     }
@@ -678,7 +807,7 @@ namespace Python.Runtime
                         argSpecs = new BindParam[]
                         {
                         new BindParam(mparams[0], BindParamKind.Self),
-                        new BindParam(mparams[1], BindParamKind.Argument),
+                        new BindParam(mparams[1], BindParamKind.Default),
                         };
                     }
                 }
@@ -733,12 +862,17 @@ namespace Python.Runtime
                     }
 
                     // `.IsOut` is false for `ref` parameters
-                    if (param.IsOut)
+                    // NOTE:
+                    // some out parameters might specify `[In]` attribute.
+                    // lets make sure we count them as required.
+                    // e.g. Stream.Read([In][Out] char[] ...
+                    if (param.IsOut
+                            && param.GetCustomAttribute<InAttribute>() is null)
                     {
                         argSpecs[i] =
                             new BindParam(param, BindParamKind.Return);
 
-                        continue;
+                        returns++;
                     }
                     // `.IsOptional` will be true if the parameter has
                     // a default value, or if the parameter has the `[Optional]`
@@ -762,7 +896,7 @@ namespace Python.Runtime
                     {
                         BindParamKind kind = param.ParameterType.IsByRef ?
                             BindParamKind.Return
-                          : BindParamKind.Argument;
+                          : BindParamKind.Default;
 
                         argSpecs[i] =
                             new BindParam(param, kind);
@@ -792,19 +926,17 @@ namespace Python.Runtime
 
             // we compare required number of arguments for this
             // method with the number of total arguments provided
-            // (0, 0) -> (a, b)
-            // (0, 0) -> (a, b, c=0)
             if (givenArgs == required)
             {
                 goto matched;
             }
-            // (0, 0) -> (a, b=0, c=0)
-            // (0, 0) -> (a=0, b=0)
+
             else if (required < givenArgs
                         && (givenArgs <= (required + optional) || expands))
             {
                 goto matched;
             }
+
             else
             {
                 goto not_matched;
@@ -814,7 +946,12 @@ namespace Python.Runtime
             return false;
 
         matched:
-            spec = new BindSpec(method, required, optional, argSpecs);
+            spec = new BindSpec(method,
+                                required,
+                                optional,
+                                returns,
+                                expands,
+                                argSpecs);
             return true;
         }
 
@@ -885,11 +1022,33 @@ namespace Python.Runtime
         static readonly uint TYPE_GROUP_SIZE = ARG_GROUP_SIZE / 4;
         static readonly uint MATCH_GROUP_SIZE = TYPE_GROUP_SIZE / 4;
 
-        public static uint GetTypeDistance(BorrowedReference from, Type to)
+        static uint GetTypeDistance(BorrowedReference from, BindParam to)
         {
-            if (GetCLRType(from) is Type argType)
+            Type toType = to.Type;
+
+            if (to.Kind == BindParamKind.Params
+                    && Runtime.PySequence_Check(from))
             {
-                return GetTypeDistance(argType, to);
+                uint argsCount = (uint)Runtime.PyTuple_Size(from);
+                if (argsCount > 0)
+                {
+                    BorrowedReference item = Runtime.PyTuple_GetItem(from, 0);
+                    if (item != null)
+                    {
+                        if (GetCLRType(item) is Type argType)
+                        {
+                            return GetTypeDistance(argType, toType);
+                        }
+                    }
+                }
+            }
+            else if (GetCLRType(from) is Type argType)
+            {
+                return GetTypeDistance(argType, toType);
+            }
+            else
+            {
+                return ARG_GROUP_SIZE;
             }
 
             return ARG_GROUP_SIZE;
@@ -923,6 +1082,13 @@ namespace Python.Runtime
             }
 
             if (from.IsArray != to.IsArray)
+            {
+                distance = ARG_GROUP_SIZE;
+                goto computed;
+            }
+
+            if ((from.IsArray && to.IsArray)
+                    && (from.GetElementType() != to.GetElementType()))
             {
                 distance = ARG_GROUP_SIZE;
                 goto computed;

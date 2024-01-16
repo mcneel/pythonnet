@@ -197,6 +197,30 @@ namespace Python.Test
             return true;
         }
 
+        public static bool TestExplicitOutParams(string s, out string s1)
+        {
+            s1 = "output string";
+            return true;
+        }
+
+        public static bool TestExplicitOutParams(string s, out int s1)
+        {
+            s1 = 42;
+            return true;
+        }
+
+        public static bool TestExplicitRefParams(string s, ref string s1)
+        {
+            s1 = s1 + "output string";
+            return true;
+        }
+
+        public static bool TestExplicitRefParams(string s, ref int s1)
+        {
+            s1 = s1 + 42;
+            return true;
+        }
+
         public static bool TestNonParamsArrayInLastPlace(int i1, int[] i2)
         {
             return false;
@@ -250,7 +274,7 @@ namespace Python.Test
 
         public static void TestVoidSingleRefParam(ref int i)
         {
-            i = 42;
+            i = i + 42;
         }
 
         public static int TestSingleDefaultParam(int i = 5)

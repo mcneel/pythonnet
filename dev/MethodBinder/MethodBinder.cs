@@ -76,20 +76,31 @@ namespace Python.Runtime
         public static nint
         PyTuple_Size(BorrowedReference br)
         {
-            if (br.Value is object?[] array)
+            if (br.Value?.GetType().IsArray ?? false)
             {
-                return array.Length;
+                return ((Array)br.Value).Length;
             }
 
             return 0;
         }
 
+        public static bool
+        PySequence_Check(BorrowedReference br)
+        {
+            if (br.Value?.GetType().IsArray ?? false)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
         public static BorrowedReference
         PyTuple_GetItem(BorrowedReference br, nint index)
         {
-            if (br.Value is object?[] array)
+            if (br.Value?.GetType().IsArray ?? false)
             {
-                return new BorrowedReference(array[index]);
+                return new BorrowedReference(((Array)br.Value).GetValue(index));
             }
 
             return BorrowedReference.Null;
@@ -98,9 +109,9 @@ namespace Python.Runtime
         public static BorrowedReference
         PyList_GetItem(BorrowedReference br, nint index)
         {
-            if (br.Value is object?[] array)
+            if (br.Value?.GetType().IsArray ?? false)
             {
-                return new BorrowedReference(array[index]);
+                return new BorrowedReference(((Array)br.Value).GetValue(index));
             }
 
             return BorrowedReference.Null;
@@ -161,17 +172,6 @@ namespace Python.Runtime
 
             return string.Empty;
         }
-
-        public static bool
-        PySequence_Check(BorrowedReference br)
-        {
-            if (br.Value is object?[])
-            {
-                return true;
-            }
-
-            return false;
-        }
     }
 
     public class OriginalMethod : Attribute { }
@@ -195,7 +195,8 @@ namespace Python.Runtime
                         .Where(m => m.Name == name)
                         .ToArray();
 
-            if (TryBind(methods, argsRef, kwargsRef, true, out BindSpec ? spec))
+            if (TryBind(methods, argsRef, kwargsRef, true,
+                        out BindSpec ? spec, out BindError? err))
             {
                 if (spec!.TryGetArguments(instance,
                                           out MethodBase method,
@@ -229,7 +230,7 @@ namespace Python.Runtime
                 }
             }
 
-            throw new MethodAccessException(name);
+            throw new MethodAccessException(err!.ToString());
         }
 
 
