@@ -1,9 +1,9 @@
 #define METHODBINDER_SOLVER_NEW_CACHE_DIST
+#define METHODBINDER_SOLVER_NEW_CACHE_TYPE
 using System;
-using System.Linq;
 using System.Reflection;
-using System.Collections.Generic;
 using System.Diagnostics;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 namespace Python.Runtime
@@ -70,6 +70,72 @@ namespace Python.Runtime
     */
     partial class MethodBinder
     {
+        private ref struct ArgProvider
+        {
+            private readonly BorrowedReference _args;
+            private readonly BorrowedReference _kwargs;
+
+# if METHODBINDER_SOLVER_NEW_CACHE_TYPE
+            private readonly Dictionary<IntPtr, Type?> _typeMap = new();
+#endif
+
+            public uint ArgsCount;
+            public uint KWargsCount;
+            public uint GivenArgs;
+            public HashSet<string> Keys;
+
+            public ArgProvider(BorrowedReference args,
+                               BorrowedReference kwargs)
+            {
+                _args = args;
+                _kwargs = kwargs;
+
+                int argSize = _args == null ? 0 : (int)Runtime.PyTuple_Size(_args);
+                ArgsCount = (uint)(argSize == -1 ? 0 : argSize);
+
+                int kwargSize = _kwargs == null ? 0 : (int)Runtime.PyDict_Size(_kwargs);
+                KWargsCount = (uint)(kwargSize == -1 ? 0 : kwargSize);
+                Keys = kwargSize > 0 ? GetKeys(_kwargs) : new();
+
+                GivenArgs = ArgsCount + KWargsCount;
+            }
+
+            public readonly BorrowedReference GetArg(uint index)
+            {
+                return Runtime.PyTuple_GetItem(_args, (nint)index);
+            }
+
+            public readonly BorrowedReference GetKWArg(string key)
+            {
+                return Runtime.PyDict_GetItemString(_kwargs, key);
+            }
+
+            public readonly Type? GetCLRType(BorrowedReference op)
+            {
+#if UNIT_TEST_DEBUG || !METHODBINDER_SOLVER_NEW_CACHE_TYPE
+                return MethodBinder.GetCLRType(op);
+#else
+
+                IntPtr ptr = op.DangerousGetAddressOrNull();
+                if (IntPtr.Zero == ptr)
+                {
+                    return null;
+                }
+
+                if (_typeMap.ContainsKey(ptr))
+                {
+                    return _typeMap[ptr];
+                }
+
+                Type? clrType = MethodBinder.GetCLRType(op);
+
+                _typeMap[ptr] = clrType;
+
+                return clrType;
+#endif
+            }
+        }
+
         private enum BindParamKind
         {
             Default,
@@ -217,7 +283,7 @@ namespace Python.Runtime
         private sealed class BindSpec
         {
             public static bool IsRedirected(MethodBase method) =>
-                method.GetCustomAttributes<RedirectedMethod>().Any();
+                method.GetCustomAttribute<RedirectedMethod>() != null;
 
             public readonly MethodBase Method;
             public readonly uint Required;
@@ -298,14 +364,12 @@ namespace Python.Runtime
                 return true;
             }
 
-            public void SetArgs(BorrowedReference args,
-                                BorrowedReference kwargs)
+            public void SetArgs(ref ArgProvider prov)
             {
-                ExtractParameters(args, kwargs, computeDist: false);
+                ExtractParameters(ref prov, computeDist: false);
             }
 
-            public uint SetArgsAndGetDistance(BorrowedReference args,
-                                              BorrowedReference kwargs)
+            public uint SetArgsAndGetDistance(ref ArgProvider prov)
             {
                 uint distance = 0;
 
@@ -329,27 +393,23 @@ namespace Python.Runtime
                                 (uint)Method.GetGenericArguments().Length);
                 }
 
-                distance += ExtractParameters(args, kwargs, computeDist: true);
+                distance += ExtractParameters(ref prov, computeDist: true);
 
+#if UNIT_TEST_DEBUG
                 Debug.WriteLine($"{Method} -> {distance}");
+#endif
 
                 return distance;
             }
 
-            uint ExtractParameters(BorrowedReference args,
-                                   BorrowedReference kwargs,
+            uint ExtractParameters(ref ArgProvider prov,
                                    bool computeDist)
             {
                 uint distance = 0;
 
                 uint argidx = 0;
-                uint argsCount =
-                    args != null ? (uint)Runtime.PyTuple_Size(args) : 0;
-                bool checkArgs = argsCount > 0;
-
-                uint kwargsCount =
-                    kwargs != null ? (uint)Runtime.PyDict_Size(kwargs) : 0;
-                bool checkKwargs = kwargsCount > 0;
+                bool checkArgs = prov.ArgsCount > 0;
+                bool checkKwargs = prov.KWargsCount > 0;
 
                 for (uint i = 0; i < Parameters.Length; i++)
                 {
@@ -375,7 +435,7 @@ namespace Python.Runtime
                     // lets capture that and compute distance.
                     if (checkKwargs)
                     {
-                        item = Runtime.PyDict_GetItemString(kwargs, slot.Key);
+                        item = prov.GetKWArg(slot.Key);
                         if (item != null)
                         {
                             PyObject value = new PyObject(item);
@@ -396,7 +456,7 @@ namespace Python.Runtime
                             if (computeDist)
                             {
                                 slot.Distance =
-                                    GetTypeDistance(item, slot);
+                                    GetTypeDistance(ref prov, item, slot);
 
                                 distance += slot.Distance;
                             }
@@ -420,14 +480,14 @@ namespace Python.Runtime
                         if (slot.Kind == BindParamKind.Params)
                         {
                             // if there are remaining args, capture them
-                            if (argidx < argsCount)
+                            if (argidx < prov.ArgsCount)
                             {
-                                uint count = argsCount - argidx;
+                                uint count = prov.ArgsCount - argidx;
                                 var values = new PyObject[count];
                                 for (uint ai = argidx,
-                                          vi = 0; ai < argsCount; ai++, vi++)
+                                          vi = 0; ai < prov.ArgsCount; ai++, vi++)
                                 {
-                                    item = Runtime.PyTuple_GetItem(args, (nint)ai);
+                                    item = prov.GetArg(ai);
                                     if (item != null)
                                     {
                                         values[vi] = new PyObject(item);
@@ -437,7 +497,7 @@ namespace Python.Runtime
                                         if (computeDist && ai == argidx)
                                         {
                                             distance +=
-                                               GetTypeDistance(item, slot);
+                                               GetTypeDistance(ref prov, item, slot);
                                         }
 
                                         argidx++;
@@ -450,7 +510,7 @@ namespace Python.Runtime
 
                             // if args are already processsed, compute
                             // a default distance for this param slot
-                            else if (argidx > argsCount)
+                            else if (argidx > prov.ArgsCount)
                             {
                                 distance += computeDist ? ARG_GROUP_SIZE : 0;
                             }
@@ -462,9 +522,9 @@ namespace Python.Runtime
                         // otherwise look into the args and grab one
                         // for this param if available. compute distance
                         // based on type of the arg.
-                        else if (argidx < argsCount)
+                        else if (argidx < prov.ArgsCount)
                         {
-                            item = Runtime.PyTuple_GetItem(args, (nint)argidx);
+                            item = prov.GetArg(argidx);
                             if (item != null)
                             {
                                 slot.Value = new PyObject(item);
@@ -472,7 +532,7 @@ namespace Python.Runtime
                                 if (computeDist)
                                 {
                                     slot.Distance =
-                                        GetTypeDistance(item, slot);
+                                        GetTypeDistance(ref prov, item, slot);
 
                                     distance += slot.Distance;
                                 }
@@ -520,16 +580,11 @@ namespace Python.Runtime
             spec = default;
             error = default;
 
-            int argSize = args == null ? 0 : (int)Runtime.PyTuple_Size(args);
-            int kwargSize = kwargs == null ? 0 : (int)Runtime.PyDict_Size(kwargs);
-            uint argsCount = (uint)(argSize == -1 ? 0 : argSize);
-            uint kwargsCount = (uint)(kwargSize == -1 ? 0 : kwargSize);
-            HashSet<string> kwargKeys = kwargSize > 0 ? GetKeys(kwargs) : new();
+            ArgProvider provider = new ArgProvider(args, kwargs);
 
             // Find any method that could accept this many args and kwargs
             int index = 0;
             BindSpec?[] specs = new BindSpec?[methods.Length];
-            uint totalArgs = argsCount + kwargsCount;
 
             foreach (MethodBase method in methods)
             {
@@ -542,7 +597,7 @@ namespace Python.Runtime
                     continue;
                 }
 
-                if (TryBindByCount(method, totalArgs, kwargKeys,
+                if (TryBindByCount(method, ref provider,
                                    out BindSpec? bindSpec))
                 {
                     // if givenArgs==0 find the method with zero params.
@@ -550,7 +605,7 @@ namespace Python.Runtime
                     // with optional params that could be called as .Foo()
                     // without the optional params. This should make calling
                     // zero-parameter functions faster.
-                    if (totalArgs == 0
+                    if (provider.GivenArgs == 0
                             && bindSpec!.Parameters.Length == 0)
                     {
                         spec = bindSpec;
@@ -562,16 +617,14 @@ namespace Python.Runtime
                 }
             }
 
-            return TryBindByValue(index, specs, totalArgs, args, kwargs,
+            return TryBindByValue(index, ref specs, ref provider,
                                   out spec, out error);
         }
 
         // vertical filter
         static bool TryBindByValue(int count,
-                                   BindSpec?[] specs,
-                                   uint givenArgs,
-                                   BorrowedReference args,
-                                   BorrowedReference kwargs,
+                                   ref BindSpec?[] specs,
+                                   ref ArgProvider prov,
                                    out BindSpec? spec,
                                    out BindError? error)
         {
@@ -587,7 +640,7 @@ namespace Python.Runtime
             if (count == 1)
             {
                 spec = specs[0];
-                spec!.SetArgs(args, kwargs);
+                spec!.SetArgs(ref prov);
                 return true;
             }
 
@@ -598,7 +651,7 @@ namespace Python.Runtime
             {
                 BindSpec mspec = specs[sidx]!;
 
-                uint distance = mspec!.SetArgsAndGetDistance(args, kwargs);
+                uint distance = mspec!.SetArgsAndGetDistance(ref prov);
 
                 // NOTE:
                 // if method has the exact same distance,
@@ -630,7 +683,7 @@ namespace Python.Runtime
                         continue;
                     }
 
-                    if (givenArgs == 0)
+                    if (prov.GivenArgs == 0)
                     {
                         goto ambiguousError;
                     }
@@ -745,11 +798,10 @@ namespace Python.Runtime
 
             if (ambigCount > 0)
             {
-                error = new AmbiguousBindError(
-                        ambigMethods.Take((int)ambigCount)
-                                    .Select(m => m!)
-                                    .ToArray()
-                    );
+                MethodBase[] ambigs = new MethodBase[(int)ambigCount];
+                Array.Copy(ambigMethods, ambigs, ambigCount);
+
+                error = new AmbiguousBindError(ambigs);
                 return false;
             }
 
@@ -764,8 +816,7 @@ namespace Python.Runtime
 
         // horizontal filter
         static bool TryBindByCount(MethodBase method,
-                                   uint givenArgs,
-                                   HashSet<string> kwargs,
+                                   ref ArgProvider prov,
                                    out BindSpec? spec)
         {
             spec = default;
@@ -777,7 +828,7 @@ namespace Python.Runtime
             uint returns = 0;
             bool expands = false;
             bool isOperator = IsOperatorMethod(method)
-                                && givenArgs == mparams.Length - 1;
+                                && prov.GivenArgs == mparams.Length - 1;
             BindParam[] argSpecs;
 
             if (isOperator)
@@ -830,7 +881,7 @@ namespace Python.Runtime
 
             if (mparams.Length > 0)
             {
-                uint kwargCount = (uint)kwargs.Count;
+                uint kwargCount = (uint)prov.Keys.Count;
                 uint length = (uint)mparams.Length;
                 uint last = length - 1;
 
@@ -849,7 +900,7 @@ namespace Python.Runtime
 
                     string key = param.Name;
 
-                    if (kwargs.Contains(key))
+                    if (prov.Keys.Contains(key))
                     {
                         // if any of kwarg names is an `out` param,
                         // this method is not a match
@@ -914,7 +965,7 @@ namespace Python.Runtime
                 }
 
                 // no point in processing the rest if we know this
-                if (required > givenArgs)
+                if (required > prov.GivenArgs)
                 {
                     goto not_matched;
                 }
@@ -926,13 +977,13 @@ namespace Python.Runtime
 
             // we compare required number of arguments for this
             // method with the number of total arguments provided
-            if (givenArgs == required)
+            if (prov.GivenArgs == required)
             {
                 goto matched;
             }
 
-            else if (required < givenArgs
-                        && (givenArgs <= (required + optional) || expands))
+            else if (required < prov.GivenArgs
+                        && (prov.GivenArgs <= (required + optional) || expands))
             {
                 goto matched;
             }
@@ -979,7 +1030,7 @@ namespace Python.Runtime
 
         #region Distance Compute Logic
         static Dictionary<(TypeCode, TypeCode), uint> s_builtinDistMap =
-            new Dictionary<(TypeCode, TypeCode), uint>
+            new()
             {
                 [(TypeCode.UInt64, TypeCode.UInt64)] = 0,
                 [(TypeCode.UInt64, TypeCode.Int64)] = 1,
@@ -1022,7 +1073,8 @@ namespace Python.Runtime
         static readonly uint TYPE_GROUP_SIZE = ARG_GROUP_SIZE / 4;
         static readonly uint MATCH_GROUP_SIZE = TYPE_GROUP_SIZE / 4;
 
-        static uint GetTypeDistance(BorrowedReference from, BindParam to)
+        static uint GetTypeDistance(ref ArgProvider prov,
+                                    BorrowedReference from, BindParam to)
         {
             Type toType = to.Type;
 
@@ -1035,20 +1087,16 @@ namespace Python.Runtime
                     BorrowedReference item = Runtime.PyTuple_GetItem(from, 0);
                     if (item != null)
                     {
-                        if (GetCLRType(item) is Type argType)
+                        if (prov.GetCLRType(item) is Type argType)
                         {
                             return GetTypeDistance(argType, toType);
                         }
                     }
                 }
             }
-            else if (GetCLRType(from) is Type argType)
+            else if (prov.GetCLRType(from) is Type argType)
             {
                 return GetTypeDistance(argType, toType);
-            }
-            else
-            {
-                return ARG_GROUP_SIZE;
             }
 
             return ARG_GROUP_SIZE;
