@@ -5,12 +5,11 @@ using System.Linq;
 
 namespace Python.Runtime.Codecs
 {
-    public class ListDecoder : IPyObjectDecoder
+    public class ListDecoder : CollectionDecoder
     {
-        private static bool IsList(Type targetType)
+        public ListDecoder()
+            : base(typeof(CollectionWrappers.ListWrapper<>))
         {
-            return (targetType.IsGenericType && targetType.GetGenericTypeDefinition() == typeof(IList<>))
-                || (targetType == typeof(IList));
         }
 
         private static bool IsList(PyType objectType)
@@ -23,21 +22,9 @@ namespace Python.Runtime.Codecs
             return PythonReferenceComparer.Instance.Equals(objectType, Runtime.PyListType);
         }
 
-        public bool CanDecode(PyType objectType, Type targetType)
+        public override bool CanDecode(PyType objectType, Type targetType)
         {
-            return IsList(objectType) && IsList(targetType);
-        }
-
-        public bool TryDecode<T>(PyObject pyObj, out T value)
-        {
-            if (pyObj == null) throw new ArgumentNullException(nameof(pyObj));
-
-            var elementType = typeof(T).IsGenericType ? typeof(T).GetGenericArguments()[0] : typeof(object);
-            Type collectionType = typeof(CollectionWrappers.ListWrapper<>).MakeGenericType(elementType);
-
-            var instance = Activator.CreateInstance(collectionType, new[] { pyObj });
-            value = (T)instance;
-            return true;
+            return IsList(objectType) && IsSequence(targetType);
         }
 
         public static ListDecoder Instance { get; } = new ListDecoder();

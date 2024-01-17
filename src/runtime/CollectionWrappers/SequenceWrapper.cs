@@ -24,7 +24,7 @@ namespace Python.Runtime.CollectionWrappers
             }
         }
 
-        public virtual bool IsReadOnly => false;
+        public virtual bool IsReadOnly => true;
 
         public virtual void Add(T item)
         {
@@ -70,7 +70,19 @@ namespace Python.Runtime.CollectionWrappers
             }
         }
 
-        protected bool removeAt(int index)
+        public bool Remove(T item)
+        {
+            var result = RemoveItemAt(IndexOfItem(item));
+
+            //clear the python exception from PySequence_DelItem
+            //it is idiomatic in C# to return a bool rather than
+            //throw for a failed Remove in ICollection
+            if (result == false)
+                Runtime.PyErr_Clear();
+            return result;
+        }
+
+        protected bool RemoveItemAt(int index)
         {
             if (IsReadOnly)
                 throw new NotImplementedException();
@@ -86,7 +98,7 @@ namespace Python.Runtime.CollectionWrappers
             return false;
         }
 
-        protected int indexOf(T item)
+        protected int IndexOfItem(T item)
         {
             var index = 0;
             foreach (var element in this)
@@ -96,18 +108,6 @@ namespace Python.Runtime.CollectionWrappers
             }
 
             return -1;
-        }
-
-        public bool Remove(T item)
-        {
-            var result = removeAt(indexOf(item));
-
-            //clear the python exception from PySequence_DelItem
-            //it is idiomatic in C# to return a bool rather than
-            //throw for a failed Remove in ICollection
-            if (result == false)
-                Runtime.PyErr_Clear();
-            return result;
         }
     }
 }
