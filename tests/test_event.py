@@ -300,7 +300,7 @@ def test_out_function_handler():
     ob = EventTest()
 
     value = 10
-    def handler(ignored):
+    def handler():
         return value
 
     ob.OutIntEvent += handler

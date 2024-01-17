@@ -16,8 +16,14 @@ namespace Python.Runtime.Codecs
             GenericCollectionType = genericCollectionType;
         }
 
-        protected static bool IsSequence(Type targetType)
+        protected static bool IsEnumerable(Type targetType)
         {
+            if (targetType == s_enumerType
+                    || targetType == s_enumerTypeT)
+            {
+                return true;
+            }
+
             // NOTE:
             // a type is a sequence if it implements either
             // IEnumerable or IEnumerable<>

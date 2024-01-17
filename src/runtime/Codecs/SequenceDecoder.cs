@@ -13,7 +13,7 @@ namespace Python.Runtime.Codecs
 
         public override bool CanDecode(PyType objectType, Type targetType)
         {
-            return IsSequence(objectType) && IsSequence(targetType);
+            return IsSequence(objectType) && IsEnumerable(targetType);
         }
 
         public static SequenceDecoder Instance { get; } = new SequenceDecoder();

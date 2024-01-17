@@ -36,6 +36,16 @@ namespace Python.Runtime
 
         internal static Type? GetTypeByAlias(BorrowedReference pyType, BorrowedReference op)
         {
+            if (pyType == Runtime.PyStringType)
+            {
+                return stringType;
+            }
+
+            if (pyType == Runtime.PyUnicodeType)
+            {
+                return stringType;
+            }
+
             if (pyType == Runtime.PyLongType)
             {
                 nint? int32 = Runtime.PyLong_AsSignedSize_t(op);
@@ -77,7 +87,33 @@ namespace Python.Runtime
                 Exceptions.SetError(Exceptions.OverflowError, "value too large to convert");
             }
 
-            return GetTypeByAlias(pyType);
+            if (pyType == Runtime.PyFloatType)
+            {
+                return doubleType;
+            }
+
+            if (pyType == Runtime.PyBoolType)
+            {
+                return boolType;
+            }
+
+            if (pyType == Runtime.PyListType)
+            {
+                return listType;
+            }
+
+            if (pyType == Runtime.PyTupleType)
+            {
+                return enumerType;
+            }
+
+            PyType t = PyType.FromNullableReference(pyType)!;
+            if (t.HasAttr("__iter__"))
+            {
+                return enumerType;
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -102,12 +138,6 @@ namespace Python.Runtime
 
             if (op == Runtime.PyBoolType)
                 return boolType;
-
-            if (op == Runtime.PyListType)
-                return listType;
-
-            if (op == Runtime.PyTupleType)
-                return enumerType;
 
             return null;
         }

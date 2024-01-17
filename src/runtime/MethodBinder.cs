@@ -404,7 +404,7 @@ namespace Python.Runtime
             if (mt is ClassBase b)
             {
                 MaybeType _type = b.type;
-                return _type.Valid ? _type.Value : null;
+                return _type.Valid ? _type.Value.GetType() : null;
             }
             else if (mt is CLRObject ob)
             {

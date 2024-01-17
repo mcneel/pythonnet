@@ -653,6 +653,11 @@ namespace Python.Runtime
 
                 uint distance = mspec!.SetArgsAndGetDistance(ref prov);
 
+                if (distance == ARG_GROUP_SIZE)
+                {
+                    continue;
+                }
+
                 // NOTE:
                 // if method has the exact same distance,
                 // lets look at a few other properties to determine which
@@ -1099,7 +1104,7 @@ namespace Python.Runtime
                 return GetTypeDistance(argType, toType);
             }
 
-            return ARG_GROUP_SIZE;
+            return GetTypeDistance(typeof(object), toType);
         }
 
         static uint GetTypeDistance(Type from, Type to)

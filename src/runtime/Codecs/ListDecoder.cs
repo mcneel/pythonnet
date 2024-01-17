@@ -24,7 +24,7 @@ namespace Python.Runtime.Codecs
 
         public override bool CanDecode(PyType objectType, Type targetType)
         {
-            return IsList(objectType) && IsSequence(targetType);
+            return IsList(objectType) && IsEnumerable(targetType);
         }
 
         public static ListDecoder Instance { get; } = new ListDecoder();

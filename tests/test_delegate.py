@@ -287,18 +287,20 @@ def test_out_int_delegate():
     from Python.Test import OutIntDelegate
     value = 7
 
-    def out_hello_func(ignored):
+    # OutIntDelegate(out int value)
+    # `ignored` is there to capture
+    def out_hello_func():
         return 5
 
     d = OutIntDelegate(out_hello_func)
-    result = d(value)
+    result = d()
     assert result == 5
 
     ob = DelegateTest()
-    result = ob.CallOutIntDelegate(d, value)
+    result = ob.CallOutIntDelegate(d)
     assert result == 5
 
-    def invalid_handler(ignored):
+    def invalid_handler():
         return '5'
 
     d = OutIntDelegate(invalid_handler)
@@ -310,15 +312,15 @@ def test_out_string_delegate():
     from Python.Test import OutStringDelegate
     value = 'goodbye'
 
-    def out_hello_func(ignored):
+    def out_hello_func():
         return 'hello'
 
     d = OutStringDelegate(out_hello_func)
-    result = d(value)
+    result = d()
     assert result == 'hello'
 
     ob = DelegateTest()
-    result = ob.CallOutStringDelegate(d, value)
+    result = ob.CallOutStringDelegate(d)
     assert result == 'hello'
 
 def test_ref_int_delegate():
