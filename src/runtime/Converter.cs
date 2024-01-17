@@ -31,6 +31,8 @@ namespace Python.Runtime
         private static readonly Type uint32Type = typeof(UInt32);
         private static readonly Type uint64Type = typeof(UInt64);
         private static readonly Type stringType = typeof(String);
+        private static readonly Type listType = typeof(IList<object>);
+        private static readonly Type enumerType = typeof(IEnumerable<object>);
 
         internal static Type? GetTypeByAlias(BorrowedReference pyType, BorrowedReference op)
         {
@@ -100,6 +102,12 @@ namespace Python.Runtime
 
             if (op == Runtime.PyBoolType)
                 return boolType;
+
+            if (op == Runtime.PyListType)
+                return listType;
+
+            if (op == Runtime.PyTupleType)
+                return enumerType;
 
             return null;
         }
