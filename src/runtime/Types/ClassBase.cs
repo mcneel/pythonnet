@@ -110,7 +110,22 @@ namespace Python.Runtime
                 // Wrap the `other` argument of a binary comparison operator in a PyTuple.
                 using var args = Runtime.PyTuple_New(1);
                 Runtime.PyTuple_SetItem(args.Borrow(), 0, other);
-                return methodObject.Invoke(ob, args.Borrow(), null);
+                var result = methodObject.Invoke(ob, args.Borrow(), null);
+
+                // NOTE:
+                // (in)equality checks in dotnet have typed arguments.
+                // if case the type conversion failed from given arg to the
+                // type required by the equality checker, lets continue and
+                // use the default equality check. We will not clear any
+                // other error that is thrown from the invokation.
+                if (Exceptions.ExceptionMatches(Exceptions.TypeError))
+                {
+                    Exceptions.Clear();
+                }
+                else
+                {
+                    return result;
+                }
             }
 
             switch (op)

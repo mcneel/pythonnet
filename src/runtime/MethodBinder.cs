@@ -544,28 +544,80 @@ namespace Python.Runtime
                     return Exceptions.RaiseTypeError("Invoked a non-static method with an invalid instance");
                 }
 
-                // NOTE:
-                // arg conversion needs to happen before GIL is possibly released
-                bool converted = spec.TryGetArguments(instance, out MethodBase method, out object?[] bindArgs);
-                if (!converted)
-                {
-                    Exception convertEx = PythonException.FetchCurrent();
-                    return Exceptions.RaiseTypeError($"{convertEx.Message} in method {match}");
-                }
-
-                if (allow_threads)
-                {
-                    threadState = PythonEngine.BeginAllowThreads();
-                }
-
                 try
                 {
+                    // NOTE:
+                    // arg conversion needs to happen before GIL is possibly released
+                    bool converted = spec.TryGetArguments(instance, out MethodBase method, out object?[] bindArgs);
+                    if (!converted)
+                    {
+                        Exception convertEx = PythonException.FetchCurrent();
+                        return Exceptions.RaiseTypeError($"{convertEx.Message} in method {match}");
+                    }
+
+                    if (allow_threads)
+                    {
+                        threadState = PythonEngine.BeginAllowThreads();
+                    }
+
                     result =
                         method.Invoke(instance,
                                       invokeAttr: BindingFlags.Default,
                                       binder: null,
                                       parameters: bindArgs,
                                       culture: null);
+
+                    if (allow_threads)
+                    {
+                        PythonEngine.EndAllowThreads(threadState);
+                    }
+
+                    // If there are out parameters, we return a tuple containing
+                    // the result (if not void), followed by the out parameters.
+                    // If there is only one out parameter and the return type of
+                    // the method is void, we return the out parameter as the result
+                    // to Python (for code compatibility with ironpython).
+                    int returnParams = spec.Parameters.Where(p => p.Kind == BindParamKind.Return).Count();
+                    if (returnParams > 0)
+                    {
+                        var tupleIndex = 0;
+                        int tupleSize = returnParams + (isVoid ? 0 : 1);
+                        using var tuple = Runtime.PyTuple_New(tupleSize);
+
+                        if (!isVoid)
+                        {
+                            using var v = Converter.ToPython(result, resultType);
+                            Runtime.PyTuple_SetItem(tuple.Borrow(), tupleIndex, v.Steal());
+                            tupleIndex++;
+                        }
+
+                        for (int i = 0; i < spec.Parameters.Length; i++)
+                        {
+                            BindParam param = spec.Parameters[i];
+
+                            if (param.Kind != BindParamKind.Return)
+                            {
+                                continue;
+                            }
+
+                            object? value = bindArgs[i];
+                            using var v = Converter.ToPython(value, param.Type.GetElementType());
+                            Runtime.PyTuple_SetItem(tuple.Borrow(), tupleIndex, v.Steal());
+                            tupleIndex++;
+                        }
+
+                        if (tupleSize == 1)
+                        {
+                            BorrowedReference item = Runtime.PyTuple_GetItem(tuple.Borrow(), 0);
+                            return new NewReference(item);
+                        }
+                        else
+                        {
+                            return new NewReference(tuple.Borrow());
+                        }
+                    }
+
+                    return Converter.ToPython(result, resultType);
                 }
                 catch (Exception e)
                 {
@@ -582,58 +634,6 @@ namespace Python.Runtime
                     Exceptions.SetError(e);
                     return default;
                 }
-
-                if (allow_threads)
-                {
-                    PythonEngine.EndAllowThreads(threadState);
-                }
-
-                // If there are out parameters, we return a tuple containing
-                // the result (if not void), followed by the out parameters.
-                // If there is only one out parameter and the return type of
-                // the method is void, we return the out parameter as the result
-                // to Python (for code compatibility with ironpython).
-                int returnParams = spec.Parameters.Where(p => p.Kind == BindParamKind.Return).Count();
-                if (returnParams > 0)
-                {
-                    var tupleIndex = 0;
-                    int tupleSize = returnParams + (isVoid ? 0 : 1);
-                    using var tuple = Runtime.PyTuple_New(tupleSize);
-
-                    if (!isVoid)
-                    {
-                        using var v = Converter.ToPython(result, resultType);
-                        Runtime.PyTuple_SetItem(tuple.Borrow(), tupleIndex, v.Steal());
-                        tupleIndex++;
-                    }
-
-                    for (int i = 0; i < spec.Parameters.Length; i++)
-                    {
-                        BindParam param = spec.Parameters[i];
-
-                        if (param.Kind != BindParamKind.Return)
-                        {
-                            continue;
-                        }
-
-                        object? value = bindArgs[i];
-                        using var v = Converter.ToPython(value, param.Type.GetElementType());
-                        Runtime.PyTuple_SetItem(tuple.Borrow(), tupleIndex, v.Steal());
-                        tupleIndex++;
-                    }
-
-                    if (tupleSize == 1)
-                    {
-                        BorrowedReference item = Runtime.PyTuple_GetItem(tuple.Borrow(), 0);
-                        return new NewReference(item);
-                    }
-                    else
-                    {
-                        return new NewReference(tuple.Borrow());
-                    }
-                }
-
-                return Converter.ToPython(result, resultType);
             }
 
             else if (error is AmbiguousBindError ambigErr)

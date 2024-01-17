@@ -57,11 +57,11 @@ namespace Python.Runtime
   N │               │   │   │┼┼┼│   │   │        │   │   │              │
   C ├───────────────┤   │   │┼┼┼│   │   ├────────┤   │   ├──────────────┤
   E │               │   │   │┼┼┼│   │   │        │   │   │              │
-    │  STATIC       │   │   │┼┼┼│   │   │ PARAMS │   │   │ GENERIC      │
+    │  STATIC       │   │   │┼┼┼│   │   │ resvd. │   │   │ GENERIC      │
   R │               │   │   │┼┼┼│   │   │        │   │   │              │
   A ├───────────────┤   │   │┼┼┼│   │   ├────────┤   │   ├──────────────┤
   N │               │   │   │┼┼┼│   │   │        │   │   │              │
-  G │  STATIC<T>    │   │   │┼┼┼│   │   │ resvd. │   │   │ CAST/CONVERT │
+  G │  STATIC<T>    │   │   │┼┼┼│   │   │ resvd. │   │   │ CONVERT/CAST │
   E │               │   └─► │┼┼┼│   └── │        │   └── │              │
     └───────────────┘       └───┘       └────────┘       └──────────────┘
     FUNCTION      MAX       ARGS        TYPE             MATCH
@@ -364,12 +364,7 @@ namespace Python.Runtime
                 return true;
             }
 
-            public void SetArgs(ref ArgProvider prov)
-            {
-                ExtractParameters(ref prov, computeDist: false);
-            }
-
-            public uint SetArgsAndGetDistance(ref ArgProvider prov)
+            public uint AssignArguments(ref ArgProvider prov)
             {
                 uint distance = 0;
 
@@ -381,7 +376,7 @@ namespace Python.Runtime
                 // NOTE:
                 // if method contains generic parameters, the distance
                 // compute logic will take that into consideration.
-                // but methods can be generic with no generic paramerers,
+                // but methods can be generic with no generic parameters,
                 // e.g. Foo<T>(int, float).
                 // this ensures these methods are furthur away from
                 // non-generic instance methods with matching parameters
@@ -393,17 +388,16 @@ namespace Python.Runtime
                                 (uint)Method.GetGenericArguments().Length);
                 }
 
-                distance += ExtractParameters(ref prov, computeDist: true);
-
 #if UNIT_TEST_DEBUG
                 Debug.WriteLine($"{Method} -> {distance}");
 #endif
 
+                distance += ExtractArguments(ref prov);
+
                 return distance;
             }
 
-            uint ExtractParameters(ref ArgProvider prov,
-                                   bool computeDist)
+            uint ExtractArguments(ref ArgProvider prov)
             {
                 uint distance = 0;
 
@@ -438,7 +432,7 @@ namespace Python.Runtime
                         item = prov.GetKWArg(slot.Key);
                         if (item != null)
                         {
-                            PyObject value = new PyObject(item);
+                            PyObject value = new(item);
 
                             // NOTE:
                             // if this param is a capturing params[], expect
@@ -453,13 +447,8 @@ namespace Python.Runtime
                                 slot.Value = value;
                             }
 
-                            if (computeDist)
-                            {
-                                slot.Distance =
-                                    GetTypeDistance(ref prov, item, slot);
-
-                                distance += slot.Distance;
-                            }
+                            slot.Distance = GetDistance(ref prov, item, slot);
+                            distance += slot.Distance;
 
                             continue;
                         }
@@ -494,10 +483,11 @@ namespace Python.Runtime
 
                                         // compute distance on first arg
                                         // that is being captured by params []
-                                        if (computeDist && ai == argidx)
+                                        if (ai == argidx)
                                         {
-                                            distance +=
-                                               GetTypeDistance(ref prov, item, slot);
+                                            slot.Distance =
+                                                GetDistance(ref prov, item, slot);
+                                            distance += slot.Distance;
                                         }
 
                                         argidx++;
@@ -512,7 +502,7 @@ namespace Python.Runtime
                             // a default distance for this param slot
                             else if (argidx > prov.ArgsCount)
                             {
-                                distance += computeDist ? ARG_GROUP_SIZE : 0;
+                                distance += ARG_GROUP_SIZE;
                             }
 
                             continue;
@@ -528,14 +518,9 @@ namespace Python.Runtime
                             if (item != null)
                             {
                                 slot.Value = new PyObject(item);
-
-                                if (computeDist)
-                                {
-                                    slot.Distance =
-                                        GetTypeDistance(ref prov, item, slot);
-
-                                    distance += slot.Distance;
-                                }
+                                slot.Distance =
+                                    GetDistance(ref prov, item, slot);
+                                distance += slot.Distance;
 
                                 argidx++;
                                 continue;
@@ -580,7 +565,7 @@ namespace Python.Runtime
             spec = default;
             error = default;
 
-            ArgProvider provider = new ArgProvider(args, kwargs);
+            ArgProvider provider = new(args, kwargs);
 
             // Find any method that could accept this many args and kwargs
             int index = 0;
@@ -637,13 +622,6 @@ namespace Python.Runtime
                 return false;
             }
 
-            if (count == 1)
-            {
-                spec = specs[0];
-                spec!.SetArgs(ref prov);
-                return true;
-            }
-
             uint ambigCount = 0;
             MethodBase?[] ambigMethods = new MethodBase?[count];
             uint closest = uint.MaxValue;
@@ -651,12 +629,7 @@ namespace Python.Runtime
             {
                 BindSpec mspec = specs[sidx]!;
 
-                uint distance = mspec!.SetArgsAndGetDistance(ref prov);
-
-                if (distance == ARG_GROUP_SIZE)
-                {
-                    continue;
-                }
+                uint distance = mspec!.AssignArguments(ref prov);
 
                 // NOTE:
                 // if method has the exact same distance,
@@ -854,16 +827,16 @@ namespace Python.Runtime
                     {
                         argSpecs = new BindParam[]
                         {
-                        new BindParam(mparams[0], BindParamKind.Default),
-                        new BindParam(mparams[1], BindParamKind.Self),
+                            new BindParam(mparams[0], BindParamKind.Default),
+                            new BindParam(mparams[1], BindParamKind.Self),
                         };
                     }
                     else
                     {
                         argSpecs = new BindParam[]
                         {
-                        new BindParam(mparams[0], BindParamKind.Self),
-                        new BindParam(mparams[1], BindParamKind.Default),
+                            new BindParam(mparams[0], BindParamKind.Self),
+                            new BindParam(mparams[1], BindParamKind.Default),
                         };
                     }
                 }
@@ -1074,28 +1047,38 @@ namespace Python.Runtime
 
         static readonly uint TOTAL_MAX_DIST = uint.MaxValue;
         static readonly uint FUNC_GROUP_SIZE = TOTAL_MAX_DIST / 4;
+        static readonly uint ARGS_MAX_DIST = FUNC_GROUP_SIZE;
         static readonly uint ARG_GROUP_SIZE = FUNC_GROUP_SIZE / MAX_ARGS;
+        static readonly uint ARG_MAX_DIST = ARG_GROUP_SIZE;
         static readonly uint TYPE_GROUP_SIZE = ARG_GROUP_SIZE / 4;
         static readonly uint MATCH_GROUP_SIZE = TYPE_GROUP_SIZE / 4;
+        static readonly uint MATCH_MAX_DIST = MATCH_GROUP_SIZE;
+        static readonly uint CONVERT_MATCH_THRESHOLD = MATCH_GROUP_SIZE * 3;
 
-        static uint GetTypeDistance(ref ArgProvider prov,
-                                    BorrowedReference from, BindParam to)
+        // NOTE:
+        // this method computes a distance between the given python arg
+        // and the expected type iin target parameter slot.
+        // However in many cases when given arg is a python object,
+        // the final clr type of arg is unknown. therefore we return the
+        // max distance for these and let the arg converter attempt
+        // to convert the type to the expected type later.
+        static uint GetDistance(ref ArgProvider prov,
+                                BorrowedReference from, BindParam to)
         {
             Type toType = to.Type;
 
             if (to.Kind == BindParamKind.Params
                     && Runtime.PySequence_Check(from))
             {
-                uint argsCount = (uint)Runtime.PyTuple_Size(from);
+                uint argsCount = (uint)Runtime.PySequence_Size(from);
                 if (argsCount > 0)
                 {
-                    BorrowedReference item = Runtime.PyTuple_GetItem(from, 0);
-                    if (item != null)
+                    using var iterObj = Runtime.PyObject_GetIter(from);
+                    using var item = Runtime.PyIter_Next(iterObj.Borrow());
+                    if (!item.IsNull()
+                            && prov.GetCLRType(item.Borrow()) is Type argType)
                     {
-                        if (prov.GetCLRType(item) is Type argType)
-                        {
-                            return GetTypeDistance(argType, toType);
-                        }
+                        return GetTypeDistance(argType, toType);
                     }
                 }
             }
@@ -1103,8 +1086,15 @@ namespace Python.Runtime
             {
                 return GetTypeDistance(argType, toType);
             }
+            else if (from == null
+                        || Runtime.None == from
+                        || toType == typeof(object)
+                        || toType == typeof(PyObject))
+            {
+                return 0;
+            }
 
-            return GetTypeDistance(typeof(object), toType);
+            return ARG_MAX_DIST;
         }
 
         static uint GetTypeDistance(Type from, Type to)
@@ -1136,14 +1126,14 @@ namespace Python.Runtime
 
             if (from.IsArray != to.IsArray)
             {
-                distance = ARG_GROUP_SIZE;
+                distance = ARG_MAX_DIST;
                 goto computed;
             }
 
             if ((from.IsArray && to.IsArray)
                     && (from.GetElementType() != to.GetElementType()))
             {
-                distance = ARG_GROUP_SIZE;
+                distance = ARG_MAX_DIST;
                 goto computed;
             }
 
@@ -1162,16 +1152,9 @@ namespace Python.Runtime
                 goto computed;
             }
 
-            // cast/convert match
+            // convert/cast match
             distance += MATCH_GROUP_SIZE;
-            if (TryGetPrecedence(from, out uint fromPrec)
-                    && TryGetPrecedence(to, out uint toPrec))
-            {
-                distance += GetConvertTypeDistance(fromPrec, toPrec);
-                goto computed;
-            }
-
-            distance = ARG_GROUP_SIZE;
+            distance += GetConvertTypeDistance(from, to);
 
         computed:
 #if METHODBINDER_SOLVER_NEW_CACHE_DIST
@@ -1207,7 +1190,7 @@ namespace Python.Runtime
             Type t = from;
             while (t != null
                         && t != to
-                        && depth < MATCH_GROUP_SIZE)
+                        && depth < MATCH_MAX_DIST)
             {
                 depth++;
                 t = t.BaseType;
@@ -1218,9 +1201,15 @@ namespace Python.Runtime
 
         // zero when types are equal.
         // 0 <= x < MATCH_MAX_DIST
-        static uint GetConvertTypeDistance(uint from, uint to)
+        static uint GetConvertTypeDistance(Type from, Type to)
         {
-            return (uint)Math.Abs((int)to - (int)from);
+            if (TryGetPrecedence(from, out uint fromPrec)
+                && TryGetPrecedence(to, out uint toPrec))
+            {
+                return (uint)Math.Abs((int)toPrec - (int)fromPrec);
+            }
+
+            return MATCH_MAX_DIST;
         }
 
         static bool TryGetPrecedence(Type of, out uint predecence)
@@ -1228,6 +1217,11 @@ namespace Python.Runtime
             predecence = 0;
 
             if (of is null)
+            {
+                return false;
+            }
+
+            if (!of.IsPrimitive)
             {
                 return false;
             }
@@ -1253,8 +1247,7 @@ namespace Python.Runtime
             {
                 // 0-9
                 case TypeCode.Object:
-                    predecence = 1;
-                    return true;
+                    return false;
 
                 // 10-19
                 case TypeCode.UInt64:
