@@ -6,8 +6,8 @@ namespace Python.Runtime.Codecs
 {
     public abstract class CollectionDecoder : IPyObjectDecoder
     {
-        protected static Type s_enum = typeof(IEnumerable);
-        protected static Type s_enumT = typeof(IEnumerable<>);
+        protected static Type s_enumerType = typeof(IEnumerable);
+        protected static Type s_enumerTypeT = typeof(IEnumerable<>);
 
         protected Type GenericCollectionType;
 
@@ -38,9 +38,9 @@ namespace Python.Runtime.Codecs
             {
                 Type iface = interfaces[i];
 
-                if (iface == s_enum
+                if (iface == s_enumerType
                         || (iface.IsGenericType
-                                && iface.GetGenericTypeDefinition() == s_enumT))
+                                && iface.GetGenericTypeDefinition() == s_enumerTypeT))
                 {
                     return true;
                 }
