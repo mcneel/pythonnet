@@ -27,6 +27,8 @@ namespace Python.Runtime
         internal readonly MethodBinder binder;
         internal bool is_static = false;
 
+        internal bool skipTypeErrors = false;
+
         internal PyString? doc;
         internal MaybeType type;
 
@@ -58,9 +60,39 @@ namespace Python.Runtime
         public MethodObject WithOverloads(MethodBase[] overloads)
             => new(type, name, overloads, allow_threads: binder.allow_threads);
 
+        public virtual bool TryInvoke(BorrowedReference inst, BorrowedReference args, BorrowedReference kw, out NewReference result)
+        {
+            result = Invoke(inst, args, kw);
+
+            // NOTE:
+            // (in)equality checks in dotnet have typed arguments.
+            // if case the type conversion failed from given arg to the
+            // type required by the equality checker, lets continue and
+            // use the default equality check. We will not clear any
+            // other error that is thrown from the invokation.
+            if (Exceptions.ExceptionMatches(Exceptions.TypeError))
+            {
+                Exceptions.Clear();
+                result = new NewReference(Runtime.PyNone);
+                return false;
+            }
+            else
+            {
+                return true;
+            }
+        }
+
         public virtual NewReference Invoke(BorrowedReference inst, BorrowedReference args, BorrowedReference kw)
         {
-            return Invoke(inst, args, kw, null);
+            if (skipTypeErrors)
+            {
+                TryInvoke(inst, args, kw, out NewReference result);
+                return result;
+            }
+            else
+            {
+                return Invoke(inst, args, kw, null);
+            }
         }
 
         public virtual NewReference Invoke(BorrowedReference target, BorrowedReference args, BorrowedReference kw, MethodBase? info)
@@ -115,7 +147,8 @@ namespace Python.Runtime
         internal NewReference GetName()
         {
             var names = new HashSet<string>(binder.GetMethods().Select(m => m.Name));
-            if (names.Count != 1) {
+            if (names.Count != 1)
+            {
                 Exceptions.SetError(Exceptions.AttributeError, "a method has no name");
                 return default;
             }
