@@ -1178,13 +1178,30 @@ namespace Python.Runtime
         // zero when types are equal.
         // assumes derived is assignable to @base
         // 0 <= x < MATCH_MAX_DIST
-        static uint GetDerivedTypeDistance(Type derived, Type @base)
+        static uint GetDerivedTypeDistance(Type from, Type to)
         {
             uint depth = 0;
 
-            Type t = derived;
+            if (from.IsInterface)
+            {
+                // assumes to.IsInterface==true
+                // since we have checked assignability before
+                Type[] interfaces = from.GetInterfaces();
+                for (int i = 0; i < interfaces.Length; i++)
+                {
+                    depth++;
+                    if (interfaces[i] == to)
+                    {
+                        break;
+                    }
+                }
+
+                return depth;
+            }
+
+            Type t = from;
             while (t != null
-                        && t != @base
+                        && t != to
                         && depth < MATCH_GROUP_SIZE)
             {
                 depth++;
