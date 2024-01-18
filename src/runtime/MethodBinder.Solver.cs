@@ -364,7 +364,12 @@ namespace Python.Runtime
                 return true;
             }
 
-            public uint AssignArguments(ref ArgProvider prov)
+            public void AssignArguments(ref ArgProvider prov)
+            {
+                ExtractArguments(ref prov, computeDist: false);
+            }
+
+            public uint AssignArgumentsEx(ref ArgProvider prov)
             {
                 uint distance = 0;
 
@@ -392,12 +397,12 @@ namespace Python.Runtime
                 Debug.WriteLine($"{Method} -> {distance}");
 #endif
 
-                distance += ExtractArguments(ref prov);
+                distance += ExtractArguments(ref prov, computeDist: true);
 
                 return distance;
             }
 
-            uint ExtractArguments(ref ArgProvider prov)
+            uint ExtractArguments(ref ArgProvider prov, bool computeDist)
             {
                 uint distance = 0;
 
@@ -447,8 +452,12 @@ namespace Python.Runtime
                                 slot.Value = value;
                             }
 
-                            slot.Distance = GetDistance(ref prov, item, slot);
-                            distance += slot.Distance;
+                            if (computeDist)
+                            {
+                                slot.Distance =
+                                    GetDistance(ref prov, item, slot);
+                                distance += slot.Distance;
+                            }
 
                             continue;
                         }
@@ -483,7 +492,7 @@ namespace Python.Runtime
 
                                         // compute distance on first arg
                                         // that is being captured by params []
-                                        if (ai == argidx)
+                                        if (computeDist && ai == argidx)
                                         {
                                             slot.Distance =
                                                 GetDistance(ref prov, item, slot);
@@ -518,9 +527,13 @@ namespace Python.Runtime
                             if (item != null)
                             {
                                 slot.Value = new PyObject(item);
-                                slot.Distance =
-                                    GetDistance(ref prov, item, slot);
-                                distance += slot.Distance;
+
+                                if (computeDist)
+                                {
+                                    slot.Distance =
+                                        GetDistance(ref prov, item, slot);
+                                    distance += slot.Distance;
+                                }
 
                                 argidx++;
                                 continue;
@@ -622,6 +635,13 @@ namespace Python.Runtime
                 return false;
             }
 
+            if (count == 1)
+            {
+                spec = specs[0];
+                spec!.AssignArgumentsEx(ref prov);
+                return true;
+            }
+
             uint ambigCount = 0;
             MethodBase?[] ambigMethods = new MethodBase?[count];
             uint closest = uint.MaxValue;
@@ -629,7 +649,7 @@ namespace Python.Runtime
             {
                 BindSpec mspec = specs[sidx]!;
 
-                uint distance = mspec!.AssignArguments(ref prov);
+                uint distance = mspec!.AssignArgumentsEx(ref prov);
 
                 // NOTE:
                 // if method has the exact same distance,
