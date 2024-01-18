@@ -546,14 +546,14 @@ namespace Python.Runtime
                     // Only methods where the left operand is the declaring type.
                     if (forwardMethods.Length > 0)
                     {
-                        var fmo = new MethodObject(type, name, forwardMethods) { skipTypeErrors = true };
+                        var fmo = new MethodObject(type, name, forwardMethods) { SkipTypeErrors = true };
                         ci.members[pyName] = fmo.AllocObject();
 
                     }
                     // Only methods where only the right operand is the declaring type.
                     if (reverseMethods.Length > 0)
                     {
-                        var rmo = new MethodObject(type, name, reverseMethods) { skipTypeErrors = true };
+                        var rmo = new MethodObject(type, name, reverseMethods) { SkipTypeErrors = true };
                         ci.members[pyNameReverse] = rmo.AllocObject();
                     }
                 }

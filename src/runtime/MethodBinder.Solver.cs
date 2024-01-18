@@ -134,6 +134,28 @@ namespace Python.Runtime
                 return clrType;
 #endif
             }
+
+            static HashSet<string> GetKeys(BorrowedReference kwargs)
+            {
+                var keys = new HashSet<string>();
+                if (kwargs == null)
+                {
+                    return keys;
+                }
+
+                using NewReference keyList = Runtime.PyDict_Keys(kwargs);
+                using NewReference valueList = Runtime.PyDict_Values(kwargs);
+                for (int i = 0; i < Runtime.PyDict_Size(kwargs); ++i)
+                {
+                    string keyStr = Runtime.GetManagedString(
+                            Runtime.PyList_GetItem(keyList.Borrow(), i)
+                        )!;
+
+                    keys.Add(keyStr);
+                }
+
+                return keys;
+            }
         }
 
         private enum BindParamKind
@@ -286,25 +308,25 @@ namespace Python.Runtime
                 method.GetCustomAttribute<RedirectedMethod>() != null;
 
             public readonly MethodBase Method;
+            public readonly BindParam[] Parameters;
             public readonly uint Required;
             public readonly uint Optional;
             public readonly uint Returns;
             public readonly bool Expands;
-            public readonly BindParam[] Parameters;
 
             public BindSpec(MethodBase method,
+                            ref BindParam[] argSpecs,
                             uint required,
                             uint optional,
                             uint returns,
-                            bool expands,
-                            BindParam[] argSpecs)
+                            bool expands)
             {
                 Method = method;
+                Parameters = argSpecs;
                 Required = required;
                 Optional = optional;
                 Returns = returns;
                 Expands = expands;
-                Parameters = argSpecs;
             }
 
             public bool TryGetArguments(object? instance,
@@ -412,8 +434,8 @@ namespace Python.Runtime
 
                 for (uint i = 0; i < Parameters.Length; i++)
                 {
-                    BindParam slot = Parameters[i];
-                    if (slot is null)
+                    BindParam param = Parameters[i];
+                    if (param is null)
                     {
                         break;
                     }
@@ -424,7 +446,7 @@ namespace Python.Runtime
                     // value of self if provided on invoke
                     // since this is the instance the bound
                     // method is being invoked on. lets skip.
-                    if (slot.Kind == BindParamKind.Self)
+                    if (param.Kind == BindParamKind.Self)
                     {
                         continue;
                     }
@@ -434,7 +456,7 @@ namespace Python.Runtime
                     // lets capture that and compute distance.
                     if (checkKwargs)
                     {
-                        item = prov.GetKWArg(slot.Key);
+                        item = prov.GetKWArg(param.Key);
                         if (item != null)
                         {
                             PyObject value = new(item);
@@ -443,20 +465,20 @@ namespace Python.Runtime
                             // if this param is a capturing params[], expect
                             // a tuple or a list as value for this parameter.
                             // e.g. From python calling .Foo(paramsArray=[])
-                            if (slot.Kind == BindParamKind.Params)
+                            if (param.Kind == BindParamKind.Params)
                             {
-                                slot.Value = new PyObject[] { value };
+                                param.Value = new PyObject[] { value };
                             }
                             else
                             {
-                                slot.Value = value;
+                                param.Value = value;
                             }
 
                             if (computeDist)
                             {
-                                slot.Distance =
-                                    GetDistance(ref prov, item, slot);
-                                distance += slot.Distance;
+                                param.Distance =
+                                    GetDistance(ref prov, item, param);
+                                distance += param.Distance;
                             }
 
                             continue;
@@ -475,7 +497,7 @@ namespace Python.Runtime
                         // list of args for this capturing array.
                         // compute distance based on type of the first arg.
                         // this is always the last param in this loop.
-                        if (slot.Kind == BindParamKind.Params)
+                        if (param.Kind == BindParamKind.Params)
                         {
                             // if there are remaining args, capture them
                             if (argidx < prov.ArgsCount)
@@ -494,9 +516,9 @@ namespace Python.Runtime
                                         // that is being captured by params []
                                         if (computeDist && ai == argidx)
                                         {
-                                            slot.Distance =
-                                                GetDistance(ref prov, item, slot);
-                                            distance += slot.Distance;
+                                            param.Distance =
+                                                GetDistance(ref prov, item, param);
+                                            distance += param.Distance;
                                         }
 
                                         argidx++;
@@ -504,7 +526,7 @@ namespace Python.Runtime
                                     }
                                 }
 
-                                slot.Value = values;
+                                param.Value = values;
                             }
 
                             // if args are already processsed, compute
@@ -526,13 +548,13 @@ namespace Python.Runtime
                             item = prov.GetArg(argidx);
                             if (item != null)
                             {
-                                slot.Value = new PyObject(item);
+                                param.Value = new PyObject(item);
 
                                 if (computeDist)
                                 {
-                                    slot.Distance =
-                                        GetDistance(ref prov, item, slot);
-                                    distance += slot.Distance;
+                                    param.Distance =
+                                        GetDistance(ref prov, item, param);
+                                    distance += param.Distance;
                                 }
 
                                 argidx++;
@@ -541,7 +563,7 @@ namespace Python.Runtime
                         }
                     }
 
-                    if (slot.Kind == BindParamKind.Default)
+                    if (param.Kind == BindParamKind.Default)
                     {
                         distance += ARG_GROUP_SIZE;
                     }
@@ -638,7 +660,7 @@ namespace Python.Runtime
             if (count == 1)
             {
                 spec = specs[0];
-                spec!.AssignArgumentsEx(ref prov);
+                spec!.AssignArguments(ref prov);
                 return true;
             }
 
@@ -821,19 +843,19 @@ namespace Python.Runtime
 
             ParameterInfo[] mparams = method.GetParameters();
 
+            BindParam[] argSpecs;
             uint required = 0;
             uint optional = 0;
             uint returns = 0;
             bool expands = false;
-            bool isOperator = IsOperatorMethod(method)
-                                && prov.GivenArgs == mparams.Length - 1;
-            BindParam[] argSpecs;
 
-            if (isOperator)
+            if (OperatorMethod.IsOperatorMethod(method) is bool isOperator
+                    && isOperator)
             {
-                bool isReverse = isOperator && IsReverse(method);
+                bool isReverse = isOperator
+                              && OperatorMethod.IsReverse(method);
 
-                if (isReverse && IsComparisonOp(method))
+                if (isReverse && OperatorMethod.IsComparisonOp(method))
                 {
                     return false;
                 }
@@ -879,7 +901,7 @@ namespace Python.Runtime
 
             if (mparams.Length > 0)
             {
-                uint kwargCount = (uint)prov.Keys.Count;
+                uint kwargCount = prov.KWargsCount;
                 uint length = (uint)mparams.Length;
                 uint last = length - 1;
 
@@ -887,7 +909,7 @@ namespace Python.Runtime
                 // this means method can accept parameters
                 // beyond what is required.
                 expands =
-                    Attribute.IsDefined(mparams[mparams.Length - 1],
+                    Attribute.IsDefined(mparams[last],
                                         typeof(ParamArrayAttribute));
 
                 argSpecs = new BindParam[length];
@@ -896,9 +918,7 @@ namespace Python.Runtime
                 {
                     ParameterInfo param = mparams[i];
 
-                    string key = param.Name;
-
-                    if (prov.Keys.Contains(key))
+                    if (prov.Keys.Contains(param.Name))
                     {
                         // if any of kwarg names is an `out` param,
                         // this method is not a match
@@ -996,63 +1016,41 @@ namespace Python.Runtime
 
         matched:
             spec = new BindSpec(method,
+                                ref argSpecs,
                                 required,
                                 optional,
                                 returns,
-                                expands,
-                                argSpecs);
+                                expands);
             return true;
         }
 
-        static HashSet<string> GetKeys(BorrowedReference kwargs)
-        {
-            var keys = new HashSet<string>();
-            if (kwargs == null)
-            {
-                return keys;
-            }
-
-            using NewReference keyList = Runtime.PyDict_Keys(kwargs);
-            using NewReference valueList = Runtime.PyDict_Values(kwargs);
-            for (int i = 0; i < Runtime.PyDict_Size(kwargs); ++i)
-            {
-                string keyStr = Runtime.GetManagedString(
-                        Runtime.PyList_GetItem(keyList.Borrow(), i)
-                    )!;
-
-                keys.Add(keyStr);
-            }
-
-            return keys;
-        }
-
         #region Distance Compute Logic
-        static Dictionary<(TypeCode, TypeCode), uint> s_builtinDistMap =
+        static readonly Dictionary<int, uint> s_primDistMap =
             new()
             {
-                [(TypeCode.UInt64, TypeCode.UInt64)] = 0,
-                [(TypeCode.UInt64, TypeCode.Int64)] = 1,
-                [(TypeCode.UInt64, TypeCode.UInt32)] = 2,
-                [(TypeCode.UInt64, TypeCode.Int32)] = 3,
-                [(TypeCode.UInt64, TypeCode.UInt16)] = 4,
-                [(TypeCode.UInt64, TypeCode.Int16)] = 5,
-                [(TypeCode.UInt64, TypeCode.Double)] = 6,
-                [(TypeCode.UInt64, TypeCode.Single)] = 7,
-                [(TypeCode.UInt64, TypeCode.Decimal)] = 7,
-                [(TypeCode.UInt64, TypeCode.Object)] = uint.MaxValue - 1,
-                [(TypeCode.UInt64, TypeCode.DateTime)] = uint.MaxValue,
+                [ComputeKey(TypeCode.UInt64, TypeCode.UInt64)] = 0,
+                [ComputeKey(TypeCode.UInt64, TypeCode.Int64)] = 1,
+                [ComputeKey(TypeCode.UInt64, TypeCode.UInt32)] = 2,
+                [ComputeKey(TypeCode.UInt64, TypeCode.Int32)] = 3,
+                [ComputeKey(TypeCode.UInt64, TypeCode.UInt16)] = 4,
+                [ComputeKey(TypeCode.UInt64, TypeCode.Int16)] = 5,
+                [ComputeKey(TypeCode.UInt64, TypeCode.Double)] = 6,
+                [ComputeKey(TypeCode.UInt64, TypeCode.Single)] = 7,
+                [ComputeKey(TypeCode.UInt64, TypeCode.Decimal)] = 7,
+                [ComputeKey(TypeCode.UInt64, TypeCode.Object)] = uint.MaxValue - 1,
+                [ComputeKey(TypeCode.UInt64, TypeCode.DateTime)] = uint.MaxValue,
 
-                [(TypeCode.UInt32, TypeCode.UInt32)] = 0,
-                [(TypeCode.UInt32, TypeCode.Int32)] = 1,
-                [(TypeCode.UInt32, TypeCode.UInt16)] = 2,
-                [(TypeCode.UInt32, TypeCode.Int16)] = 3,
+                [ComputeKey(TypeCode.UInt32, TypeCode.UInt32)] = 0,
+                [ComputeKey(TypeCode.UInt32, TypeCode.Int32)] = 1,
+                [ComputeKey(TypeCode.UInt32, TypeCode.UInt16)] = 2,
+                [ComputeKey(TypeCode.UInt32, TypeCode.Int16)] = 3,
 
-                [(TypeCode.UInt16, TypeCode.UInt16)] = 0,
-                [(TypeCode.UInt16, TypeCode.Int16)] = 1,
+                [ComputeKey(TypeCode.UInt16, TypeCode.UInt16)] = 0,
+                [ComputeKey(TypeCode.UInt16, TypeCode.Int16)] = 1,
 
-                [(TypeCode.Int64, TypeCode.Int64)] = 0,
-                [(TypeCode.Int32, TypeCode.Int32)] = 0,
-                [(TypeCode.Int16, TypeCode.Int16)] = 0,
+                [ComputeKey(TypeCode.Int64, TypeCode.Int64)] = 0,
+                [ComputeKey(TypeCode.Int32, TypeCode.Int32)] = 0,
+                [ComputeKey(TypeCode.Int16, TypeCode.Int16)] = 0,
             };
 
 #if METHODBINDER_SOLVER_NEW_CACHE_DIST
@@ -1067,13 +1065,11 @@ namespace Python.Runtime
 
         static readonly uint TOTAL_MAX_DIST = uint.MaxValue;
         static readonly uint FUNC_GROUP_SIZE = TOTAL_MAX_DIST / 4;
-        static readonly uint ARGS_MAX_DIST = FUNC_GROUP_SIZE;
         static readonly uint ARG_GROUP_SIZE = FUNC_GROUP_SIZE / MAX_ARGS;
         static readonly uint ARG_MAX_DIST = ARG_GROUP_SIZE;
         static readonly uint TYPE_GROUP_SIZE = ARG_GROUP_SIZE / 4;
         static readonly uint MATCH_GROUP_SIZE = TYPE_GROUP_SIZE / 4;
         static readonly uint MATCH_MAX_DIST = MATCH_GROUP_SIZE;
-        static readonly uint CONVERT_MATCH_THRESHOLD = MATCH_GROUP_SIZE * 3;
 
         // NOTE:
         // this method computes a distance between the given python arg
@@ -1223,13 +1219,23 @@ namespace Python.Runtime
         // 0 <= x < MATCH_MAX_DIST
         static uint GetConvertTypeDistance(Type from, Type to)
         {
-            if (TryGetPrecedence(from, out uint fromPrec)
-                && TryGetPrecedence(to, out uint toPrec))
+            int key = ComputeKey(Type.GetTypeCode(from),
+                                 Type.GetTypeCode(to));
+
+            if (!s_primDistMap.TryGetValue(key, out uint dist))
             {
-                return (uint)Math.Abs((int)toPrec - (int)fromPrec);
+                if (TryGetPrecedence(from, out uint fromPrec)
+                    && TryGetPrecedence(to, out uint toPrec))
+                {
+                    dist = (uint)Math.Abs((int)toPrec - (int)fromPrec);
+                }
+            }
+            else
+            {
+                dist = MATCH_MAX_DIST;
             }
 
-            return MATCH_MAX_DIST;
+            return dist;
         }
 
         static bool TryGetPrecedence(Type of, out uint predecence)
@@ -1345,6 +1351,17 @@ namespace Python.Runtime
                 return hash;
             }
         }
-        #endregion
+
+        static int ComputeKey(TypeCode from, TypeCode to)
+        {
+            unchecked
+            {
+                int hash = 17;
+                hash = hash * 23 + (int)from;
+                hash = hash * 23 + (int)to;
+                return hash;
+            }
+        }
+#endregion
     }
 }

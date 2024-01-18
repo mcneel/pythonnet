@@ -20,14 +20,12 @@ namespace Python.Runtime
     [Serializable]
     internal class MethodObject : ExtensionType
     {
-        [NonSerialized]
-        private MethodBase[]? _info = null;
         private readonly List<MaybeMethodInfo> infoList;
         internal string name;
         internal readonly MethodBinder binder;
         internal bool is_static = false;
 
-        internal bool skipTypeErrors = false;
+        internal bool SkipTypeErrors = false;
 
         internal PyString? doc;
         internal MaybeType type;
@@ -47,7 +45,7 @@ namespace Python.Runtime
                     this.is_static = true;
                 }
             }
-            binder.allow_threads = allow_threads;
+            binder.AllowThreads = allow_threads;
         }
 
         public MethodObject(MaybeType type, string name, MethodBase[] info)
@@ -58,7 +56,7 @@ namespace Python.Runtime
         public bool IsInstanceConstructor => name == "__init__";
 
         public MethodObject WithOverloads(MethodBase[] overloads)
-            => new(type, name, overloads, allow_threads: binder.allow_threads);
+            => new(type, name, overloads, allow_threads: binder.AllowThreads);
 
         public bool TryInvoke(BorrowedReference inst, BorrowedReference args, BorrowedReference kw, out NewReference result)
         {
@@ -84,7 +82,7 @@ namespace Python.Runtime
 
         public NewReference Invoke(BorrowedReference inst, BorrowedReference args, BorrowedReference kw)
         {
-            if (skipTypeErrors)
+            if (SkipTypeErrors)
             {
                 TryInvoke(inst, args, kw, out NewReference result);
                 return result;
@@ -97,7 +95,7 @@ namespace Python.Runtime
 
         public NewReference Invoke(BorrowedReference target, BorrowedReference args, BorrowedReference kw, MethodBase? info)
         {
-            if (skipTypeErrors)
+            if (SkipTypeErrors)
             {
                 TryInvoke(target, args, kw, out NewReference result);
                 return result;
