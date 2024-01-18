@@ -306,6 +306,8 @@ namespace Python.Runtime
                     string.Empty
                   : PythonException.TracebackToString(pyEx.Traceback);
 
+                _message = ParseMessage(pyEx);
+
                 // NOTE:
                 // assumes the first line in traceback is pointing to a line
                 // in the executing script.
@@ -353,7 +355,7 @@ namespace Python.Runtime
                 }
                 else
                 {
-                    m = s_msgParser.Match(Message);
+                    m = s_msgParser.Match(_message);
                     if (m.Success
                             && int.TryParse(m.Groups["line"].Value, out line))
                     {
@@ -362,12 +364,11 @@ namespace Python.Runtime
                     }
                 }
 
-                _message = ParseMessage(pyEx);
                 _pyStackTrace = pyEx.Traceback is null ? string.Empty : string.Join(
                     Environment.NewLine,
                     "Traceback (most recent call last):",
                     traceback,
-                    $"{pyEx.Type.Name}: {Message}"
+                    $"{pyEx.Type.Name}: {_message}"
                 );
             }
 
@@ -375,8 +376,15 @@ namespace Python.Runtime
 
             static string ParseMessage(PythonException pyEx)
             {
+                if (string.IsNullOrEmpty(pyEx.Message))
+                {
+                    return string.Empty;
+                }
+
                 if (pyEx.Message.Equals("None", StringComparison.InvariantCultureIgnoreCase))
+                {
                     return $"{pyEx.Type.Name} exception";
+                }
 
                 return pyEx.Message;
             }
