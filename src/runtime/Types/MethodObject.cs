@@ -60,9 +60,9 @@ namespace Python.Runtime
         public MethodObject WithOverloads(MethodBase[] overloads)
             => new(type, name, overloads, allow_threads: binder.allow_threads);
 
-        public virtual bool TryInvoke(BorrowedReference inst, BorrowedReference args, BorrowedReference kw, out NewReference result)
+        public bool TryInvoke(BorrowedReference inst, BorrowedReference args, BorrowedReference kw, out NewReference result)
         {
-            result = Invoke(inst, args, kw);
+            result = InvokeMethod(inst, args, kw, null);
 
             // NOTE:
             // (in)equality checks in dotnet have typed arguments.
@@ -73,7 +73,7 @@ namespace Python.Runtime
             if (Exceptions.ExceptionMatches(Exceptions.TypeError))
             {
                 Exceptions.Clear();
-                result = new NewReference(Runtime.PyNone);
+                result = new NewReference(Runtime.PyFalse);
                 return false;
             }
             else
@@ -82,7 +82,7 @@ namespace Python.Runtime
             }
         }
 
-        public virtual NewReference Invoke(BorrowedReference inst, BorrowedReference args, BorrowedReference kw)
+        public NewReference Invoke(BorrowedReference inst, BorrowedReference args, BorrowedReference kw)
         {
             if (skipTypeErrors)
             {
@@ -91,11 +91,24 @@ namespace Python.Runtime
             }
             else
             {
-                return Invoke(inst, args, kw, null);
+                return InvokeMethod(inst, args, kw, null);
             }
         }
 
-        public virtual NewReference Invoke(BorrowedReference target, BorrowedReference args, BorrowedReference kw, MethodBase? info)
+        public NewReference Invoke(BorrowedReference target, BorrowedReference args, BorrowedReference kw, MethodBase? info)
+        {
+            if (skipTypeErrors)
+            {
+                TryInvoke(target, args, kw, out NewReference result);
+                return result;
+            }
+            else
+            {
+                return InvokeMethod(target, args, kw, info);
+            }
+        }
+
+        NewReference InvokeMethod(BorrowedReference target, BorrowedReference args, BorrowedReference kw, MethodBase? info)
         {
             // NOTE: do nothing on struct default ctor
             // do nothing and return 'void' when runtime is attempting

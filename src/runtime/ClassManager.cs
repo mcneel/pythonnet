@@ -545,10 +545,17 @@ namespace Python.Runtime
                     OperatorMethod.FilterMethods(mlist, out var forwardMethods, out var reverseMethods);
                     // Only methods where the left operand is the declaring type.
                     if (forwardMethods.Length > 0)
-                        ci.members[pyName] = new MethodObject(type, name, forwardMethods).AllocObject();
+                    {
+                        var fmo = new MethodObject(type, name, forwardMethods) { skipTypeErrors = true };
+                        ci.members[pyName] = fmo.AllocObject();
+
+                    }
                     // Only methods where only the right operand is the declaring type.
                     if (reverseMethods.Length > 0)
-                        ci.members[pyNameReverse] = new MethodObject(type, name, reverseMethods).AllocObject();
+                    {
+                        var rmo = new MethodObject(type, name, reverseMethods) { skipTypeErrors = true };
+                        ci.members[pyNameReverse] = rmo.AllocObject();
+                    }
                 }
             }
 
