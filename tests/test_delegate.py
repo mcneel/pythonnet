@@ -6,6 +6,7 @@ import Python.Test as Test
 import System
 import pytest
 from Python.Test import DelegateTest, StringDelegate
+import clr
 
 from .utils import HelloClass, hello_func, MultipleHandler, DictProxyType
 
@@ -300,6 +301,11 @@ def test_out_int_delegate():
     result = ob.CallOutIntDelegate(d)
     assert result == 5
 
+    outint = clr.Reference[int]()
+    result = ob.CallOutIntDelegate(d, outint)
+    assert result is None
+    assert outint.Value == 5
+
     def invalid_handler():
         return '5'
 
@@ -322,6 +328,11 @@ def test_out_string_delegate():
     ob = DelegateTest()
     result = ob.CallOutStringDelegate(d)
     assert result == 'hello'
+
+    outstr = clr.Reference[str]()
+    result = ob.CallOutStringDelegate(d, outstr)
+    assert result is None
+    assert outstr.Value == 'hello'
 
 def test_ref_int_delegate():
     """Test delegate with a ref string parameter."""

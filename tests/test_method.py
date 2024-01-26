@@ -5,6 +5,8 @@
 import System
 import pytest
 from Python.Test import MethodTest
+import clr
+
 
 def test_instance_method_overwritable():
     """Test instance method overwriting."""
@@ -273,6 +275,12 @@ def test_string_out_params():
     assert result[0] is True
     assert result[1] == "output string"
 
+    outstr = clr.Reference[str]()
+    result = MethodTest.TestStringOutParams("hi", outstr)
+    assert isinstance(result, bool)
+    assert result is True
+    assert outstr.Value == "output string"
+
 
 def test_string_out_params_without_passing_string_value():
     """Test use of string out-parameters."""
@@ -286,6 +294,8 @@ def test_string_out_params_without_passing_string_value():
 
 def test_string_ref_params():
     """Test use of string byref parameters."""
+    import time
+    # time.sleep(10)
     result = MethodTest.TestStringRefParams("hi", "there")
     assert isinstance(result, tuple)
     assert len(result) == 2
@@ -306,6 +316,17 @@ def test_value_out_params():
     assert len(result) == 2
     assert result[0] is True
     assert result[1] == 42
+
+    outint = clr.Reference[int]()
+    result = MethodTest.TestValueOutParams("hi", outint)
+    assert isinstance(result, bool)
+    assert result is True
+    assert outint.Value == 42
+
+    # StrongBox of incompatible type can not be used
+    outstr = clr.Reference[str]()
+    with pytest.raises(TypeError):
+        MethodTest.TestValueOutParams("hi", outstr)
 
 
 def test_value_out_params_without_passing_string_value():
@@ -339,6 +360,12 @@ def test_object_out_params():
     assert result[0] is True
     assert isinstance(result[1], System.Exception)
 
+    outobj = clr.Reference[object]()
+    result = MethodTest.TestObjectOutParams("hi", outobj)
+    assert isinstance(result, bool)
+    assert result is True
+    assert isinstance(outobj.Value, System.Exception)
+
 
 def test_object_ref_params():
     """Test use of object byref parameters."""
@@ -363,6 +390,12 @@ def test_struct_out_params():
     assert result[0] is True
     assert isinstance(result[1], System.Guid)
 
+    outguid = clr.Reference[System.Guid]()
+    result = MethodTest.TestStructOutParams("hi", outguid)
+    assert isinstance(result, bool)
+    assert result is True
+    assert isinstance(outguid.Value, System.Guid)
+
 
 def test_struct_ref_params():
     """Test use of struct byref parameters."""
@@ -381,6 +414,11 @@ def test_void_single_out_param():
     """Test void method with single out-parameter."""
     result = MethodTest.TestVoidSingleOutParam()
     assert result == 42
+
+    outint = clr.Reference[int]()
+    result = MethodTest.TestVoidSingleOutParam(outint)
+    assert result is None
+    assert outint.Value == 42
 
     # None cannot be converted to a value type
     with pytest.raises(TypeError):
@@ -436,12 +474,24 @@ def test_explicit_selection_with_out_modifier():
     assert result[0] is True
     assert result[1] == "output string"
 
+    outstr = clr.Reference[str]()
+    result = MethodTest.TestExplicitOutParams.__overloads__[str, refstr]("hi", outstr)
+    assert isinstance(result, bool)
+    assert result is True
+    assert outstr.Value == "output string"
+
     refint = System.Int32(0).GetType().MakeByRefType()
     result = MethodTest.TestExplicitOutParams.__overloads__[str, refint]("hi")
     assert isinstance(result, tuple)
     assert len(result) == 2
     assert result[0] is True
     assert result[1] == 42
+
+    outint = clr.Reference[int]()
+    result = MethodTest.TestExplicitOutParams.__overloads__[str, refint]("hi", outint)
+    assert isinstance(result, bool)
+    assert result is True
+    assert outint.Value == 42
 
 
 def test_explicit_selection_with_ref_modifier():

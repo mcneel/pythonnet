@@ -8,6 +8,16 @@ using System.Diagnostics;
 
 namespace Python.Runtime
 {
+    public sealed class StrongBox<T>
+    {
+        public T? Value { get; set; }
+
+        public StrongBox()
+        {
+            Value = default;
+        }
+    }
+
     /*
     ┌── INPUT ARGS/KWARGS
     │
@@ -175,9 +185,29 @@ namespace Python.Runtime
             public readonly string Key;
             public readonly Type Type;
 
-            public object? Value { get; set; } = default;
+            object? _value = default;
+            public object? Value
+            {
+                get => _value;
+                set
+                {
+                    _value = value;
+
+                    if (_value is null)
+                    {
+                        return;
+                    }
+
+                    if (_value is PyObject pyObj)
+                    {
+                        IsBoxed = IsBoxedValue(pyObj);
+                    }
+                }
+            }
 
             public uint Distance { get; set; } = uint.MaxValue;
+
+            public bool IsBoxed { get; set; } = false;
 
             public BindParam(ParameterInfo paramInfo, BindParamKind kind)
             {
@@ -235,6 +265,13 @@ namespace Python.Runtime
                     return true;
                 }
 
+                if (IsBoxed)
+                {
+                    PyObject box = (PyObject)v;
+                    PyObject boxed = box!.GetAttr("Value");
+                    return TryGetManagedValue(boxed, Type, out value);
+                }
+
                 if (Kind == BindParamKind.Params)
                 {
                     PyObject[] values = (PyObject[])v;
@@ -277,6 +314,23 @@ namespace Python.Runtime
                 }
 
                 return TryGetManagedValue((PyObject)v, Type, out value);
+            }
+
+            static bool IsBoxedValue(PyObject value)
+            {
+                Type? opType = GetCLRType(value);
+                if (opType == null)
+                {
+                    return false;
+                }
+
+                if (opType.IsGenericType
+                        && opType.GetGenericTypeDefinition() == typeof(StrongBox<>))
+                {
+                    return true;
+                }
+
+                return false;
             }
 
             static object? GetDefaultValue(ParameterInfo paramInfo)
@@ -927,13 +981,6 @@ namespace Python.Runtime
 
                     if (prov.Keys.Contains(param.Name))
                     {
-                        // if any of kwarg names is an `out` param,
-                        // this method is not a match
-                        if (param.IsOut)
-                        {
-                            goto not_matched;
-                        }
-
                         kwargCount--;
                     }
 
@@ -949,6 +996,14 @@ namespace Python.Runtime
                             new BindParam(param, BindParamKind.Return);
 
                         returns++;
+                    }
+                    else if (param.ParameterType.IsByRef)
+                    {
+                        argSpecs[i] =
+                            new BindParam(param, BindParamKind.Return);
+
+                        returns++;
+                        required++;
                     }
                     // `.IsOptional` will be true if the parameter has
                     // a default value, or if the parameter has the `[Optional]`
@@ -970,12 +1025,8 @@ namespace Python.Runtime
                     // otherwise this is a required parameter
                     else
                     {
-                        BindParamKind kind = param.ParameterType.IsByRef ?
-                            BindParamKind.Return
-                          : BindParamKind.Default;
-
                         argSpecs[i] =
-                            new BindParam(param, kind);
+                            new BindParam(param, BindParamKind.Default);
 
                         required++;
                     }
@@ -1008,7 +1059,8 @@ namespace Python.Runtime
             }
 
             else if (required < prov.GivenArgs
-                        && (prov.GivenArgs <= (required + optional) || expands))
+                        && (prov.GivenArgs <= (required + optional + returns)
+                                || expands))
             {
                 goto matched;
             }

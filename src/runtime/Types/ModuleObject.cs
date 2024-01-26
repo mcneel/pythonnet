@@ -216,6 +216,12 @@ namespace Python.Runtime
 
             while (type != null)
             {
+                // FIXME:
+                // In this implementation, support for module-level generic
+                // functions have been added primarily to support the
+                // ClrModule.Reference<T>(). It has not been tested beyond that.
+                var genericMethods = new Dictionary<string, List<MethodInfo>>();
+
                 MethodInfo[] methods = type.GetMethods(ModuleMethodFlags);
                 foreach (MethodInfo method in methods)
                 {
@@ -225,10 +231,36 @@ namespace Python.Runtime
                     if (attrs.Length > 0)
                     {
                         string name = method.Name;
-                        var mi = new MethodInfo[1];
-                        mi[0] = method;
+
+                        if (method.IsGenericMethod)
+                        {
+                            if (!genericMethods.TryGetValue(name, out var methodList))
+                            {
+                                methodList = genericMethods[name] = new List<MethodInfo>();
+                            }
+                            methodList.Add(method);
+                            continue;
+                        }
+
+                        var mi = new MethodInfo[] { method };
                         using var m = new ModuleFunctionObject(type, name, mi, allow_threads).Alloc();
                         StoreAttribute(name, m.Borrow());
+                    }
+                }
+
+                if (genericMethods.Any())
+                {
+                    BorrowedReference tp = TypeManager.GetTypeReference(type);
+
+                    foreach (var iter in genericMethods)
+                    {
+                        string name = iter.Key;
+                        // Lets return a method binding that supports mp_subscript
+                        // over the generic module function
+                        MethodInfo[] mi = iter.Value.ToArray();
+                        var m = new ModuleFunctionObject(type, name, mi, true);
+                        using var mb = new MethodBinding(m, null, new PyType(tp)).Alloc();
+                        StoreAttribute(name, mb.Borrow());
                     }
                 }
 

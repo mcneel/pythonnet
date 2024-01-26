@@ -455,20 +455,21 @@ namespace Python.Runtime
                         PythonEngine.EndAllowThreads(threadState);
                     }
 
-                    // If there are out parameters, we return a tuple containing
-                    // the result (if not void), followed by the out parameters.
-                    // If there is only one out parameter and the return type of
-                    // the method is void, we return the out parameter as the result
-                    // to Python (for code compatibility with ironpython).
-                    int returnParams = spec.Parameters.Where(p => p.Kind == BindParamKind.Return).Count();
-                    if (returnParams > 0)
+                    if (spec.Returns > 0)
                     {
+                        // If there are out parameters, we return a tuple containing
+                        // the result (if not void), followed by the out parameters.
+                        // If there is only one out parameter and the return type of
+                        // the method is void, we return the out parameter as the result
+                        // to Python (for code compatibility with ironpython).
+                        int boxedReturns = spec.Parameters.Where(p => p.IsBoxed).Count();
                         var tupleIndex = 0;
-                        int tupleSize = returnParams + (isVoid ? 0 : 1);
+                        int tupleSize = (int)spec.Returns - boxedReturns + (isVoid ? 0 : 1);
                         using var tuple = Runtime.PyTuple_New(tupleSize);
 
                         if (!isVoid)
                         {
+                            // tupleSize must be >= 1 here
                             using var v = Converter.ToPython(result, resultType);
                             Runtime.PyTuple_SetItem(tuple.Borrow(), tupleIndex, v.Steal());
                             tupleIndex++;
@@ -485,11 +486,26 @@ namespace Python.Runtime
 
                             object? value = bindArgs[i];
                             using var v = Converter.ToPython(value, param.Type.GetElementType());
-                            Runtime.PyTuple_SetItem(tuple.Borrow(), tupleIndex, v.Steal());
-                            tupleIndex++;
+
+                            if (param.IsBoxed)
+                            {
+                                if (param.Value is PyObject box)
+                                {
+                                    box.SetAttr("Value", new PyObject(v.Steal()));
+                                }
+                            }
+                            else if (tupleSize > 0)
+                            {
+                                Runtime.PyTuple_SetItem(tuple.Borrow(), tupleIndex, v.Steal());
+                                tupleIndex++;
+                            }
                         }
 
-                        if (tupleSize == 1)
+                        if (tupleSize == 0)
+                        {
+                            return Converter.ToPython(result, resultType);
+                        }
+                        else if (tupleSize == 1)
                         {
                             BorrowedReference item = Runtime.PyTuple_GetItem(tuple.Borrow(), 0);
                             return new NewReference(item);
@@ -499,8 +515,10 @@ namespace Python.Runtime
                             return new NewReference(tuple.Borrow());
                         }
                     }
-
-                    return Converter.ToPython(result, resultType);
+                    else
+                    {
+                        return Converter.ToPython(result, resultType);
+                    }
                 }
                 catch (Exception e)
                 {

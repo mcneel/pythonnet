@@ -147,6 +147,9 @@ namespace Python.Runtime
         }
 
         [ModuleFunction]
+        public static StrongBox<T> Reference<T>() => new StrongBox<T>();
+
+        [ModuleFunction]
         [ForbidPythonThreads]
         public static string FindAssembly(string name)
         {

@@ -139,6 +139,13 @@ namespace Python.Runtime
             if (op == Runtime.PyBoolType)
                 return boolType;
 
+            // NOTE:
+            // this allows using python `object` as a generic argument for
+            // generic functions, types, and their members.
+            // e.g. clr.Reference[object]()
+            if (op == Runtime.PyBaseObjectType)
+                return objectType;
+
             return null;
         }
 

@@ -4,6 +4,7 @@
 
 import Python.Test as Test
 import pytest
+import clr
 
 from .utils import DictProxyType
 
@@ -91,6 +92,11 @@ def test_interface_object_returned_through_out_param():
     hello2 = ob.GetISayHello2()
     assert type(hello2).__name__ == 'ISayHello2'
 
+    outhello2 = clr.Reference[Test.ISayHello2]()
+    result = ob.GetISayHello2(outhello2)
+    assert result is None
+    assert type(outhello2.Value).__name__ == 'ISayHello2'
+
     assert hello2.SayHello() == 'hello 2'
 
 def test_interface_out_param_python_impl():
@@ -116,6 +122,11 @@ def test_null_interface_object_returned():
     hello1, hello2 = ob.GetNoSayHello()
     assert hello1 is None
     assert hello2 is None
+
+    outhello2 = clr.Reference[Test.ISayHello2]()
+    hello1 = ob.GetNoSayHello(outhello2)
+    assert hello1 is None
+    assert outhello2.Value is None
 
 def test_interface_array_returned():
     """Test interface type used for methods returning interface arrays"""

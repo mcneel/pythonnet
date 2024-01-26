@@ -835,6 +835,10 @@ def before_reload():
     bar = TestNamespace.Cls.MyFn()
     assert bar.num == 9001
 
+    outbar = clr.Reference[TestNamespace.Data]()
+    result = TestNamespace.Cls.MyFn(outbar)
+    assert result is None
+    assert outbar.Value.num == 9001
 
 def after_reload():
 
@@ -918,6 +922,11 @@ def after_reload():
 
     bar = TestNamespace.Cls.MyFn()
     assert bar.num == 9001
+
+    outbar = clr.Reference[TestNamespace.Data]()
+    result = TestNamespace.Cls.MyFn(outbar)
+    assert result is None
+    assert outbar.Value.num == 9001
 ",
             },
             new TestCase
@@ -1173,6 +1182,7 @@ namespace CaseRunner
 
         public static int Main(string[] args)
         {
+            //System.Threading.Thread.Sleep(10000);
             if (args.Length < 1)
             {
                 foreach (var testCase in Cases)
