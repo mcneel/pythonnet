@@ -1,6 +1,4 @@
 using System;
-using System.Collections;
-using System.Collections.Generic;
 
 namespace Python.Runtime.Codecs
 {
@@ -13,7 +11,7 @@ namespace Python.Runtime.Codecs
 
         public override bool CanDecode(PyType objectType, Type targetType)
         {
-            return IsSequence(objectType) && IsEnumerable(targetType);
+            return IsSequence(objectType) && ThisIsAssignableTo(targetType);
         }
 
         public static SequenceDecoder Instance { get; } = new SequenceDecoder();

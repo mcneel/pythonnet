@@ -2,9 +2,9 @@
 #define METHODBINDER_SOLVER_NEW_CACHE_TYPE
 using System;
 using System.Reflection;
-using System.Diagnostics;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 
 namespace Python.Runtime
 {
@@ -261,11 +261,15 @@ namespace Python.Runtime
                         if (TryGetManagedValue(values[i], Type, out object? p))
                         {
                             parray.SetValue(p, i);
+                            continue;
                         }
-                        else
-                        {
-                            parray.SetValue(GetDefaultValue(_param), i);
-                        }
+
+                        value = default;
+                        return false;
+                        //else
+                        //{
+                        //    parray.SetValue(GetDefaultValue(_param), i);
+                        //}
                     }
 
                     value = parray;
@@ -563,6 +567,9 @@ namespace Python.Runtime
                         }
                     }
 
+                    // NOTE:
+                    // if parameter does not have a match,
+                    // lets increase the distance
                     if (param.Kind == BindParamKind.Default)
                     {
                         distance += ARG_GROUP_SIZE;
@@ -660,7 +667,7 @@ namespace Python.Runtime
             if (count == 1)
             {
                 spec = specs[0];
-                spec!.AssignArguments(ref prov);
+                var d = spec!.AssignArgumentsEx(ref prov);
                 return true;
             }
 
@@ -1068,6 +1075,7 @@ namespace Python.Runtime
         static readonly uint ARG_GROUP_SIZE = FUNC_GROUP_SIZE / MAX_ARGS;
         static readonly uint ARG_MAX_DIST = ARG_GROUP_SIZE;
         static readonly uint TYPE_GROUP_SIZE = ARG_GROUP_SIZE / 4;
+        static readonly uint TYPE_MAX_DIST = TYPE_GROUP_SIZE;
         static readonly uint MATCH_GROUP_SIZE = TYPE_GROUP_SIZE / 4;
         static readonly uint MATCH_MAX_DIST = MATCH_GROUP_SIZE;
 
@@ -1079,31 +1087,33 @@ namespace Python.Runtime
         // max distance for these and let the arg converter attempt
         // to convert the type to the expected type later.
         static uint GetDistance(ref ArgProvider prov,
-                                BorrowedReference from, BindParam to)
+                                BorrowedReference arg, BindParam param)
         {
-            Type toType = to.Type;
+            Type toType = param.Type;
 
-            if (to.Kind == BindParamKind.Params
-                    && Runtime.PySequence_Check(from))
+            if (param.Kind == BindParamKind.Params
+                    && Runtime.PySequence_Check(arg))
             {
-                uint argsCount = (uint)Runtime.PySequence_Size(from);
+                uint argsCount = (uint)Runtime.PySequence_Size(arg);
                 if (argsCount > 0)
                 {
-                    using var iterObj = Runtime.PyObject_GetIter(from);
+                    using var iterObj = Runtime.PyObject_GetIter(arg);
                     using var item = Runtime.PyIter_Next(iterObj.Borrow());
                     if (!item.IsNull()
                             && prov.GetCLRType(item.Borrow()) is Type argType)
                     {
-                        return GetTypeDistance(argType, toType);
+                        return GetDistance(arg, argType, toType);
                     }
                 }
             }
-            else if (prov.GetCLRType(from) is Type argType)
+
+            else if (prov.GetCLRType(arg) is Type argType)
             {
-                return GetTypeDistance(argType, toType);
+                return GetDistance(arg, argType, toType);
             }
-            else if (from == null
-                        || Runtime.None == from
+
+            else if (arg == null
+                        || Runtime.None == arg
                         || toType == typeof(object)
                         || toType == typeof(PyObject))
             {
@@ -1113,7 +1123,8 @@ namespace Python.Runtime
             return ARG_MAX_DIST;
         }
 
-        static uint GetTypeDistance(Type from, Type to)
+        // 0 <= x < ARG_MAX_DIST
+        static uint GetDistance(BorrowedReference arg, Type from, Type to)
         {
 #if METHODBINDER_SOLVER_NEW_CACHE_DIST
             int key = ComputeKey(from, to);
@@ -1155,9 +1166,9 @@ namespace Python.Runtime
 
             // derived match
             distance += MATCH_GROUP_SIZE;
-            if (to.IsAssignableFrom(from))
+            if (TryGetDerivedTypeDistance(from, to, out uint derivedDistance))
             {
-                distance += GetDerivedTypeDistance(from, to);
+                distance += derivedDistance;
                 goto computed;
             }
 
@@ -1170,7 +1181,18 @@ namespace Python.Runtime
 
             // convert/cast match
             distance += MATCH_GROUP_SIZE;
-            distance += GetConvertTypeDistance(from, to);
+            if (TryGetCastTypeDistance(from, to, out uint castDistance))
+            {
+                distance += castDistance;
+            }
+            else if (TryGetManagedValue(arg, to, out object? _, setError: false))
+            {
+                distance += MATCH_MAX_DIST - 1;
+            }
+            else
+            {
+                distance += MATCH_MAX_DIST;
+            }
 
         computed:
 #if METHODBINDER_SOLVER_NEW_CACHE_DIST
@@ -1182,8 +1204,15 @@ namespace Python.Runtime
         // zero when types are equal.
         // assumes derived is assignable to @base
         // 0 <= x < MATCH_MAX_DIST
-        static uint GetDerivedTypeDistance(Type from, Type to)
+        static bool TryGetDerivedTypeDistance(Type from, Type to, out uint distance)
         {
+            distance = default;
+
+            if (!to.IsAssignableFrom(from))
+            {
+                return false;
+            }
+
             uint depth = 0;
 
             if (from.IsInterface)
@@ -1200,42 +1229,51 @@ namespace Python.Runtime
                     }
                 }
 
-                return depth;
+                distance = depth;
+                return true;
             }
 
             Type t = from;
             while (t != null
-                        && t != to
-                        && depth < MATCH_MAX_DIST)
+                    && t != to
+                    && depth < MATCH_MAX_DIST)
             {
                 depth++;
                 t = t.BaseType;
             }
 
-            return depth;
+            distance = depth;
+            return true;
         }
 
         // zero when types are equal.
         // 0 <= x < MATCH_MAX_DIST
-        static uint GetConvertTypeDistance(Type from, Type to)
+        static bool TryGetCastTypeDistance(Type from, Type to, out uint distance)
         {
-            int key = ComputeKey(Type.GetTypeCode(from),
-                                 Type.GetTypeCode(to));
+            distance = default;
 
-            if (!s_primDistMap.TryGetValue(key, out uint dist))
+            TypeCode fromCode = Type.GetTypeCode(from);
+            TypeCode toCode = Type.GetTypeCode(to);
+
+            if (fromCode > TypeCode.DBNull
+                    || toCode > TypeCode.DBNull)
             {
-                if (TryGetPrecedence(from, out uint fromPrec)
-                    && TryGetPrecedence(to, out uint toPrec))
+                int key = ComputeKey(fromCode, toCode);
+
+                if (s_primDistMap.TryGetValue(key, out distance))
                 {
-                    dist = (uint)Math.Abs((int)toPrec - (int)fromPrec);
+                    return true;
+                }
+
+                if (TryGetPrecedence(from, out uint fromPrec)
+                        && TryGetPrecedence(to, out uint toPrec))
+                {
+                    distance = (uint)Math.Abs((int)toPrec - (int)fromPrec);
+                    return true;
                 }
             }
-            else
-            {
-                dist = MATCH_MAX_DIST;
-            }
 
-            return dist;
+            return false;
         }
 
         static bool TryGetPrecedence(Type of, out uint predecence)
@@ -1362,6 +1400,6 @@ namespace Python.Runtime
                 return hash;
             }
         }
-#endregion
+        #endregion
     }
 }

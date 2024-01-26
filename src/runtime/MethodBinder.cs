@@ -568,7 +568,7 @@ namespace Python.Runtime
             }
         }
 
-        static bool TryGetManagedValue(BorrowedReference op, out object? value)
+        static bool TryGetManagedValue(BorrowedReference op, out object? value, bool setError = true)
         {
             value = default;
 
@@ -578,10 +578,10 @@ namespace Python.Runtime
                 return false;
             }
 
-            return Converter.ToManaged(op, clrType, out value, true);
+            return Converter.ToManaged(op, clrType, out value, setError);
         }
 
-        static bool TryGetManagedValue(BorrowedReference op, Type type, out object? value)
+        static bool TryGetManagedValue(BorrowedReference op, Type type, out object? value, bool setError = true)
         {
             value = default;
 
@@ -591,7 +591,7 @@ namespace Python.Runtime
                 return false;
             }
 
-            return Converter.ToManaged(op, clrType, out value, true);
+            return Converter.ToManaged(op, clrType, out value, setError);
         }
 
         static Type? GetCLRType(BorrowedReference op)

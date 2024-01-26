@@ -1,7 +1,4 @@
 using System;
-using System.Collections;
-using System.Collections.Generic;
-using System.Linq;
 
 namespace Python.Runtime.Codecs
 {
@@ -24,7 +21,7 @@ namespace Python.Runtime.Codecs
 
         public override bool CanDecode(PyType objectType, Type targetType)
         {
-            return IsList(objectType) && IsEnumerable(targetType);
+            return IsList(objectType) && ThisIsAssignableTo(targetType);
         }
 
         public static ListDecoder Instance { get; } = new ListDecoder();

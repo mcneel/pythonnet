@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 
 namespace Python.Runtime.Codecs
@@ -12,7 +13,7 @@ namespace Python.Runtime.Codecs
 
         public override bool CanDecode(PyType objectType, Type targetType)
         {
-            return IsIterable(objectType) && IsEnumerable(targetType);
+            return IsIterable(objectType) && ThisIsAssignableTo(targetType);
         }
 
         public static IterableDecoder Instance { get; } = new IterableDecoder();

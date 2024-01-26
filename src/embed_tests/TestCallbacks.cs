@@ -24,8 +24,7 @@ namespace Python.EmbeddingTest {
                 using var pyFunc = aFunctionThatCallsIntoPython.ToPython();
                 var error =  Assert.Throws<PythonException>(() => callWith42(pyFunc));
                 Assert.AreEqual("TypeError", error.Type.Name);
-                string expectedArgTypes = "(<class 'list'>)";
-                StringAssert.EndsWith(expectedArgTypes, error.Message);
+                StringAssert.Contains("an integer is required", error.Message);
                 error.Traceback.Dispose();
             }
         }

@@ -1,52 +1,36 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Python.Runtime.Codecs
 {
     public abstract class CollectionDecoder : IPyObjectDecoder
     {
-        protected static Type s_enumerType = typeof(IEnumerable);
-        protected static Type s_enumerTypeT = typeof(IEnumerable<>);
+        protected Type m_collectionType;
 
-        protected Type GenericCollectionType;
-
-        protected CollectionDecoder(Type genericCollectionType)
+        protected CollectionDecoder(Type collectionType)
         {
-            GenericCollectionType = genericCollectionType;
+            m_collectionType = collectionType;
         }
 
-        protected static bool IsEnumerable(Type targetType)
+        protected bool ThisIsAssignableTo(Type to)
         {
-            if (targetType == s_enumerType
-                    || targetType == s_enumerTypeT)
-            {
-                return true;
-            }
-
             // NOTE:
-            // a type is a sequence if it implements either
-            // IEnumerable or IEnumerable<>
-            // but typeof(IEnumerable<>).IsAssignableFrom() can not be used,
-            // since the generic type is unknown.
-            // .GetGenericTypeDefinition() equality check does not work either
-            // in cases like targetType being of type IList<>:
-            // targetType.GetGenericTypeDefinition() == typeof(IEnumerable<>)
-            // and
-            // typeof(IEnumerable<>).IsAssignableFrom(
-            //      targetType.GetGenericTypeDefinition()
-            // )
-            // both return false.
-            // so lets manually check the list of interfaces.
-            // .GetInterfaces() returns both direct or indirect interfaces. 
-            Type[] interfaces = targetType.GetInterfaces();
-            for (int i = 0; i < interfaces.Length; i++)
+            // Can not use these
+            // to.IsAssignableFrom(typeof(IEnumerable<>))
+            // to.GetGenericTypeDefinition() == typeof(IEnumerable<>)
+            // to.GetGenericTypeDefinition().IsAssignableFrom(typeof(IEnumerable<>))
+            // lets lookup and see if target type matches any of the interfaces
+            // implemented by the collection type, and therefore is assignable
+            // from generic collection type created in TryDecode<>
+            bool isGeneric = to.IsGenericType;
+            to = isGeneric ? to.GetGenericTypeDefinition() : to;
+            foreach (Type iface in m_collectionType.GetInterfaces())
             {
-                Type iface = interfaces[i];
-
-                if (iface == s_enumerType
+                if (iface == to
                         || (iface.IsGenericType
-                                && iface.GetGenericTypeDefinition() == s_enumerTypeT))
+                                && iface.GetGenericTypeDefinition() == to))
                 {
                     return true;
                 }
@@ -55,24 +39,24 @@ namespace Python.Runtime.Codecs
             return false;
         }
 
-        protected static bool IsSequence(PyType objectType)
+        protected static bool IsSequence(PyType pyType)
         {
             //must implement iterable protocol to fully implement sequence protocol
-            if (!IsIterable(objectType)) return false;
+            if (!IsIterable(pyType)) return false;
 
             //returns wheter it implements the sequence protocol
             //according to python doc this needs to exclude dict subclasses
             //but I don't know how to look for that given the objectType
             //rather than the instance.
-            return objectType.HasAttr("__getitem__");
+            return pyType.HasAttr("__getitem__");
         }
 
-        protected static bool IsIterable(PyType objectType)
+        protected static bool IsIterable(PyType pyType)
         {
-            return objectType.HasAttr("__iter__");
+            return pyType.HasAttr("__iter__");
         }
 
-        public abstract bool CanDecode(PyType objectType, Type targetType);
+        public abstract bool CanDecode(PyType pyType, Type type);
 
         public virtual bool TryDecode<T>(PyObject pyObj, out T value)
         {
@@ -91,7 +75,7 @@ namespace Python.Runtime.Codecs
                 elementType = typeof(object);
             }
 
-            Type collectionType = GenericCollectionType.MakeGenericType(elementType);
+            Type collectionType = m_collectionType.MakeGenericType(elementType);
 
             object instance = Activator.CreateInstance(collectionType, new[] { pyObj });
             value = (T)instance;

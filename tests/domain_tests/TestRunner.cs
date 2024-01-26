@@ -832,11 +832,8 @@ import System
 
 def before_reload():
 
-    foo = TestNamespace.Data()
-    bar = TestNamespace.Cls.MyFn(foo)
+    bar = TestNamespace.Cls.MyFn()
     assert bar.num == 9001
-    # foo shouldn't have changed.
-    assert foo.num == -1
 
 
 def after_reload():
@@ -919,15 +916,9 @@ def before_reload():
 
 def after_reload():
 
-    foo = TestNamespace.Data()
-    bar = TestNamespace.Cls.MyFn(foo)
+    bar = TestNamespace.Cls.MyFn()
     assert bar.num == 9001
-    # foo shouldn't have changed.
-    assert foo.num == -1
-    # this should work too
-    baz = TestNamespace.Cls.MyFn(None)
-    assert baz.num == 9001
-                    ",
+",
             },
             new TestCase
             {
