@@ -165,6 +165,7 @@ namespace Python.Runtime
                 "get_SuppressDocs",
                 "get_SuppressOverloads",
                 "GetClrType",
+                "StrongBox",
                 "Reference",
                 "getPreload",
                 "Initialize",

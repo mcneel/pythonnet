@@ -494,6 +494,36 @@ def test_explicit_selection_with_out_modifier():
     assert outint.Value == 42
 
 
+def test_implicit_selection_with_strongbox_out_modifier():
+    """Check explicit overload selection with out modifiers."""
+    outstr = clr.Reference[str]()
+    result = MethodTest.TestExplicitOutParams("hi", outstr)
+    assert isinstance(result, bool)
+    assert result is True
+    assert outstr.Value == "output string"
+
+    outint = clr.Reference[int]()
+    result = MethodTest.TestExplicitOutParams("hi", outint)
+    assert isinstance(result, bool)
+    assert result is True
+    assert outint.Value == 42
+
+
+def test_clr_reference_vs_strongbox_modifier():
+    """Check explicit overload selection with out modifiers."""
+    outstr = clr.Reference[str]()
+    result = MethodTest.TestExplicitOutParams("hi", outstr)
+    assert isinstance(result, bool)
+    assert result is True
+    assert outstr.Value == "output string"
+
+    outstr = clr.StrongBox[str]()
+    result = MethodTest.TestExplicitOutParams("hi", outstr)
+    assert isinstance(result, bool)
+    assert result is True
+    assert outstr.Value == "output string"
+
+
 def test_explicit_selection_with_ref_modifier():
     """Check explicit overload selection with ref modifiers."""
     refstr = System.String("").GetType().MakeByRefType()

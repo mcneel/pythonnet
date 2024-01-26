@@ -8,16 +8,6 @@ using System.Diagnostics;
 
 namespace Python.Runtime
 {
-    public sealed class StrongBox<T>
-    {
-        public T? Value { get; set; }
-
-        public StrongBox()
-        {
-            Value = default;
-        }
-    }
-
     /*
     ┌── INPUT ARGS/KWARGS
     │
@@ -180,6 +170,9 @@ namespace Python.Runtime
 
         private sealed class BindParam
         {
+            static readonly Type s_boxType =
+                typeof(System.Runtime.CompilerServices.StrongBox<>);
+
             readonly ParameterInfo _param;
 
             public readonly BindParamKind Kind = BindParamKind.Default;
@@ -216,7 +209,9 @@ namespace Python.Runtime
                 if (Kind == BindParamKind.BoxedReturn
                         && value is PyObject pyObj)
                 {
-                    if (IsBoxedValue(pyObj))
+                    if (IsBoxedValue(pyObj, out Type? maybeBoxType)
+                            && maybeBoxType is Type boxType
+                            && boxType.MakeByRefType().IsAssignableFrom(Type))
                     {
                         Value = value;
                         HasBox = true;
@@ -317,17 +312,20 @@ namespace Python.Runtime
                 return TryGetManagedValue((PyObject)v, Type, out value);
             }
 
-            static bool IsBoxedValue(PyObject value)
+            static bool IsBoxedValue(PyObject value, out Type? boxType)
             {
-                Type? opType = GetCLRType(value);
-                if (opType == null)
+                boxType = default;
+
+                Type? clrType = GetCLRType(value);
+                if (clrType == null)
                 {
                     return false;
                 }
 
-                if (opType.IsGenericType
-                        && opType.GetGenericTypeDefinition() == typeof(StrongBox<>))
+                if (clrType.IsGenericType
+                        && clrType.GetGenericTypeDefinition() == s_boxType)
                 {
+                    boxType = clrType.GetGenericArguments()[0];
                     return true;
                 }
 
