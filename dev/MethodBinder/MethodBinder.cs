@@ -64,6 +64,8 @@ namespace Python.Runtime
 
         public PyObject(BorrowedReference br) => Value = br.Value;
 
+        public PyObject GetAttr(string _) => Runtime.None;
+
         internal static PyObject? FromNullableReference(BorrowedReference br)
             => br.IsNull ? null : new PyObject(br);
 

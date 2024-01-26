@@ -1,4 +1,5 @@
 using System;
+using System.Numerics;
 
 using Python.Runtime;
 
@@ -22,6 +23,7 @@ namespace MethodBinder.Tests
         protected static readonly TargetTypeC C = new();
         protected static readonly TargetTypeD D = new();
         protected static readonly TargetTypeE E = new();
+        protected static readonly TargetTypeF F = new();
 
         protected static readonly object[] NoArgs = Array.Empty<object>();
         protected static readonly KeywordArgs NoKwargs = new();
@@ -357,16 +359,22 @@ namespace MethodBinder.Tests
             NewReference r = BINDER.Invoke(C, M, args, NoKwargs);
             Assert.That(r.Value, Is.EqualTo(t));
         }
+
+        [Test]
+        public void TestFooParam_X_OutSignatures()
+        {
+            // Foo(object _1, params int[] _2)
+            object[] args = new object[] { 0.0F };
+            Guid t = F.Foo(out Complex _, 0.0F);
+            NewReference r = BINDER.Invoke(F, M, args, NoKwargs);
+            Assert.That(r.Value, Is.EqualTo(t));
+        }
     }
 }
 
 
 /*
  * UNUSED GUIDS
-return new Guid("5755b4d6-a11d-11ee-8c90-0242ac120002");
-return new Guid("5755b5e4-a11d-11ee-8c90-0242ac120002");
-return new Guid("5755b6f2-a11d-11ee-8c90-0242ac120002");
-return new Guid("5755b800-a11d-11ee-8c90-0242ac120002");
 return new Guid("5755b90e-a11d-11ee-8c90-0242ac120002");
 return new Guid("5755ba1c-a11d-11ee-8c90-0242ac120002");
 return new Guid("5755bed6-a11d-11ee-8c90-0242ac120002");

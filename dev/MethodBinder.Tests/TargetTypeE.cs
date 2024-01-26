@@ -1,5 +1,6 @@
 #pragma warning disable CA1822
 using System;
+using System.Numerics;
 
 namespace MethodBinder.Tests
 {
