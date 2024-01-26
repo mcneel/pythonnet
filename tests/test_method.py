@@ -838,8 +838,13 @@ def test_no_object_in_param():
     with pytest.raises(TypeError):
         MethodTest.TestOverloadedNoObject("test")
 
-    with pytest.raises(TypeError):
-        MethodTest.TestOverloadedNoObject(5.5)
+    # float can be passed to int
+    res = MethodTest.TestOverloadedNoObject(5.5)
+    assert res == "Got int"
+
+    # float can be passed to double
+    res = MethodTest.TestOverloadedObject(5.5)
+    assert res == "Got double"
 
     # Ensure that the top-level error is TypeError even if the inner error is an OverflowError
     with pytest.raises(TypeError):

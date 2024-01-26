@@ -130,6 +130,11 @@ namespace Python.Test
             return "Got int";
         }
 
+        public static string TestOverloadedObject(double i)
+        {
+            return "Got double";
+        }
+
         public static string TestOverloadedObject(object o)
         {
             return "Got object";

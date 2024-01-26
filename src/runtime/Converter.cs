@@ -700,6 +700,13 @@ namespace Python.Runtime
 
                 case TypeCode.Int32:
                     {
+                        // lets allow sending python floats into dotnet integers
+                        if (Runtime.PyFloat_Check(value))
+                        {
+                            result = (int)Runtime.PyFloat_AsDouble(value);
+                            return true;
+                        }
+
                         // Python3 always use PyLong API
                         nint? num = Runtime.PyLong_AsSignedSize_t(value);
                         if (num is null)
