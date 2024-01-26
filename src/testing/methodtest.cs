@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using System.Runtime.InteropServices;
 
 namespace Python.Test
@@ -762,6 +763,31 @@ namespace Python.Test
         public static void PointerArray(int*[] array)
         {
 
+        }
+
+
+        public static int TryGetComplex(out Complex complex)
+        {
+            complex = default;
+            return 1;
+        }
+
+        public static int TryGetComplex(out Complex complex, double tolerance)
+        {
+            complex = default;
+            return 2;
+        }
+
+        public static int TryGetComplex(DateTime datetime, out Complex complex)
+        {
+            complex = default;
+            return 3;
+        }
+
+        public static int TryGetComplex(DateTime datetime, out Complex complex, double tolerance)
+        {
+            complex = default;
+            return 4;
         }
     }
 

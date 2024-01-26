@@ -462,7 +462,7 @@ namespace Python.Runtime
                         // If there is only one out parameter and the return type of
                         // the method is void, we return the out parameter as the result
                         // to Python (for code compatibility with ironpython).
-                        int boxedReturns = spec.Parameters.Where(p => p.IsBoxed).Count();
+                        int boxedReturns = spec.Parameters.Where(p => p.HasBox).Count();
                         var tupleIndex = 0;
                         int tupleSize = (int)spec.Returns - boxedReturns + (isVoid ? 0 : 1);
                         using var tuple = Runtime.PyTuple_New(tupleSize);
@@ -479,7 +479,8 @@ namespace Python.Runtime
                         {
                             BindParam param = spec.Parameters[i];
 
-                            if (param.Kind != BindParamKind.Return)
+                            if (param.Kind != BindParamKind.BoxedReturn
+                                    && param.Kind != BindParamKind.Return)
                             {
                                 continue;
                             }
@@ -487,7 +488,7 @@ namespace Python.Runtime
                             object? value = bindArgs[i];
                             using var v = Converter.ToPython(value, param.Type.GetElementType());
 
-                            if (param.IsBoxed)
+                            if (param.HasBox)
                             {
                                 if (param.Value is PyObject box)
                                 {

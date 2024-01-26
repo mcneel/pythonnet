@@ -173,6 +173,7 @@ namespace Python.Runtime
             Default,
             Option,
             Params,
+            BoxedReturn,
             Return,
             Self,
         }
@@ -185,29 +186,10 @@ namespace Python.Runtime
             public readonly string Key;
             public readonly Type Type;
 
-            object? _value = default;
-            public object? Value
-            {
-                get => _value;
-                set
-                {
-                    _value = value;
-
-                    if (_value is null)
-                    {
-                        return;
-                    }
-
-                    if (_value is PyObject pyObj)
-                    {
-                        IsBoxed = IsBoxedValue(pyObj);
-                    }
-                }
-            }
+            public object? Value { get; private set; } = default;
+            public bool HasBox { get; private set; } = false;
 
             public uint Distance { get; set; } = uint.MaxValue;
-
-            public bool IsBoxed { get; set; } = false;
 
             public BindParam(ParameterInfo paramInfo, BindParamKind kind)
             {
@@ -227,6 +209,25 @@ namespace Python.Runtime
                 {
                     Type = paramInfo.ParameterType;
                 }
+            }
+
+            public bool TryAssign(object? value)
+            {
+                if (Kind == BindParamKind.BoxedReturn
+                        && value is PyObject pyObj)
+                {
+                    if (IsBoxedValue(pyObj))
+                    {
+                        Value = value;
+                        HasBox = true;
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                Value = value;
+                return true;
             }
 
             public bool TryConvert(out object? value)
@@ -265,7 +266,7 @@ namespace Python.Runtime
                     return true;
                 }
 
-                if (IsBoxed)
+                if (Kind == BindParamKind.BoxedReturn)
                 {
                     PyObject box = (PyObject)v;
                     PyObject boxed = box!.GetAttr("Value");
@@ -444,14 +445,10 @@ namespace Python.Runtime
                 return true;
             }
 
-            public void AssignArguments(ref ArgProvider prov)
+            // 0 <= x <= TOTAL_MAX_DIST
+            public bool TryAssignArguments(ref ArgProvider prov, out uint distance)
             {
-                ExtractArguments(ref prov, computeDist: false);
-            }
-
-            public uint AssignArgumentsEx(ref ArgProvider prov)
-            {
-                uint distance = 0;
+                distance = 0;
 
                 if (Method.IsStatic)
                 {
@@ -473,22 +470,31 @@ namespace Python.Runtime
                                 (uint)Method.GetGenericArguments().Length);
                 }
 
+
+                if (TryExtractArguments(ref prov, out uint argdist))
+                {
+                    distance += argdist;
+
 #if UNIT_TEST_DEBUG
-                Debug.WriteLine($"{Method} -> {distance}");
+                    Debug.Print($"{Method} -> {distance}");
 #endif
-
-                distance += ExtractArguments(ref prov, computeDist: true);
-
-                return distance;
+                    return true;
+                }
+                else
+                {
+                    return false;
+                }
             }
 
-            uint ExtractArguments(ref ArgProvider prov, bool computeDist)
+            bool TryExtractArguments(ref ArgProvider prov, out uint distance)
             {
-                uint distance = 0;
+                distance = 0;
 
                 uint argidx = 0;
                 bool checkArgs = prov.ArgsCount > 0;
                 bool checkKwargs = prov.KWargsCount > 0;
+                uint pickedArgs = 0;
+                uint pickedKWArgs = 0;
 
                 for (uint i = 0; i < Parameters.Length; i++)
                 {
@@ -518,6 +524,7 @@ namespace Python.Runtime
                         if (item != null)
                         {
                             PyObject value = new(item);
+                            bool assigned;
 
                             // NOTE:
                             // if this param is a capturing params[], expect
@@ -525,21 +532,27 @@ namespace Python.Runtime
                             // e.g. From python calling .Foo(paramsArray=[])
                             if (param.Kind == BindParamKind.Params)
                             {
-                                param.Value = new PyObject[] { value };
+                                assigned =
+                                    param.TryAssign(new PyObject[] { value });
                             }
                             else
                             {
-                                param.Value = value;
+                                // NOTE:
+                                // if kwarg is being assigned to a BoxedReturn
+                                // parameter and value is not a box, returns false
+                                assigned =
+                                    param.TryAssign(value);
                             }
 
-                            if (computeDist)
+                            if (assigned)
                             {
                                 param.Distance =
                                     GetDistance(ref prov, item, param);
                                 distance += param.Distance;
-                            }
 
-                            continue;
+                                pickedKWArgs++;
+                                continue;
+                            }
                         }
                     }
 
@@ -572,19 +585,17 @@ namespace Python.Runtime
 
                                         // compute distance on first arg
                                         // that is being captured by params []
-                                        if (computeDist && ai == argidx)
-                                        {
-                                            param.Distance =
-                                                GetDistance(ref prov, item, param);
-                                            distance += param.Distance;
-                                        }
+                                        param.Distance =
+                                            GetDistance(ref prov, item, param);
+                                        distance += param.Distance;
 
                                         argidx++;
+                                        pickedArgs++;
                                         continue;
                                     }
                                 }
 
-                                param.Value = values;
+                                param.TryAssign(values);
                             }
 
                             // if args are already processsed, compute
@@ -606,31 +617,23 @@ namespace Python.Runtime
                             item = prov.GetArg(argidx);
                             if (item != null)
                             {
-                                param.Value = new PyObject(item);
-
-                                if (computeDist)
+                                if (param.TryAssign(new PyObject(item)))
                                 {
                                     param.Distance =
                                         GetDistance(ref prov, item, param);
                                     distance += param.Distance;
-                                }
 
-                                argidx++;
-                                continue;
+                                    argidx++;
+                                    pickedArgs++;
+                                    continue;
+                                }
                             }
                         }
                     }
-
-                    // NOTE:
-                    // if parameter does not have a match,
-                    // lets increase the distance
-                    if (param.Kind == BindParamKind.Default)
-                    {
-                        distance += ARG_GROUP_SIZE;
-                    }
                 }
 
-                return distance;
+                return pickedArgs == prov.ArgsCount
+                        && pickedKWArgs == prov.KWargsCount;
             }
         }
 
@@ -718,13 +721,6 @@ namespace Python.Runtime
                 return false;
             }
 
-            if (count == 1)
-            {
-                spec = specs[0];
-                var d = spec!.AssignArgumentsEx(ref prov);
-                return true;
-            }
-
             uint ambigCount = 0;
             MethodBase?[] ambigMethods = new MethodBase?[count];
             uint closest = uint.MaxValue;
@@ -732,7 +728,10 @@ namespace Python.Runtime
             {
                 BindSpec mspec = specs[sidx]!;
 
-                uint distance = mspec!.AssignArgumentsEx(ref prov);
+                if (!mspec.TryAssignArguments(ref prov, out uint distance))
+                {
+                    continue;
+                }
 
                 // NOTE:
                 // if method has the exact same distance,
@@ -740,8 +739,7 @@ namespace Python.Runtime
                 // method should be used. if can not automatically resolve
                 // the ambiguity, it will return an error with a list of
                 // ambiguous matches for the given args and kwargs.
-                if (distance == closest
-                        && distance != uint.MaxValue)
+                if (distance == closest)
                 {
                     // NOTE:
                     // if there is a redirected method with same distance,
@@ -869,6 +867,7 @@ namespace Python.Runtime
                     ambigMethods[ambigCount] = mspec!.Method;
                     ambigCount++;
                 }
+
                 else if (distance < closest)
                 {
                     ambigCount = 0;
@@ -993,14 +992,18 @@ namespace Python.Runtime
                             && param.GetCustomAttribute<InAttribute>() is null)
                     {
                         argSpecs[i] =
-                            new BindParam(param, BindParamKind.Return);
+                            new BindParam(param, BindParamKind.BoxedReturn);
 
                         returns++;
                     }
                     else if (param.ParameterType.IsByRef)
                     {
+                        BindParamKind kind = param.IsOut ?
+                                BindParamKind.BoxedReturn
+                              : BindParamKind.Return;
+
                         argSpecs[i] =
-                            new BindParam(param, BindParamKind.Return);
+                            new BindParam(param, kind);
 
                         returns++;
                         required++;
@@ -1175,7 +1178,7 @@ namespace Python.Runtime
             return ARG_MAX_DIST;
         }
 
-        // 0 <= x < ARG_MAX_DIST
+        // 0 <= x <= ARG_MAX_DIST
         static uint GetDistance(BorrowedReference arg, Type from, Type to)
         {
 #if METHODBINDER_SOLVER_NEW_CACHE_DIST
@@ -1243,7 +1246,7 @@ namespace Python.Runtime
             }
             else
             {
-                distance += MATCH_MAX_DIST;
+                distance = ARG_MAX_DIST;
             }
 
         computed:
@@ -1255,7 +1258,7 @@ namespace Python.Runtime
 
         // zero when types are equal.
         // assumes derived is assignable to @base
-        // 0 <= x < MATCH_MAX_DIST
+        // 0 <= x <= MATCH_MAX_DIST
         static bool TryGetDerivedTypeDistance(Type from, Type to, out uint distance)
         {
             distance = default;
@@ -1299,7 +1302,7 @@ namespace Python.Runtime
         }
 
         // zero when types are equal.
-        // 0 <= x < MATCH_MAX_DIST
+        // 0 <= x <= MATCH_MAX_DIST
         static bool TryGetCastTypeDistance(Type from, Type to, out uint distance)
         {
             distance = default;

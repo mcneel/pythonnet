@@ -420,7 +420,7 @@ def test_void_single_out_param():
     assert result is None
     assert outint.Value == 42
 
-    # None cannot be converted to a value type
+    # No overload can match given arguments
     with pytest.raises(TypeError):
         MethodTest.TestVoidSingleOutParam(None)
 
@@ -1307,3 +1307,57 @@ def test_method_call_implicit_conversion():
             min_value = t(t.MinValue)
             compare_to = min_value.CompareTo.__overloads__[t]
             assert compare_to(SomeNonFloat()) == -1
+
+
+def test_method_tryout_multiple_signatures():
+    from System import DateTime
+    from System.Numerics import Complex
+
+    outcomplex = clr.Reference[Complex]()
+    result = MethodTest.TryGetComplex(outcomplex)
+    assert result == 1
+    assert isinstance(outcomplex.Value, Complex)
+
+    result = MethodTest.TryGetComplex(0.1)
+    assert isinstance(result, tuple)
+    assert result[0] == 2
+    assert isinstance(result[1], Complex)
+
+    result = MethodTest.TryGetComplex(12)
+    assert isinstance(result, tuple)
+    assert result[0] == 2
+    assert isinstance(result[1], Complex)
+
+    outcomplex = clr.Reference[Complex]()
+    result = MethodTest.TryGetComplex(outcomplex, 12)
+    assert result == 2
+    assert isinstance(outcomplex.Value, Complex)
+
+    outcomplex = clr.Reference[Complex]()
+    result = MethodTest.TryGetComplex(outcomplex, 0.1)
+    assert result == 2
+    assert isinstance(outcomplex.Value, Complex)
+
+    result = MethodTest.TryGetComplex(DateTime.Now)
+    assert isinstance(result, tuple)
+    assert result[0] == 3
+    assert isinstance(result[1], Complex)
+
+    result = MethodTest.TryGetComplex(DateTime.Now, 12)
+    assert isinstance(result, tuple)
+    assert result[0] == 4
+    assert isinstance(result[1], Complex)
+
+    result = MethodTest.TryGetComplex(DateTime.Now, 0.1)
+    assert isinstance(result, tuple)
+    assert result[0] == 4
+    assert isinstance(result[1], Complex)
+
+    outcomplex = clr.Reference[Complex]()
+    result = MethodTest.TryGetComplex(DateTime.Now, outcomplex, 12)
+    assert result == 4
+    assert isinstance(outcomplex.Value, Complex)
+
+    result = MethodTest.TryGetComplex(DateTime.Now, outcomplex, 0.1)
+    assert result == 4
+    assert isinstance(outcomplex.Value, Complex)
