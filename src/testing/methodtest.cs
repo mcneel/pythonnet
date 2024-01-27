@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using System.Runtime.InteropServices;
 
 namespace Python.Test
@@ -130,6 +131,11 @@ namespace Python.Test
             return "Got int";
         }
 
+        public static string TestOverloadedObject(double i)
+        {
+            return "Got double";
+        }
+
         public static string TestOverloadedObject(object o)
         {
             return "Got object";
@@ -197,6 +203,30 @@ namespace Python.Test
             return true;
         }
 
+        public static bool TestExplicitOutParams(string s, out string s1)
+        {
+            s1 = "output string";
+            return true;
+        }
+
+        public static bool TestExplicitOutParams(string s, out int s1)
+        {
+            s1 = 42;
+            return true;
+        }
+
+        public static bool TestExplicitRefParams(string s, ref string s1)
+        {
+            s1 = s1 + "output string";
+            return true;
+        }
+
+        public static bool TestExplicitRefParams(string s, ref int s1)
+        {
+            s1 = s1 + 42;
+            return true;
+        }
+
         public static bool TestNonParamsArrayInLastPlace(int i1, int[] i2)
         {
             return false;
@@ -250,7 +280,7 @@ namespace Python.Test
 
         public static void TestVoidSingleRefParam(ref int i)
         {
-            i = 42;
+            i = i + 42;
         }
 
         public static int TestSingleDefaultParam(int i = 5)
@@ -733,6 +763,31 @@ namespace Python.Test
         public static void PointerArray(int*[] array)
         {
 
+        }
+
+
+        public static int TryGetComplex(out Complex complex)
+        {
+            complex = default;
+            return 1;
+        }
+
+        public static int TryGetComplex(out Complex complex, double tolerance)
+        {
+            complex = default;
+            return 2;
+        }
+
+        public static int TryGetComplex(DateTime datetime, out Complex complex)
+        {
+            complex = default;
+            return 3;
+        }
+
+        public static int TryGetComplex(DateTime datetime, out Complex complex, double tolerance)
+        {
+            complex = default;
+            return 4;
         }
     }
 

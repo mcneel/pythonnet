@@ -1,3 +1,6 @@
+#pragma warning disable IDE1006 // Naming style
+#pragma warning disable IDE0074 // Use compound assignment
+
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -17,17 +20,17 @@ namespace Python.Runtime
     [Serializable]
     internal class MethodObject : ExtensionType
     {
-        [NonSerialized]
-        private MethodBase[]? _info = null;
         private readonly List<MaybeMethodInfo> infoList;
         internal string name;
         internal readonly MethodBinder binder;
         internal bool is_static = false;
 
+        internal bool SkipTypeErrors = false;
+
         internal PyString? doc;
         internal MaybeType type;
 
-        public MethodObject(MaybeType type, string name, MethodBase[] info, bool allow_threads)
+        protected MethodObject(MaybeType type, string name, MethodBase[] info, bool allow_threads)
         {
             this.type = type;
             this.name = name;
@@ -42,7 +45,7 @@ namespace Python.Runtime
                     this.is_static = true;
                 }
             }
-            binder.allow_threads = allow_threads;
+            binder.AllowThreads = allow_threads;
         }
 
         public MethodObject(MaybeType type, string name, MethodBase[] info)
@@ -53,26 +56,57 @@ namespace Python.Runtime
         public bool IsInstanceConstructor => name == "__init__";
 
         public MethodObject WithOverloads(MethodBase[] overloads)
-            => new(type, name, overloads, allow_threads: binder.allow_threads);
+            => new(type, name, overloads, allow_threads: binder.AllowThreads);
 
-        internal MethodBase[] info
+        public bool TryInvoke(BorrowedReference inst, BorrowedReference args, BorrowedReference kw, out NewReference result)
         {
-            get
+            result = InvokeMethod(inst, args, kw, null);
+
+            // NOTE:
+            // (in)equality checks in dotnet have typed arguments.
+            // if case the type conversion failed from given arg to the
+            // type required by the equality checker, lets continue and
+            // use the default equality check. We will not clear any
+            // other error that is thrown from the invokation.
+            if (Exceptions.ExceptionMatches(Exceptions.TypeError))
             {
-                if (_info == null)
-                {
-                    _info = (from i in infoList where i.Valid select i.Value).ToArray();
-                }
-                return _info;
+                Exceptions.Clear();
+                result = new NewReference(Runtime.PyFalse);
+                return false;
+            }
+            else
+            {
+                return true;
             }
         }
 
-        public virtual NewReference Invoke(BorrowedReference inst, BorrowedReference args, BorrowedReference kw)
+        public NewReference Invoke(BorrowedReference inst, BorrowedReference args, BorrowedReference kw)
         {
-            return Invoke(inst, args, kw, null);
+            if (SkipTypeErrors)
+            {
+                TryInvoke(inst, args, kw, out NewReference result);
+                return result;
+            }
+            else
+            {
+                return InvokeMethod(inst, args, kw, null);
+            }
         }
 
-        public virtual NewReference Invoke(BorrowedReference target, BorrowedReference args, BorrowedReference kw, MethodBase? info)
+        public NewReference Invoke(BorrowedReference target, BorrowedReference args, BorrowedReference kw, MethodBase? info)
+        {
+            if (SkipTypeErrors)
+            {
+                TryInvoke(target, args, kw, out NewReference result);
+                return result;
+            }
+            else
+            {
+                return InvokeMethod(target, args, kw, info);
+            }
+        }
+
+        NewReference InvokeMethod(BorrowedReference target, BorrowedReference args, BorrowedReference kw, MethodBase? info)
         {
             // NOTE: do nothing on struct default ctor
             // do nothing and return 'void' when runtime is attempting
@@ -85,7 +119,7 @@ namespace Python.Runtime
                 return new NewReference(Runtime.PyNone);
             }
 
-            return binder.Invoke(target, args, kw, info, this.info);
+            return binder.Invoke(target, args, kw, info);
         }
 
         /// <summary>
@@ -124,13 +158,13 @@ namespace Python.Runtime
         internal NewReference GetName()
         {
             var names = new HashSet<string>(binder.GetMethods().Select(m => m.Name));
-            if (names.Count != 1) {
+            if (names.Count != 1)
+            {
                 Exceptions.SetError(Exceptions.AttributeError, "a method has no name");
                 return default;
             }
             return Runtime.PyString_FromString(names.First());
         }
-
 
         /// <summary>
         /// This is a little tricky: a class can actually have a static method

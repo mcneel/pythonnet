@@ -832,12 +832,13 @@ import System
 
 def before_reload():
 
-    foo = TestNamespace.Data()
-    bar = TestNamespace.Cls.MyFn(foo)
+    bar = TestNamespace.Cls.MyFn()
     assert bar.num == 9001
-    # foo shouldn't have changed.
-    assert foo.num == -1
 
+    outbar = clr.Reference[TestNamespace.Data]()
+    result = TestNamespace.Cls.MyFn(outbar)
+    assert result is None
+    assert outbar.Value.num == 9001
 
 def after_reload():
 
@@ -919,15 +920,14 @@ def before_reload():
 
 def after_reload():
 
-    foo = TestNamespace.Data()
-    bar = TestNamespace.Cls.MyFn(foo)
+    bar = TestNamespace.Cls.MyFn()
     assert bar.num == 9001
-    # foo shouldn't have changed.
-    assert foo.num == -1
-    # this should work too
-    baz = TestNamespace.Cls.MyFn(None)
-    assert baz.num == 9001
-                    ",
+
+    outbar = clr.Reference[TestNamespace.Data]()
+    result = TestNamespace.Cls.MyFn(outbar)
+    assert result is None
+    assert outbar.Value.num == 9001
+",
             },
             new TestCase
             {
@@ -1182,6 +1182,7 @@ namespace CaseRunner
 
         public static int Main(string[] args)
         {
+            //System.Threading.Thread.Sleep(10000);
             if (args.Length < 1)
             {
                 foreach (var testCase in Cases)

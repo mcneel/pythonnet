@@ -72,7 +72,7 @@ namespace Python.Runtime
 
         public static int MainManagedThreadId { get; private set; }
 
-        private static readonly List<PyObject> _pyRefs = new ();
+        private static readonly List<PyObject> _pyRefs = new();
 
         internal static Version PyVersion
         {
@@ -137,7 +137,7 @@ namespace Python.Runtime
                 BorrowedReference pyRun = PySys_GetObject(RunSysPropName);
                 if (pyRun != null)
                 {
-                    run = checked((int)PyLong_AsSignedSize_t(pyRun));
+                    run = checked((int)Delegates.PyLong_AsSignedSize_t(pyRun));
                 }
                 else
                 {
@@ -571,7 +571,7 @@ namespace Python.Runtime
                 if (mt is ClassBase b)
                 {
                     var _type = b.type;
-                    t = _type.Valid ?  _type.Value : null;
+                    t = _type.Valid ? _type.Value : null;
                 }
                 else if (mt is CLRObject ob)
                 {
@@ -1089,10 +1089,25 @@ namespace Python.Runtime
         }
 
 
+        internal static nint? PyLong_AsSignedSize_t(BorrowedReference value)
+        {
+            nint result = Delegates.PyLong_AsSignedSize_t(value);
+            if (result == -1 && Exceptions.ErrorOccurred())
+            {
+                return null;
+            }
+            return result;
+        }
 
-        internal static nuint PyLong_AsUnsignedSize_t(BorrowedReference value) => Delegates.PyLong_AsUnsignedSize_t(value);
-
-        internal static nint PyLong_AsSignedSize_t(BorrowedReference value) => Delegates.PyLong_AsSignedSize_t(value);
+        internal static nuint? PyLong_AsUnsignedSize_t(BorrowedReference value)
+        {
+            nuint result = Delegates.PyLong_AsUnsignedSize_t(value);
+            if (result == unchecked((nuint)(-1)) && Exceptions.ErrorOccurred())
+            {
+                return null;
+            }
+            return result;
+        }
 
         internal static long? PyLong_AsLongLong(BorrowedReference value)
         {
@@ -1265,7 +1280,7 @@ namespace Python.Runtime
 
         internal static NewReference PyString_FromString(string value)
         {
-            fixed(char* ptr = value)
+            fixed (char* ptr = value)
                 return Delegates.PyUnicode_DecodeUTF16(
                     (IntPtr)ptr,
                     value.Length * sizeof(Char),
@@ -1758,7 +1773,7 @@ namespace Python.Runtime
         internal static nint PyGC_Collect() => Delegates.PyGC_Collect();
         internal static void Py_CLEAR(BorrowedReference ob, int offset) => ReplaceReference(ob, offset, default);
         internal static void Py_CLEAR<T>(ref T? ob)
-            where T: PyObject
+            where T : PyObject
         {
             ob?.Dispose();
             ob = null;

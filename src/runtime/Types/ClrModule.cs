@@ -147,6 +147,14 @@ namespace Python.Runtime
         }
 
         [ModuleFunction]
+        public static System.Runtime.CompilerServices.StrongBox<T> StrongBox<T>()
+            => new System.Runtime.CompilerServices.StrongBox<T>();
+
+        [ModuleFunction]
+        public static System.Runtime.CompilerServices.StrongBox<T> Reference<T>()
+            => new System.Runtime.CompilerServices.StrongBox<T>();
+
+        [ModuleFunction]
         [ForbidPythonThreads]
         public static string FindAssembly(string name)
         {

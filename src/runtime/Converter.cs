@@ -19,29 +19,102 @@ namespace Python.Runtime
         {
         }
 
-        private static readonly Type objectType;
-        private static readonly Type stringType;
-        private static readonly Type singleType;
-        private static readonly Type doubleType;
-        private static readonly Type int16Type;
-        private static readonly Type int32Type;
-        private static readonly Type int64Type;
-        private static readonly Type boolType;
-        private static readonly Type typeType;
+        private static readonly Type typeType = typeof(Type);
+        private static readonly Type objectType = typeof(Object);
+        private static readonly Type boolType = typeof(Boolean);
+        private static readonly Type singleType = typeof(Single);
+        private static readonly Type doubleType = typeof(Double);
+        private static readonly Type int16Type = typeof(Int16);
+        private static readonly Type int32Type = typeof(Int32);
+        private static readonly Type int64Type = typeof(Int64);
+        private static readonly Type uint16Type = typeof(UInt16);
+        private static readonly Type uint32Type = typeof(UInt32);
+        private static readonly Type uint64Type = typeof(UInt64);
+        private static readonly Type stringType = typeof(String);
+        private static readonly Type listType = typeof(IList<object>);
+        private static readonly Type enumerType = typeof(IEnumerable<object>);
 
-        static Converter()
+        internal static Type? GetTypeByAlias(BorrowedReference pyType, BorrowedReference op)
         {
-            objectType = typeof(Object);
-            stringType = typeof(String);
-            int16Type = typeof(Int16);
-            int32Type = typeof(Int32);
-            int64Type = typeof(Int64);
-            singleType = typeof(Single);
-            doubleType = typeof(Double);
-            boolType = typeof(Boolean);
-            typeType = typeof(Type);
-        }
+            if (pyType == Runtime.PyStringType)
+            {
+                return stringType;
+            }
 
+            if (pyType == Runtime.PyUnicodeType)
+            {
+                return stringType;
+            }
+
+            if (pyType == Runtime.PyLongType)
+            {
+                nint? int32 = Runtime.PyLong_AsSignedSize_t(op);
+                if (int32 != null)
+                {
+                    if (int32 > UInt32.MaxValue)
+                    {
+                        return int64Type;
+                    }
+                    return int32Type;
+                }
+
+                nuint? uint32 = Runtime.PyLong_AsUnsignedSize_t(op);
+                if (uint32 != null)
+                {
+                    Exceptions.Clear();
+                    if (uint32 > UInt32.MaxValue)
+                    {
+                        return uint64Type;
+                    }
+                    return uint32Type;
+                }
+
+                long? int64 = Runtime.PyLong_AsLongLong(op);
+                if (int64 != null)
+                {
+                    Exceptions.Clear();
+                    return int64Type;
+                }
+
+                ulong? uint64 = Runtime.PyLong_AsUnsignedLongLong(op);
+                if (uint64 != null)
+                {
+                    Exceptions.Clear();
+                    return uint64Type;
+                }
+
+                Exceptions.Clear();
+                Exceptions.SetError(Exceptions.OverflowError, "value too large to convert");
+            }
+
+            if (pyType == Runtime.PyFloatType)
+            {
+                return doubleType;
+            }
+
+            if (pyType == Runtime.PyBoolType)
+            {
+                return boolType;
+            }
+
+            if (pyType == Runtime.PyListType)
+            {
+                return listType;
+            }
+
+            if (pyType == Runtime.PyTupleType)
+            {
+                return enumerType;
+            }
+
+            PyType t = PyType.FromNullableReference(pyType)!;
+            if (t.HasAttr("__iter__"))
+            {
+                return enumerType;
+            }
+
+            return null;
+        }
 
         /// <summary>
         /// Given a builtin Python type, return the corresponding CLR type.
@@ -66,6 +139,13 @@ namespace Python.Runtime
             if (op == Runtime.PyBoolType)
                 return boolType;
 
+            // NOTE:
+            // this allows using python `object` as a generic argument for
+            // generic functions, types, and their members.
+            // e.g. clr.Reference[object]()
+            if (op == Runtime.PyBaseObjectType)
+                return objectType;
+
             return null;
         }
 
@@ -74,13 +154,13 @@ namespace Python.Runtime
             if (op == stringType)
                 return Runtime.PyUnicodeType.Reference;
 
-            if (op == int16Type)
+            if (op == int16Type || op == uint16Type)
                 return Runtime.PyLongType.Reference;
 
-            if (op == int32Type)
+            if (op == int32Type || op == uint32Type)
                 return Runtime.PyLongType.Reference;
 
-            if (op == int64Type)
+            if (op == int64Type || op == uint64Type)
                 return Runtime.PyLongType.Reference;
 
             if (op == doubleType)
@@ -596,8 +676,8 @@ namespace Python.Runtime
 
         internal static int ToInt32(BorrowedReference value)
         {
-            nint num = Runtime.PyLong_AsSignedSize_t(value);
-            if (num == -1 && Exceptions.ErrorOccurred())
+            nint? num = Runtime.PyLong_AsSignedSize_t(value);
+            if (num is null)
             {
                 throw PythonException.ThrowLastAsClrException();
             }
@@ -634,9 +714,16 @@ namespace Python.Runtime
 
                 case TypeCode.Int32:
                     {
+                        // lets allow sending python floats into dotnet integers
+                        if (Runtime.PyFloat_Check(value))
+                        {
+                            result = (int)Runtime.PyFloat_AsDouble(value);
+                            return true;
+                        }
+
                         // Python3 always use PyLong API
-                        nint num = Runtime.PyLong_AsSignedSize_t(value);
-                        if (num == -1 && Exceptions.ErrorOccurred())
+                        nint? num = Runtime.PyLong_AsSignedSize_t(value);
+                        if (num is null)
                         {
                             goto convert_error;
                         }
@@ -678,8 +765,8 @@ namespace Python.Runtime
                             goto type_error;
                         }
 
-                        nint num = Runtime.PyLong_AsSignedSize_t(value);
-                        if (num == -1 && Exceptions.ErrorOccurred())
+                        nint? num = Runtime.PyLong_AsSignedSize_t(value);
+                        if (num is null)
                         {
                             goto convert_error;
                         }
@@ -704,8 +791,8 @@ namespace Python.Runtime
                             goto type_error;
                         }
 
-                        nint num = Runtime.PyLong_AsSignedSize_t(value);
-                        if (num == -1 && Exceptions.ErrorOccurred())
+                        nint? num = Runtime.PyLong_AsSignedSize_t(value);
+                        if (num is null)
                         {
                             goto convert_error;
                         }
@@ -739,8 +826,8 @@ namespace Python.Runtime
                             }
                             goto type_error;
                         }
-                        nint num = Runtime.PyLong_AsSignedSize_t(value);
-                        if (num == -1 && Exceptions.ErrorOccurred())
+                        nint? num = Runtime.PyLong_AsSignedSize_t(value);
+                        if (num is null)
                         {
                             goto convert_error;
                         }
@@ -754,8 +841,8 @@ namespace Python.Runtime
 
                 case TypeCode.Int16:
                     {
-                        nint num = Runtime.PyLong_AsSignedSize_t(value);
-                        if (num == -1 && Exceptions.ErrorOccurred())
+                        nint? num = Runtime.PyLong_AsSignedSize_t(value);
+                        if (num is null)
                         {
                             goto convert_error;
                         }
@@ -785,8 +872,8 @@ namespace Python.Runtime
                         }
                         else
                         {
-                            nint num = Runtime.PyLong_AsSignedSize_t(value);
-                            if (num == -1 && Exceptions.ErrorOccurred())
+                            nint? num = Runtime.PyLong_AsSignedSize_t(value);
+                            if (num is null)
                             {
                                 goto convert_error;
                             }
@@ -797,8 +884,8 @@ namespace Python.Runtime
 
                 case TypeCode.UInt16:
                     {
-                        nint num = Runtime.PyLong_AsSignedSize_t(value);
-                        if (num == -1 && Exceptions.ErrorOccurred())
+                        nint? num = Runtime.PyLong_AsSignedSize_t(value);
+                        if (num is null)
                         {
                             goto convert_error;
                         }
@@ -812,8 +899,8 @@ namespace Python.Runtime
 
                 case TypeCode.UInt32:
                     {
-                        nuint num = Runtime.PyLong_AsUnsignedSize_t(value);
-                        if (num == unchecked((nuint)(-1)) && Exceptions.ErrorOccurred())
+                        nuint? num = Runtime.PyLong_AsUnsignedSize_t(value);
+                        if (num is null)
                         {
                             goto convert_error;
                         }

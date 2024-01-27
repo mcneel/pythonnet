@@ -8,6 +8,7 @@ from Python.Test import EventTest, EventArgsTest
 from .utils import (CallableHandler, ClassMethodHandler, GenericHandler,
                     MultipleHandler, StaticMethodHandler, VarCallableHandler,
                     VariableArgsHandler)
+import clr
 
 
 def test_public_instance_event():
@@ -300,16 +301,20 @@ def test_out_function_handler():
     ob = EventTest()
 
     value = 10
-    def handler(ignored):
+    def handler():
         return value
 
     ob.OutIntEvent += handler
-    result = ob.OnOutIntEvent(55)
+    result = ob.OnOutIntEvent()
     assert result == value
+
+    outint = clr.Reference[int]()
+    ob.OnOutIntEvent(outint)
+    assert outint.Value == value
 
     ob.OutStringEvent += handler
     value = 'This is the event data'
-    result = ob.OnOutStringEvent('Hello')
+    result = ob.OnOutStringEvent()
     assert result == value
 
 def test_ref_function_handler():
