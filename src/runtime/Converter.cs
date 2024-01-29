@@ -381,8 +381,10 @@ namespace Python.Runtime
                 // allows extracting ModuleObject references from python scope by calling `scope.TryGet`
                 // e.g. this is used for getting clr namespace members for autocompletion.
                 // if this does not exist here `ArgumentException` is thrown in `default` case
-                case ModuleObject mo:
-                    result = mo;
+                // e.g. this is used to ensure pythonnet does not crash when clr.StrongBox[T]
+                // is passed as an input instead of creating an instance as clr.StrongBox[T]()
+                case ExtensionType et:
+                    result = et;
                     break;
 
                 case CLRObject co:
