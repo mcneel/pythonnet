@@ -1,10 +1,9 @@
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
-using System.Reflection;
-using System.Runtime.InteropServices;
 using System.Security;
+using System.Reflection;
+using System.Diagnostics;
+using System.Collections.Generic;
 
 using Python.Runtime.StateSerialization;
 
@@ -182,6 +181,7 @@ namespace Python.Runtime
                 impl = new InterfaceObject(type);
             }
 
+#pragma warning disable CS0618 // Type or member is obsolete. OK for internal use.
             else if (type == typeof(Exception) ||
                      type.IsSubclassOf(typeof(Exception)))
             {
@@ -191,12 +191,11 @@ namespace Python.Runtime
                     impl = new ExceptionClassObject(type);
             }
 
-#pragma warning disable CS0618 // Type or member is obsolete. OK for internal use.
             else if (PythonDerivedType.IsPythonDerivedType(type))
-#pragma warning restore CS0618 // Type or member is obsolete
             {
                 impl = new ClassDerivedObject(type);
             }
+#pragma warning restore CS0618 // Type or member is obsolete. OK for internal use.
 
             else
             {
@@ -546,10 +545,17 @@ namespace Python.Runtime
                     OperatorMethod.FilterMethods(mlist, out var forwardMethods, out var reverseMethods);
                     // Only methods where the left operand is the declaring type.
                     if (forwardMethods.Length > 0)
-                        ci.members[pyName] = new MethodObject(type, name, forwardMethods).AllocObject();
+                    {
+                        var fmo = new MethodObject(type, name, forwardMethods) { SkipTypeErrors = true };
+                        ci.members[pyName] = fmo.AllocObject();
+
+                    }
                     // Only methods where only the right operand is the declaring type.
                     if (reverseMethods.Length > 0)
-                        ci.members[pyNameReverse] = new MethodObject(type, name, reverseMethods).AllocObject();
+                    {
+                        var rmo = new MethodObject(type, name, reverseMethods) { SkipTypeErrors = true };
+                        ci.members[pyNameReverse] = rmo.AllocObject();
+                    }
                 }
             }
 

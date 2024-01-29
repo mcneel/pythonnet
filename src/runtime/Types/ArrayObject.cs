@@ -53,13 +53,14 @@ namespace Python.Runtime
             // create single dimensional array
             if (Runtime.PyInt_Check(op))
             {
-                dimensions[0] = Runtime.PyLong_AsSignedSize_t(op);
-                if (dimensions[0] == -1 && Exceptions.ErrorOccurred())
+                nint? num = Runtime.PyLong_AsSignedSize_t(op);
+                if (num is null)
                 {
                     Exceptions.Clear();
                 }
                 else
                 {
+                    dimensions[0] = (long)num!;
                     return NewInstance(arrType.GetElementType(), tp, dimensions);
                 }
             }
@@ -88,12 +89,14 @@ namespace Python.Runtime
                     return default;
                 }
 
-                dimensions[dimIndex] = Runtime.PyLong_AsSignedSize_t(dimObj);
-                if (dimensions[dimIndex] == -1 && Exceptions.ErrorOccurred())
+                nint? num = Runtime.PyLong_AsSignedSize_t(dimObj);
+                if (num is null)
                 {
                     Exceptions.RaiseTypeError("array constructor expects integer dimensions");
                     return default;
                 }
+
+                dimensions[dimIndex] = (long)num!;
             }
 
             return NewInstance(elementType, pyType, dimensions);
@@ -171,12 +174,14 @@ namespace Python.Runtime
                 {
                     return RaiseIndexMustBeIntegerError(idx);
                 }
-                index = Runtime.PyLong_AsSignedSize_t(idx);
 
-                if (index == -1 && Exceptions.ErrorOccurred())
+                nint? num = Runtime.PyLong_AsSignedSize_t(idx);
+                if (num is null)
                 {
                     return Exceptions.RaiseTypeError("invalid index value");
                 }
+
+                index = (long)num!;
 
                 if (index < 0)
                 {
@@ -213,13 +218,14 @@ namespace Python.Runtime
                 {
                     return RaiseIndexMustBeIntegerError(op);
                 }
-                index = Runtime.PyLong_AsSignedSize_t(op);
 
-                if (index == -1 && Exceptions.ErrorOccurred())
+                nint? num = Runtime.PyLong_AsSignedSize_t(op);
+                if (num is null)
                 {
                     return Exceptions.RaiseTypeError("invalid index value");
                 }
 
+                index = (long)num!;
                 long len = items.GetLongLength(dimension);
 
                 if (index < 0)
@@ -271,13 +277,15 @@ namespace Python.Runtime
                     RaiseIndexMustBeIntegerError(idx);
                     return -1;
                 }
-                index = Runtime.PyLong_AsSignedSize_t(idx);
 
-                if (index == -1 && Exceptions.ErrorOccurred())
+                nint? num = Runtime.PyLong_AsSignedSize_t(idx);
+                if (num is null)
                 {
                     Exceptions.RaiseTypeError("invalid index value");
                     return -1;
                 }
+
+                index = (long)num;
 
                 if (index < 0)
                 {
@@ -311,13 +319,15 @@ namespace Python.Runtime
                     RaiseIndexMustBeIntegerError(op);
                     return -1;
                 }
-                index = Runtime.PyLong_AsSignedSize_t(op);
 
-                if (index == -1 && Exceptions.ErrorOccurred())
+                nint? num = Runtime.PyLong_AsSignedSize_t(op);
+                if (num is null)
                 {
                     Exceptions.RaiseTypeError("invalid index value");
                     return -1;
                 }
+
+                index = (long)num!;
 
                 long len = items.GetLongLength(dimension);
 

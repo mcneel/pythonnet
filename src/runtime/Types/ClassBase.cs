@@ -110,7 +110,10 @@ namespace Python.Runtime
                 // Wrap the `other` argument of a binary comparison operator in a PyTuple.
                 using var args = Runtime.PyTuple_New(1);
                 Runtime.PyTuple_SetItem(args.Borrow(), 0, other);
-                return methodObject.Invoke(ob, args.Borrow(), null);
+                if (methodObject.TryInvoke(ob, args.Borrow(), null, out NewReference result))
+                {
+                    return result;
+                }
             }
 
             switch (op)

@@ -15,7 +15,7 @@ namespace Python.Runtime
     /// </summary>
     internal class DelegateManager
     {
-        private readonly Dictionary<Type,Type> cache = new();
+        private readonly Dictionary<Type, Type> cache = new();
         private readonly Type basetype = typeof(Dispatcher);
         private readonly Type arrayType = typeof(object[]);
         private readonly Type voidtype = typeof(void);
@@ -219,11 +219,20 @@ namespace Python.Runtime
             ParameterInfo[] pi = method.GetParameters();
             Type rtype = method.ReturnType;
 
+            int length = pi.Count(p => !p.IsOut);
+
             NewReference callResult;
-            using (var pyargs = Runtime.PyTuple_New(pi.Length))
+            using (var pyargs = Runtime.PyTuple_New(length))
             {
-                for (var i = 0; i < pi.Length; i++)
+                for (int i = 0; i < pi.Length; i++)
                 {
+                    ParameterInfo pinfo = pi[i];
+
+                    if (pinfo.IsOut)
+                    {
+                        continue;
+                    }
+
                     // Here we own the reference to the Python value, and we
                     // give the ownership to the arg tuple.
                     using var arg = Converter.ToPython(args[i], pi[i].ParameterType);

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <DefineConstants>$(DefineConstants);UNIT_TEST_DEBUG</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\src\runtime\MethodBinder.Solver.cs" />
+  </ItemGroup>
+
+</Project>

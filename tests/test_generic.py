@@ -29,8 +29,8 @@ def assert_generic_method_by_type(ptype, value, test_type=0):
     from Python.Test import GenericMethodTest, GenericStaticMethodTest
     import System
 
-    itype = GenericMethodTest[System.Type]
-    stype = GenericStaticMethodTest[System.Type]
+    itype = GenericMethodTest[ptype]
+    stype = GenericStaticMethodTest[ptype]
 
     # Explicit selection (static method)
     result = stype.Overloaded[ptype](value)
@@ -65,6 +65,9 @@ def assert_generic_method_by_type(ptype, value, test_type=0):
 
     atype = System.Array[ptype]
     items = atype([value, value, value])
+
+    itype = GenericMethodTest[atype]
+    stype = GenericStaticMethodTest[atype]
 
     # Explicit selection (static method)
     result = stype.Overloaded[atype](items)
@@ -315,51 +318,74 @@ def test_generic_method_type_handling():
     from Python.Test import InterfaceTest, ISayHello1, ShortEnum
     import System
 
-    # FIXME: Fails because Converter.GetTypeByAlias returns int32 for any integer, including ulong
-    # assert_generic_method_by_type(System.UInt64, 18446744073709551615)
     assert_generic_method_by_type(System.Boolean, True)
     assert_generic_method_by_type(bool, True)
+
     assert_generic_method_by_type(System.Byte, 255)
     assert_generic_method_by_type(System.SByte, 127)
     assert_generic_method_by_type(System.Char, u'A')
+
     assert_generic_method_by_type(System.Int16, 32767)
-    assert_generic_method_by_type(System.Int32, 2147483647)
-    assert_generic_method_by_type(int, 2147483647)
     assert_generic_method_by_type(System.UInt16, 65000)
+    assert_generic_method_by_type(System.Int32, 2147483647)
+    # https://docs.python.org/3/c-api/long.html#c.PyLong_AsUnsignedLongLong
+    # 18446744073709551615 is ((unsigned long long)-1) as is reserved for error
+    assert_generic_method_by_type(System.UInt64, 18446744073709551615 - 1)
+    assert_generic_method_by_type(int, 2147483647)
+
     assert_generic_method_by_type(System.Single, System.Single(3.402823e38))
     assert_generic_method_by_type(System.Double, 1.7976931348623157e308)
     assert_generic_method_by_type(float, 1.7976931348623157e308)
+
     assert_generic_method_by_type(System.Decimal, System.Decimal.One)
+
     assert_generic_method_by_type(System.String, "test")
     assert_generic_method_by_type(str, "test")
+
     assert_generic_method_by_type(ShortEnum, ShortEnum.Zero)
+
     assert_generic_method_by_type(System.Object, InterfaceTest())
+
     assert_generic_method_by_type(InterfaceTest, InterfaceTest(), 1)
 
 
 def test_correct_overload_selection():
     """Test correct overloading selection for common types."""
-    from System import (String, Double, Single,
-                        Int16, Int32, Int64)
+    from System import (String, Double, Single, Int16, Int32, Int64)
     from System import Math
 
     substr = String("substring")
-    assert substr.Substring(2) == substr.Substring.__overloads__[Int32](
-        Int32(2))
-    assert substr.Substring(2, 3) == substr.Substring.__overloads__[Int32, Int32](
-        Int32(2), Int32(3))
+    assert substr.Substring(2) == \
+        substr.Substring.__overloads__[Int32](Int32(2))
 
-    for atype, value1, value2 in zip([Double, Single, Int16, Int32, Int64],
-                                     [1.0, 1.0, 1, 1, 1],
-                                     [2.0, 0.5, 2, 0, -1]):
-        assert Math.Abs(atype(value1)) == Math.Abs.__overloads__[atype](atype(value1))
-        assert Math.Abs(value1) == Math.Abs.__overloads__[atype](atype(value1))
-        assert Math.Max(atype(value1),
-                        atype(value2)) == Math.Max.__overloads__[atype, atype](
-            atype(value1), atype(value2))
-        assert Math.Max(atype(value1),
-                        value2) == Math.Max.__overloads__[atype, atype](
-            atype(value1), atype(value2))
+    assert substr.Substring(2, 3) == \
+        substr.Substring.__overloads__[Int32, Int32](Int32(2), Int32(3))
+
+    def assert_abs_overload(atype, value1):
+        assert Math.Abs(atype(value1)) == \
+            Math.Abs.__overloads__[atype](atype(value1))
+
+        assert Math.Abs(value1) == \
+            Math.Abs.__overloads__[atype](atype(value1))
+
+    assert_abs_overload(Double, 1.0)
+    assert_abs_overload(Single, 1.0)
+    assert_abs_overload(Int16, 2)
+    assert_abs_overload(Int32, 1)
+    assert_abs_overload(Int64, -1)
+
+    def assert_max_overload(atype, value1, value2):
+        assert Math.Max(atype(value1), atype(value2)) == \
+            Math.Max.__overloads__[atype, atype](atype(value1), atype(value2))
+
+        assert Math.Max(atype(value1), value2) == \
+            Math.Max.__overloads__[atype, atype](atype(value1), atype(value2))
+
+    assert_max_overload(Double, 1.0, 2.0)
+    assert_max_overload(Single, 1.0, 0.5)
+    assert_max_overload(Int16, 1, 2)
+    assert_max_overload(Int32, 1, 0)
+    assert_max_overload(Int64, 1, -1)
 
     clr.AddReference("System.Runtime.InteropServices")
     from System.Runtime.InteropServices import GCHandle, GCHandleType

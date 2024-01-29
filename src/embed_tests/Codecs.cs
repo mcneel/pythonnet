@@ -107,9 +107,9 @@ namespace Python.EmbeddingTest
             Assert.IsTrue(codec.CanDecode(pyListType, typeof(IList<bool>)));
             Assert.IsTrue(codec.CanDecode(pyListType, typeof(IList<int>)));
             Assert.IsTrue(codec.CanDecode(pyListType, typeof(System.Collections.IList)));
-            Assert.IsFalse(codec.CanDecode(pyListType, typeof(System.Collections.IEnumerable)));
-            Assert.IsFalse(codec.CanDecode(pyListType, typeof(IEnumerable<int>)));
-            Assert.IsFalse(codec.CanDecode(pyListType, typeof(ICollection<float>)));
+            Assert.IsTrue(codec.CanDecode(pyListType, typeof(System.Collections.IEnumerable)));
+            Assert.IsTrue(codec.CanDecode(pyListType, typeof(IEnumerable<int>)));
+            Assert.IsTrue(codec.CanDecode(pyListType, typeof(ICollection<float>)));
             Assert.IsFalse(codec.CanDecode(pyListType, typeof(bool)));
 
             //we'd have to copy into a list instance to do this, it would not be lossless.
@@ -150,8 +150,8 @@ namespace Python.EmbeddingTest
 
             Assert.IsFalse(codec.CanDecode(listType, typeof(bool)));
             Assert.IsFalse(codec.CanDecode(listType, typeof(IList<int>)));
-            Assert.IsFalse(codec.CanDecode(listType, typeof(System.Collections.IEnumerable)));
-            Assert.IsFalse(codec.CanDecode(listType, typeof(IEnumerable<int>)));
+            Assert.IsTrue(codec.CanDecode(listType, typeof(System.Collections.IEnumerable)));
+            Assert.IsTrue(codec.CanDecode(listType, typeof(IEnumerable<int>)));
 
             Assert.IsTrue(codec.CanDecode(listType, typeof(ICollection<float>)));
             Assert.IsTrue(codec.CanDecode(listType, typeof(ICollection<string>)));

@@ -49,7 +49,7 @@ class MappingMixin(CollectionMixin, col.Mapping):
     def values(self): return self.Values
     def __iter__(self): return self.Keys.__iter__()
     def get(self, key, default=None):
-        existed, item = self.TryGetValue(key, None)
+        existed, item = self.TryGetValue(key)
         return item if existed else default
 
 class MutableMappingMixin(MappingMixin, col.MutableMapping):
@@ -62,7 +62,7 @@ class MutableMappingMixin(MappingMixin, col.MutableMapping):
         self.Clear()
 
     def pop(self, key, default=_UNSET_):
-        existed, item = self.TryGetValue(key, None)
+        existed, item = self.TryGetValue(key)
         if existed:
             self.Remove(key)
             return item
@@ -72,7 +72,7 @@ class MutableMappingMixin(MappingMixin, col.MutableMapping):
             return default
 
     def setdefault(self, key, value=None):
-        existed, item = self.TryGetValue(key, None)
+        existed, item = self.TryGetValue(key)
         if existed:
             return item
         else:

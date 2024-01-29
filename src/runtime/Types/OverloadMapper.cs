@@ -1,3 +1,5 @@
+#pragma warning disable IDE1006 // Naming style
+
 using System;
 using System.Reflection;
 
@@ -35,7 +37,7 @@ namespace Python.Runtime
                 return Exceptions.RaiseTypeError("type(s) expected");
             }
 
-            MethodBase? mi = MethodBinder.MatchSignature(self.m.info, types);
+            MethodBase? mi = MethodBinder.MatchSignature(self.m.binder.GetMethods(), types);
             if (mi == null)
             {
                 var e = "No match found for signature";

@@ -11,6 +11,8 @@ namespace Python.Runtime.CollectionWrappers
 
         }
 
+        public override bool IsReadOnly => false;
+
         public T this[int index]
         {
             get
@@ -30,7 +32,7 @@ namespace Python.Runtime.CollectionWrappers
 
         public int IndexOf(T item)
         {
-            return indexOf(item);
+            return base.IndexOfItem(item);
         }
 
         public void Insert(int index, T item)
@@ -47,7 +49,7 @@ namespace Python.Runtime.CollectionWrappers
 
         public void RemoveAt(int index)
         {
-            var result = removeAt(index);
+            var result = RemoveItemAt(index);
 
             //PySequence_DelItem will set an error if it fails.  throw it here
             //since RemoveAt does not have a bool return value.
@@ -110,7 +112,7 @@ namespace Python.Runtime.CollectionWrappers
         int IList.IndexOf(object value)
         {
             if (value is T tvalue)
-                return indexOf(tvalue);
+                return base.IndexOfItem(tvalue);
 
             throw new InvalidTypeException();
         }
