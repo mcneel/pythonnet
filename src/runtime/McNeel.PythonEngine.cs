@@ -618,31 +618,59 @@ namespace Python.Runtime
         #endregion
 
         #region Marshalling
+        class MarshContext
+        {
+            readonly Stack<object> _parents = new Stack<object>();
+
+            public bool IsSeen(object parent) => _parents.Contains(parent);
+
+            public void Push(object parent) => _parents.Push(parent);
+
+            public void Pop() => _parents.Pop();
+        }
+
         // NOTE:
         // ensures incoming data is marshalled into
         // closest-matching Python objects
-        public PyObject MarshInput(object value)
+        public PyObject MarshInput(object value) => MarshInput(value, new MarshContext());
+
+        PyObject MarshInput(object value, MarshContext context)
         {
+            if (context.IsSeen(value))
+            {
+                return MarshToPyObject(value);
+            }
+
             switch (value)
             {
                 case string str:
                     return MarshToPyObject(value);
 
                 case IDictionary dict:
+                    context.Push(dict);
+
                     PyDict pyDict = new PyDict();
                     foreach (KeyValuePair<object, object> pair in dict)
                     {
                         if (pair.Key is string key)
-                            pyDict[key] = MarshInput(pair.Value);
+                            pyDict[key] = MarshInput(pair.Value, context);
                     }
+
+                    context.Pop();
+
                     return pyDict;
 
                 case IList list:
+                    context.Push(list);
+
                     PyList pyList = new PyList();
                     foreach (object obj in list)
                     {
-                        pyList.Append(MarshInput(obj));
+                        pyList.Append(MarshInput(obj, context));
                     }
+
+                    context.Pop();
+
                     return pyList;
 
                 case PyObject pyObj:
@@ -661,47 +689,80 @@ namespace Python.Runtime
         // NOTE:
         // ensures outgoing data is marshalled into
         // closest-matching dotnet objects
-        public object MarshOutput(object value)
+        public object MarshOutput(object value) => MarshOutput(value, new MarshContext());
+
+        object MarshOutput(object value, MarshContext context)
         {
+            if (context.IsSeen(value))
+            {
+                return MarshToPyObject(value);
+            }
+
             switch (value)
             {
                 case object[] array:
-                    return array.Select(i => MarshOutput(i)).ToArray();
+                    return array.Select(i => MarshOutput(i, context)).ToArray();
 
                 case PyList list:
+                    context.Push(list);
+
                     var fromPylist = new List<object>();
                     foreach (object obj in list)
                     {
-                        fromPylist.Add(MarshOutput(obj));
+                        fromPylist.Add(MarshOutput(obj, context));
                     }
+
+                    context.Pop();
+
                     return fromPylist;
 
                 case List<object> list:
+                    context.Push(list);
+
                     var fromClrList = new List<object>();
                     foreach (object obj in list)
                     {
-                        fromClrList.Add(MarshOutput(obj));
+                        fromClrList.Add(MarshOutput(obj, context));
                     }
+
+                    context.Pop();
+
                     return fromClrList;
 
                 case IDictionary<object, object> dict:
-                    return dict.Select(p =>
+                    context.Push(dict);
+
+                    var fromClrDict = dict.Select(p =>
                     {
-                        return new KeyValuePair<object, object>(MarshOutput(p.Key), MarshOutput(p.Value));
+                        return new KeyValuePair<object, object>(MarshOutput(p.Key, context), MarshOutput(p.Value, context));
                     }).ToDictionary(p => p.Key, p => p.Value);
 
+                    context.Pop();
+
+                    return fromClrDict;
+
                 case PyObject pyObj:
-                    return MarshFromPyObject(pyObj);
+                    return MarshFromPyObject(pyObj, context);
             }
 
             return value;
         }
 
-        object MarshFromPyObject(PyObject pyObj)
+        object MarshFromPyObject(PyObject pyObj, MarshContext context)
         {
+            if (context.IsSeen(pyObj))
+            {
+                return pyObj;
+            }
+
             if (ManagedType.GetManagedObject(pyObj) is CLRObject co)
             {
-                return MarshOutput(co.inst);
+                if (context.IsSeen(co))
+                {
+                    return pyObj;
+                }
+
+                return MarshOutput(co.inst, context);
             }
 
             else if (Runtime.PyObject_TYPE(pyObj) == Runtime.PyNoneType)
@@ -712,13 +773,27 @@ namespace Python.Runtime
             else if (Runtime.PyList_Check(pyObj))
             {
                 var l = new PyList(pyObj);
-                return l.Select(i => MarshFromPyObject(i)).ToList();
+
+                context.Push(l);
+
+                var toCLRList = l.Select(i => MarshFromPyObject(i, context)).ToList();
+
+                context.Pop();
+
+                return toCLRList;
             }
 
             else if (Runtime.PyDict_Check(pyObj))
             {
                 var d = new PyDict(pyObj);
-                return d.Keys().ToDictionary(k => MarshFromPyObject(k), k => MarshFromPyObject(d[k]));
+
+                context.Push(d);
+
+                var toCLRDict = d.Keys().ToDictionary(k => MarshFromPyObject(k, context), k => MarshFromPyObject(d[k], context));
+
+                context.Pop();
+               
+                return toCLRDict;
             }
 
             else if (Runtime.PyString_CheckExact(pyObj))
