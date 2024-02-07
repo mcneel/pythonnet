@@ -437,7 +437,33 @@ namespace Python.Runtime
             return false;
         }
 
-        public bool TryGetMembers(object pyObject, out IEnumerable<string> members, bool privates = true)
+        public class PyCompletion : Tuple<string, string>, IEquatable<PyCompletion>
+        {
+            public PyCompletion(string text, string kind)
+                : base(text, kind)
+            {
+
+            }
+
+            public bool Equals(PyCompletion other)
+            {
+                if (other is null)
+                    return false;
+
+                return Item1 == other.Item1;
+            }
+
+            public override bool Equals(object obj) => Equals(obj as PyCompletion);
+
+            public override int GetHashCode() => Item1.GetHashCode();
+        }
+
+        // NOTE:
+        // returns Tuple<string, string>
+        // index 0: member name
+        // index 1: member kind (module, class, struct, function, property)
+        // loosly following https://jedi.readthedocs.io/en/latest/docs/api-classes.html#jedi.api.classes.BaseName.type
+        public bool TryGetMembers(object pyObject, out IEnumerable<Tuple<string, string>> members, bool privates = true)
         {
             members = default;
 
@@ -446,7 +472,7 @@ namespace Python.Runtime
                 case PyObject pyObj:
                     using (Py.GIL())
                     {
-                        var all = new HashSet<string>();
+                        var all = new HashSet<PyCompletion>();
 
                         if (ManagedType.GetManagedObject(pyObj) is ModuleObject module)
                         {
@@ -462,7 +488,7 @@ namespace Python.Runtime
                                     if (dotindex > 0)
                                         subnspace = subnspace.Substring(0, dotindex);
 
-                                    all.Add(subnspace);
+                                    all.Add(new PyCompletion(subnspace, "module"));
                                 }
                             }
 
@@ -475,16 +501,26 @@ namespace Python.Runtime
                                 using (PyObject __complete__ = pyObj.GetAttr(COMPLETE_ATTR))
                                 using (PyList list = new PyList(__complete__))
                                 {
-                                    members = list.Select(i => i.ToString()!).ToArray();
+                                    foreach (PyObject item in list)
+                                    {
+                                        using var attr = pyObj.GetAttr(item);
+                                        all.Add(new PyCompletion(item.ToString()!, GetObjectKind(attr)));
+                                    }
+
                                     return true;
                                 }
                             }
 
-                            IEnumerable<string> pymembers = pyObj.GetDynamicMemberNames();
-                            if (!privates)
-                                pymembers = pymembers.Where(m => !m.StartsWith("_"));
+                            foreach (PyObject item in pyObj.Dir())
+                            {
+                                string name = item.ToString()!;
 
-                            all.UnionWith(pymembers.ToArray());
+                                if (!privates && name.StartsWith("_"))
+                                    continue;
+
+                                using var attr = pyObj.GetAttr(item);
+                                all.Add(new PyCompletion(name, GetObjectKind(attr)));
+                            }
 
                             members = all.ToArray();
                             return true;
@@ -614,6 +650,39 @@ namespace Python.Runtime
             PyModule pyscope = Py.CreateScope(scopeName);
             pyscope.Set("__file__", pythonFile ?? string.Empty);
             return pyscope;
+        }
+
+        string GetObjectKind(PyObject pyObj)
+        {
+            if (ManagedType.GetManagedObject(pyObj) is ClassObject co
+                    && co.type.Value is Type type)
+            {
+                if (type.IsEnum)
+                    return "enum";
+
+                if (type.IsValueType)
+                    return "struct";
+
+                return "class";
+            }
+
+            if (Runtime.PyType_Check(pyObj))
+                return "class";
+
+            if (Runtime.PyObject_TypeCheck(pyObj, Runtime.PyModuleType))
+                return "module";
+
+            if (Runtime.PyObject_TypeCheck(pyObj, Runtime.PyFunctionType))
+                return "function";
+
+            if (Runtime.PyObject_TypeCheck(pyObj, Runtime.PyMethodType)
+                || Runtime.PyObject_TypeCheck(pyObj, Runtime.PyBoundMethodType))
+                return "method";
+
+            if (Runtime.PyObject_TypeCheck(pyObj, Runtime.PyStringType))
+                return "text";
+
+            return "value";
         }
         #endregion
 
@@ -792,7 +861,7 @@ namespace Python.Runtime
                 var toCLRDict = d.Keys().ToDictionary(k => MarshFromPyObject(k, context), k => MarshFromPyObject(d[k], context));
 
                 context.Pop();
-               
+
                 return toCLRDict;
             }
 

@@ -216,6 +216,8 @@ namespace Python.Runtime
                 SetPyMemberTypeOf(out PyBoolType, _PyTrue!);
                 SetPyMemberTypeOf(out PyNoneType, _PyNone!);
 
+                SetPyMember(out PyFunctionType, PyObject_GetAttrString(types, "FunctionType").StealNullable());
+
                 SetPyMember(out PyBoundMethodType, PyObject_GetAttrString(types, "MethodType").StealNullable());
                 SetPyMember(out PyMethodWrapperType, PyObject_GetAttrString(types, "MethodWrapperType").StealNullable());
                 SetPyMemberTypeOf(out PyMethodType, PyObject_GetAttrString(builtins, "len").StealNullable());
@@ -469,6 +471,7 @@ namespace Python.Runtime
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider declaring as nullable.
         // these objects are initialized in Initialize rather than in constructor
         internal static PyObject PyBaseObjectType;
+        internal static PyObject PyFunctionType;
         internal static PyObject PyModuleType;
         internal static PyObject PySuper_Type;
         internal static PyType PyCLRMetaType;
