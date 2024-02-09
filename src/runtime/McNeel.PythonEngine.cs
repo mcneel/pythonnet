@@ -719,10 +719,18 @@ namespace Python.Runtime
                     context.Push(dict);
 
                     PyDict pyDict = new PyDict();
-                    foreach (KeyValuePair<object, object> pair in dict)
+                    foreach (object item in dict)
                     {
-                        if (pair.Key is string key)
-                            pyDict[key] = MarshInput(pair.Value, context);
+                        switch (item)
+                        {
+                            case KeyValuePair<object, object> pair:
+                                pyDict[MarshInput(pair.Key, context)] = MarshInput(pair.Key, context);
+                                break;
+
+                            case DictionaryEntry entry:
+                                pyDict[MarshInput(entry.Key, context)] = MarshInput(entry.Key, context);
+                                break;
+                        }
                     }
 
                     context.Pop();
