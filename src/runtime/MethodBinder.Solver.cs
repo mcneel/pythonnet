@@ -760,11 +760,6 @@ namespace Python.Runtime
                         continue;
                     }
 
-                    if (prov.GivenArgs == 0)
-                    {
-                        goto ambiguousError;
-                    }
-
                     // NOTE:
                     // if method has the same distance, lets use the one
                     // with the least amount of optional parameters.
@@ -802,6 +797,13 @@ namespace Python.Runtime
                     else if (mspec!.Returns > spec!.Returns)
                     {
                         continue;
+                    }
+
+                    // NOTE:
+                    // if none of the resolutions above worked out, return error
+                    if (prov.GivenArgs == 0)
+                    {
+                        goto ambiguousError;
                     }
 
                     // NOTE:

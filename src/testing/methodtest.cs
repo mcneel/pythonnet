@@ -789,6 +789,10 @@ namespace Python.Test
             complex = default;
             return 4;
         }
+
+        public static bool TryGetMultipleOutsOverloaded(out int first) { first = 42; return true; }
+
+        public static bool TryGetMultipleOutsOverloaded(out int first, out double second) { first = 42; second = 42d; return true; }
     }
 
 
