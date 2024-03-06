@@ -1391,3 +1391,11 @@ def test_method_tryout_multiple_signatures():
     result = MethodTest.TryGetComplex(DateTime.Now, outcomplex, 0.1)
     assert result == 4
     assert isinstance(outcomplex.Value, Complex)
+
+
+def test_method_overload_multiple_outs():
+    res, first = MethodTest.TryGetMultipleOutsOverloaded()
+    assert first == 42
+
+    with pytest.raises(ValueError):
+        _0, _1, _2 = MethodTest.TryGetMultipleOutsOverloaded()
