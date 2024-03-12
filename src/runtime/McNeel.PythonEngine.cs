@@ -390,6 +390,13 @@ namespace Python.Runtime
             }
         }
 
+        public Exception ParseException(Exception exception)
+        {
+            if (exception is PythonException pyEx)
+                return new PyException(pyEx);
+            return exception;
+        }
+
         public int GetLineNumber(object frame) => Runtime.PyFrame_GetLineNumber(((PyObject)frame).Handle);
 
         public bool TryGetManaged(object pyObject, out Type managed)
