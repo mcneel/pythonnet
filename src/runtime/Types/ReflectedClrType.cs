@@ -105,43 +105,43 @@ internal sealed class ReflectedClrType : PyType
                     continue;
                 }
 
-                if (keyStr.StartsWith("__getitem__"))
+                if (keyStr.StartsWith(nameof(PyIdentifier.__getitem__)))
                 {
                     var mp_subscript = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.mp_subscript), tbFlags);
                     Util.WriteIntPtr(pyTypeObj, TypeOffset.mp_subscript, Interop.GetThunk(mp_subscript).Address);
                 }
 
-                if (keyStr.StartsWith("__len__"))
+                if (keyStr.StartsWith(nameof(PyIdentifier.__len__)))
                 {
                     var sq_length = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.sq_length), tbFlags);
                     Util.WriteIntPtr(pyTypeObj, TypeOffset.sq_length, Interop.GetThunk(sq_length).Address);
                 }
 
-                if (keyStr.StartsWith("__iter__"))
+                if (keyStr.StartsWith(nameof(PyIdentifier.__iter__)))
                 {
                     var tp_iter = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_iter), tbFlags);
                     Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_iter, Interop.GetThunk(tp_iter).Address);
                 }
 
-                if (keyStr.StartsWith("__str__"))
+                if (keyStr.StartsWith(nameof(PyIdentifier.__str__)))
                 {
                     var tp_str = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_str), tbFlags);
                     Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_str, Interop.GetThunk(tp_str).Address);
                 }
 
-                if (keyStr.StartsWith("__repr__"))
+                if (keyStr.StartsWith(nameof(PyIdentifier.__repr__)))
                 {
                     var tp_repr = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_repr), tbFlags);
                     Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_repr, Interop.GetThunk(tp_repr).Address);
                 }
 
-                if (keyStr.StartsWith("__getattribute__"))
+                if (keyStr.StartsWith(nameof(PyIdentifier.__getattribute__)))
                 {
                     var tp_getattro = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_getattro), tbFlags);
                     Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_getattro, Interop.GetThunk(tp_getattro).Address);
                 }
 
-                if (keyStr.StartsWith("__getattr__"))
+                if (keyStr.StartsWith(nameof(PyIdentifier.__getattr__)))
                 {
                     var tp_getattr = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_getattr), tbFlags);
                     //Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_getattr, Interop.GetThunk(tp_getattr).Address);
@@ -167,7 +167,7 @@ internal sealed class ReflectedClrType : PyType
             return Exceptions.RaiseTypeError("invalid object");
         }
 
-        if (TryGetBoundMethod1(ob, key, "__getitem__", out NewReference result))
+        if (TryGetBoundMethod1(ob, key, nameof(PyIdentifier.__getitem__), out NewReference result))
         {
             return result;
         }
@@ -189,7 +189,7 @@ internal sealed class ReflectedClrType : PyType
             return Exceptions.RaiseTypeError("invalid object");
         }
 
-        if (TryGetBoundMethod0(ob, "__len__", out NewReference result))
+        if (TryGetBoundMethod0(ob, nameof(PyIdentifier.__len__), out NewReference result))
         {
             return result;
         }
@@ -205,7 +205,7 @@ internal sealed class ReflectedClrType : PyType
             return Exceptions.RaiseTypeError("invalid object");
         }
 
-        if (TryGetBoundMethod0(ob, "__iter__", out NewReference result))
+        if (TryGetBoundMethod0(ob, nameof(PyIdentifier.__iter__), out NewReference result))
         {
             return result;
         }
@@ -221,7 +221,7 @@ internal sealed class ReflectedClrType : PyType
             return Exceptions.RaiseTypeError("invalid object");
         }
 
-        if (TryGetBoundMethod0(ob, "__str__", out NewReference result))
+        if (TryGetBoundMethod0(ob, nameof(PyIdentifier.__str__), out NewReference result))
         {
             return result;
         }
@@ -237,7 +237,7 @@ internal sealed class ReflectedClrType : PyType
             return Exceptions.RaiseTypeError("invalid object");
         }
 
-        if (TryGetBoundMethod0(ob, "__repr__", out NewReference result))
+        if (TryGetBoundMethod0(ob, nameof(PyIdentifier.__repr__), out NewReference result))
         {
             return result;
         }
@@ -260,7 +260,7 @@ internal sealed class ReflectedClrType : PyType
             return result;
         }
 
-        if (TryGetBoundMethod1(ob, key, "__getattribute__", out result))
+        if (TryGetBoundMethod1(ob, key, nameof(PyIdentifier.__getattribute__), out result))
         {
             if (Exceptions.ErrorOccurred())
             {
@@ -288,7 +288,7 @@ internal sealed class ReflectedClrType : PyType
             return result;
         }
 
-        if (TryGetBoundMethod1(ob, key, "__getattr__", out result))
+        if (TryGetBoundMethod1(ob, key, nameof(PyIdentifier.__getattr__), out result))
         {
             return result;
         }

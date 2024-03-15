@@ -29,6 +29,18 @@ namespace Python.Runtime
          public static BorrowedReference __init__ => new(f__init__);
          static IntPtr f__repr__;
          public static BorrowedReference __repr__ => new(f__repr__);
+         static IntPtr f__getitem__;
+         public static BorrowedReference __getitem__ => new(f__getitem__);
+         static IntPtr f__len__;
+         public static BorrowedReference __len__ => new(f__len__);
+         static IntPtr f__iter__;
+         public static BorrowedReference __iter__ => new(f__iter__);
+         static IntPtr f__str__;
+         public static BorrowedReference __str__ => new(f__str__);
+         static IntPtr f__getattribute__;
+         public static BorrowedReference __getattribute__ => new(f__getattribute__);
+         static IntPtr f__getattr__;
+         public static BorrowedReference __getattr__ => new(f__getattr__);
          static IntPtr f__import__;
          public static BorrowedReference __import__ => new(f__import__);
          static IntPtr f__builtins__;
@@ -59,6 +71,12 @@ namespace Python.Runtime
             "__annotations__",
             "__init__",
             "__repr__",
+            "__getitem__",
+            "__len__",
+            "__iter__",
+            "__str__",
+            "__getattribute__",
+            "__getattr__",
             "__import__",
             "__builtins__",
             "builtins",
