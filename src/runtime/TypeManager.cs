@@ -165,7 +165,6 @@ namespace Python.Runtime
             return type;
         }
 
-
         internal static void InitializeClassCore(Type clrType, PyType pyType, ClassBase impl)
         {
             if (pyType.BaseReference != null)
@@ -880,6 +879,11 @@ namespace Python.Runtime
             {
                 // PyType_GenericNew
                 return Util.ReadIntPtr(Runtime.PySuper_Type, TypeOffset.tp_new);
+            }
+            else if (offset == TypeOffset.tp_getattr)
+            {
+                // PyObject_GetAttr
+                return Util.ReadIntPtr(Runtime.PyBaseObjectType, TypeOffset.tp_getattr);
             }
             else if (offset == TypeOffset.tp_getattro)
             {

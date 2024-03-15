@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.Serialization;
 
 using static Python.Runtime.PythonException;
@@ -93,12 +94,165 @@ internal sealed class ReflectedClrType : PyType
                 ThrowIfIsNotZero(Runtime.PyDict_DelItemString(cls_dict, "__classcell__"));
             }
 
+            const BindingFlags tbFlags = BindingFlags.Public | BindingFlags.Static;
+            using var clsDict = new PyDict(dict);
+            using var keys = clsDict.Keys();
+            foreach (PyObject pyKey in keys)
+            {
+                string? keyStr = Runtime.GetManagedString(pyKey);
+                if (keyStr is null)
+                {
+                    continue;
+                }
+
+                if (keyStr.StartsWith("__str__"))
+                {
+                    var tp_str = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_str), tbFlags);
+                    Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_str, Interop.GetThunk(tp_str).Address);
+                }
+
+                if (keyStr.StartsWith("__repr__"))
+                {
+                    var tp_repr = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_repr), tbFlags);
+                    Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_repr, Interop.GetThunk(tp_repr).Address);
+                }
+
+                if (keyStr.StartsWith("__getattribute__"))
+                {
+                    var tp_getattro = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_getattro), tbFlags);
+                    Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_getattro, Interop.GetThunk(tp_getattro).Address);
+                }
+
+                if (keyStr.StartsWith("__getattr__"))
+                {
+                    var tp_getattr = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_getattr), tbFlags);
+                    //Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_getattr, Interop.GetThunk(tp_getattr).Address);
+                    Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_getattro, Interop.GetThunk(tp_getattr).Address);
+                }
+
+                pyKey.Dispose();
+            }
+
             return new NewReference(pyTypeObj);
         }
         catch (Exception e)
         {
             return Exceptions.RaiseTypeError(e.Message);
         }
+    }
+
+    public static NewReference tp_str(BorrowedReference ob)
+    {
+        CLRObject? clrObj = ManagedType.GetManagedObject(ob) as CLRObject;
+        if (clrObj is null)
+        {
+            return Exceptions.RaiseTypeError("invalid object");
+        }
+
+        if (TryGetBoundMethod0(ob, "__str__", out NewReference result))
+        {
+            return result;
+        }
+
+        return ClassObject.tp_str(ob);
+    }
+
+    public static NewReference tp_repr(BorrowedReference ob)
+    {
+        CLRObject? clrObj = ManagedType.GetManagedObject(ob) as CLRObject;
+        if (clrObj is null)
+        {
+            return Exceptions.RaiseTypeError("invalid object");
+        }
+
+        if (TryGetBoundMethod0(ob, "__repr__", out NewReference result))
+        {
+            return result;
+        }
+
+        return ClassObject.tp_repr(ob);
+    }
+
+    public static NewReference tp_getattro(BorrowedReference ob, BorrowedReference key)
+    {
+        CLRObject? clrObj = ManagedType.GetManagedObject(ob) as CLRObject;
+        if (clrObj is null)
+        {
+            return Exceptions.RaiseTypeError("invalid object");
+        }
+
+        if (TryGetBoundMethod1(ob, key, "__getattribute__", out NewReference result))
+        {
+            if (Exceptions.ErrorOccurred())
+            {
+                Exceptions.Clear();
+                return tp_getattr(ob, key);
+            }
+            return result;
+        }
+
+        return Runtime.PyObject_GenericGetAttr(ob, key);
+    }
+
+    public static NewReference tp_getattr(BorrowedReference ob, BorrowedReference key)
+    {
+        CLRObject? clrObj = ManagedType.GetManagedObject(ob) as CLRObject;
+        if (clrObj is null)
+        {
+            return Exceptions.RaiseTypeError("invalid object");
+        }
+
+        if (TryGetBoundMethod1(ob, key, "__getattr__", out NewReference result))
+        {
+            return result;
+        }
+
+        using var objRepr = Runtime.PyObject_Repr(ob);
+        using var keyRepr = Runtime.PyObject_Repr(key);
+        Exceptions.SetError(
+                Exceptions.AttributeError,
+                $"object '{Runtime.GetManagedString(objRepr.BorrowOrThrow())}' has no attribute '{Runtime.GetManagedString(keyRepr.BorrowOrThrow())}'"
+            );
+        return default;
+    }
+
+    private static bool TryGetBoundMethod0(BorrowedReference ob, string keyName, out NewReference result)
+    {
+        result = default;
+
+        using var getAttrKey = new PyString(keyName);
+        using var method = Runtime.PyObject_GenericGetAttr(ob, getAttrKey);
+        bool foundMethod = !Exceptions.ErrorOccurred();
+        if (foundMethod && Runtime.PyObject_TypeCheckExact(method.Borrow(), Runtime.PyBoundMethodType))
+        {
+            using var args = Runtime.PyTuple_New(0);
+            result = Runtime.PyObject_Call(method.Borrow(), args.Borrow(), null);
+            return true;
+        }
+        else
+            Exceptions.Clear();
+
+        return false;
+    }
+
+    private static bool TryGetBoundMethod1(BorrowedReference ob, BorrowedReference key, string keyName, out NewReference result)
+    {
+        result = default;
+
+        using var getAttrKey = new PyString(keyName);
+        using var method = Runtime.PyObject_GenericGetAttr(ob, getAttrKey);
+        bool foundMethod = !Exceptions.ErrorOccurred();
+        if (foundMethod && Runtime.PyObject_TypeCheckExact(method.Borrow(), Runtime.PyBoundMethodType))
+        {
+            using var args = Runtime.PyTuple_New(1);
+            Runtime.PyTuple_SetItem(args.Borrow(), 0, key);
+            result = Runtime.PyObject_Call(method.Borrow(), args.Borrow(), null);
+            return true;
+        }
+        else
+            Exceptions.Clear();
+
+        return false;
     }
 
     static ReflectedClrType AllocateClass(Type clrType)

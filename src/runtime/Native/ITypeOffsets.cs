@@ -54,6 +54,7 @@ namespace Python.Runtime.Native
         int tp_dictoffset { get; }
         int tp_flags { get; }
         int tp_free { get; }
+        int tp_getattr { get; }
         int tp_getattro { get; }
         int tp_hash { get; }
         int tp_is_gc { get; }
