@@ -116,6 +116,21 @@ namespace Python.Runtime
                 {
                     return CLRObject.GetReference(clrObj.inst);
                 }
+                else
+                {
+                    // try get attr from pure interface wrapper
+                    var value = Runtime.PyObject_GenericGetAttr(ob, key);
+                    if (Exceptions.ErrorOccurred())
+                    {
+                        // if that didn't work, clear errors
+                        // and try get from wrapped object
+                        Exceptions.Clear();
+
+                        using var pyObj = Converter.ToPython(clrObj.inst);
+                        return Runtime.PyObject_GenericGetAttr(pyObj.Borrow(), key);
+                    }
+                    return value;
+                }
             }
 
 
