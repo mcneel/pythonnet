@@ -172,20 +172,27 @@ internal sealed class ReflectedClrType : PyType
         return default;
     }
 
-    public static NewReference sq_length(BorrowedReference ob)
+    public static long sq_length(BorrowedReference ob)
     {
         CLRObject? clrObj = ManagedType.GetManagedObject(ob) as CLRObject;
         if (clrObj is null)
         {
-            return Exceptions.RaiseTypeError("invalid object");
+            Exceptions.RaiseTypeError("invalid object");
+            return 0;
         }
 
         if (TryCallBoundMethod0(ob, nameof(PyIdentifier.__len__), out NewReference result))
         {
-            return result;
+            long? r = Runtime.PyLong_AsLongLong(result.Borrow());
+            if (r is null)
+            {
+                Exceptions.SetError(Exceptions.TypeError, $"TypeError: 'NoneType' object cannot be interpreted as an integer");
+            }
+
+            return r!.Value;
         }
 
-        return Runtime.PyInt_FromInt32(0);
+        return 0;
     }
 
     public static NewReference tp_iter(BorrowedReference ob)
