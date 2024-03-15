@@ -253,7 +253,14 @@ internal sealed class ReflectedClrType : PyType
             return Exceptions.RaiseTypeError("invalid object");
         }
 
-        if (TryGetBoundMethod1(ob, key, "__getattribute__", out NewReference result))
+        NewReference result;
+
+        if (TryGetBuiltins(ob, key, out result))
+        {
+            return result;
+        }
+
+        if (TryGetBoundMethod1(ob, key, "__getattribute__", out result))
         {
             if (Exceptions.ErrorOccurred())
             {
@@ -274,7 +281,14 @@ internal sealed class ReflectedClrType : PyType
             return Exceptions.RaiseTypeError("invalid object");
         }
 
-        if (TryGetBoundMethod1(ob, key, "__getattr__", out NewReference result))
+        NewReference result;
+
+        if (TryGetBuiltins(ob, key, out result))
+        {
+            return result;
+        }
+
+        if (TryGetBoundMethod1(ob, key, "__getattr__", out result))
         {
             return result;
         }
@@ -323,6 +337,25 @@ internal sealed class ReflectedClrType : PyType
         }
         else
             Exceptions.Clear();
+
+        return false;
+    }
+
+    private static bool TryGetBuiltins(BorrowedReference ob, BorrowedReference key, out NewReference result)
+    {
+        result = default;
+
+        string? keyStr = Runtime.GetManagedString(key);
+        if (keyStr is null)
+        {
+            return false;
+        }
+
+        if (keyStr == nameof(PyIdentifier.__init__))
+        {
+            result = Runtime.PyObject_GenericGetAttr(ob, key);
+            return true;
+        }
 
         return false;
     }
