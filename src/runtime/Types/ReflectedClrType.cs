@@ -95,6 +95,10 @@ internal sealed class ReflectedClrType : PyType
             }
 
             const BindingFlags tbFlags = BindingFlags.Public | BindingFlags.Static;
+
+            var tp_getattro_default = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_getattro), tbFlags);
+            Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_getattro, Interop.GetThunk(tp_getattro_default).Address);
+
             using var clsDict = new PyDict(dict);
             using var keys = clsDict.Keys();
             foreach (PyObject pyKey in keys)
@@ -104,10 +108,6 @@ internal sealed class ReflectedClrType : PyType
                 {
                     continue;
                 }
-
-                var tp_getattro_default = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_getattro), tbFlags);
-                Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_getattro, Interop.GetThunk(tp_getattro_default).Address);
-
 
                 if (keyStr.StartsWith(nameof(PyIdentifier.__getitem__)))
                 {
