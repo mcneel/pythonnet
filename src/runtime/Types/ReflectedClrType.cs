@@ -105,6 +105,24 @@ internal sealed class ReflectedClrType : PyType
                     continue;
                 }
 
+                if (keyStr.StartsWith("__getitem__"))
+                {
+                    var mp_subscript = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.mp_subscript), tbFlags);
+                    Util.WriteIntPtr(pyTypeObj, TypeOffset.mp_subscript, Interop.GetThunk(mp_subscript).Address);
+                }
+
+                if (keyStr.StartsWith("__len__"))
+                {
+                    var sq_length = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.sq_length), tbFlags);
+                    Util.WriteIntPtr(pyTypeObj, TypeOffset.sq_length, Interop.GetThunk(sq_length).Address);
+                }
+
+                if (keyStr.StartsWith("__iter__"))
+                {
+                    var tp_iter = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_iter), tbFlags);
+                    Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_iter, Interop.GetThunk(tp_iter).Address);
+                }
+
                 if (keyStr.StartsWith("__str__"))
                 {
                     var tp_str = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_str), tbFlags);
@@ -139,6 +157,60 @@ internal sealed class ReflectedClrType : PyType
         {
             return Exceptions.RaiseTypeError(e.Message);
         }
+    }
+
+    public static NewReference mp_subscript(BorrowedReference ob, BorrowedReference key)
+    {
+        CLRObject? clrObj = ManagedType.GetManagedObject(ob) as CLRObject;
+        if (clrObj is null)
+        {
+            return Exceptions.RaiseTypeError("invalid object");
+        }
+
+        if (TryGetBoundMethod1(ob, key, "__getitem__", out NewReference result))
+        {
+            return result;
+        }
+
+        using var objRepr = Runtime.PyObject_Repr(ob);
+        using var keyRepr = Runtime.PyObject_Repr(key);
+        Exceptions.SetError(
+                Exceptions.KeyError,
+                Runtime.GetManagedString(keyRepr.BorrowOrThrow())!
+            );
+        return default;
+    }
+
+    public static NewReference sq_length(BorrowedReference ob)
+    {
+        CLRObject? clrObj = ManagedType.GetManagedObject(ob) as CLRObject;
+        if (clrObj is null)
+        {
+            return Exceptions.RaiseTypeError("invalid object");
+        }
+
+        if (TryGetBoundMethod0(ob, "__len__", out NewReference result))
+        {
+            return result;
+        }
+
+        return Runtime.PyInt_FromInt32(0);
+    }
+
+    public static NewReference tp_iter(BorrowedReference ob)
+    {
+        CLRObject? clrObj = ManagedType.GetManagedObject(ob) as CLRObject;
+        if (clrObj is null)
+        {
+            return Exceptions.RaiseTypeError("invalid object");
+        }
+
+        if (TryGetBoundMethod0(ob, "__iter__", out NewReference result))
+        {
+            return result;
+        }
+
+        return new NewReference(Runtime.None);
     }
 
     public static NewReference tp_str(BorrowedReference ob)
