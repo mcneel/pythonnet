@@ -105,6 +105,10 @@ internal sealed class ReflectedClrType : PyType
                     continue;
                 }
 
+                var tp_getattro_default = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_getattro), tbFlags);
+                Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_getattro, Interop.GetThunk(tp_getattro_default).Address);
+
+
                 if (keyStr.StartsWith(nameof(PyIdentifier.__getitem__)))
                 {
                     var mp_subscript = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.mp_subscript), tbFlags);
@@ -135,19 +139,6 @@ internal sealed class ReflectedClrType : PyType
                     Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_repr, Interop.GetThunk(tp_repr).Address);
                 }
 
-                if (keyStr.StartsWith(nameof(PyIdentifier.__getattribute__)))
-                {
-                    var tp_getattro = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_getattro), tbFlags);
-                    Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_getattro, Interop.GetThunk(tp_getattro).Address);
-                }
-
-                if (keyStr.StartsWith(nameof(PyIdentifier.__getattr__)))
-                {
-                    var tp_getattr = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_getattr), tbFlags);
-                    //Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_getattr, Interop.GetThunk(tp_getattr).Address);
-                    Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_getattro, Interop.GetThunk(tp_getattr).Address);
-                }
-
                 pyKey.Dispose();
             }
 
@@ -167,7 +158,7 @@ internal sealed class ReflectedClrType : PyType
             return Exceptions.RaiseTypeError("invalid object");
         }
 
-        if (TryGetBoundMethod1(ob, key, nameof(PyIdentifier.__getitem__), out NewReference result))
+        if (TryCallBoundMethod1(ob, key, nameof(PyIdentifier.__getitem__), out NewReference result))
         {
             return result;
         }
@@ -189,7 +180,7 @@ internal sealed class ReflectedClrType : PyType
             return Exceptions.RaiseTypeError("invalid object");
         }
 
-        if (TryGetBoundMethod0(ob, nameof(PyIdentifier.__len__), out NewReference result))
+        if (TryCallBoundMethod0(ob, nameof(PyIdentifier.__len__), out NewReference result))
         {
             return result;
         }
@@ -205,7 +196,7 @@ internal sealed class ReflectedClrType : PyType
             return Exceptions.RaiseTypeError("invalid object");
         }
 
-        if (TryGetBoundMethod0(ob, nameof(PyIdentifier.__iter__), out NewReference result))
+        if (TryCallBoundMethod0(ob, nameof(PyIdentifier.__iter__), out NewReference result))
         {
             return result;
         }
@@ -221,7 +212,7 @@ internal sealed class ReflectedClrType : PyType
             return Exceptions.RaiseTypeError("invalid object");
         }
 
-        if (TryGetBoundMethod0(ob, nameof(PyIdentifier.__str__), out NewReference result))
+        if (TryCallBoundMethod0(ob, nameof(PyIdentifier.__str__), out NewReference result))
         {
             return result;
         }
@@ -237,7 +228,7 @@ internal sealed class ReflectedClrType : PyType
             return Exceptions.RaiseTypeError("invalid object");
         }
 
-        if (TryGetBoundMethod0(ob, nameof(PyIdentifier.__repr__), out NewReference result))
+        if (TryCallBoundMethod0(ob, nameof(PyIdentifier.__repr__), out NewReference result))
         {
             return result;
         }
@@ -253,95 +244,69 @@ internal sealed class ReflectedClrType : PyType
             return Exceptions.RaiseTypeError("invalid object");
         }
 
-        NewReference result;
-
-        if (TryGetBuiltins(ob, key, out result))
+        if (TryGetBuiltinAttr(ob, key, out NewReference builtinAttr))
         {
-            return result;
+            return builtinAttr;
         }
 
-        if (TryGetBoundMethod1(ob, key, nameof(PyIdentifier.__getattribute__), out result))
+        if (TryCallBoundMethod1(ob, key, nameof(PyIdentifier.__getattribute__), out NewReference getAttro))
         {
-            if (Exceptions.ErrorOccurred())
+            if (Exceptions.ExceptionMatches(Exceptions.AttributeError))
             {
                 Exceptions.Clear();
-                return tp_getattr(ob, key);
+
+                if (TryCallBoundMethod1(ob, key, nameof(PyIdentifier.__getattr__), out NewReference getAttr))
+                {
+                    return getAttr;
+                }
+
+                Exceptions.SetError(Exceptions.AttributeError, $"");
             }
-            return result;
+
+            return getAttro;
         }
 
         return Runtime.PyObject_GenericGetAttr(ob, key);
     }
 
-    public static NewReference tp_getattr(BorrowedReference ob, BorrowedReference key)
-    {
-        CLRObject? clrObj = ManagedType.GetManagedObject(ob) as CLRObject;
-        if (clrObj is null)
-        {
-            return Exceptions.RaiseTypeError("invalid object");
-        }
-
-        NewReference result;
-
-        if (TryGetBuiltins(ob, key, out result))
-        {
-            return result;
-        }
-
-        if (TryGetBoundMethod1(ob, key, nameof(PyIdentifier.__getattr__), out result))
-        {
-            return result;
-        }
-
-        using var objRepr = Runtime.PyObject_Repr(ob);
-        using var keyRepr = Runtime.PyObject_Repr(key);
-        Exceptions.SetError(
-                Exceptions.AttributeError,
-                $"object '{Runtime.GetManagedString(objRepr.BorrowOrThrow())}' has no attribute '{Runtime.GetManagedString(keyRepr.BorrowOrThrow())}'"
-            );
-        return default;
-    }
-
-    private static bool TryGetBoundMethod0(BorrowedReference ob, string keyName, out NewReference result)
+    static bool TryCallBoundMethod0(BorrowedReference ob, string keyName, out NewReference result)
     {
         result = default;
 
+        using var pyType = Runtime.PyObject_Type(ob);
         using var getAttrKey = new PyString(keyName);
-        using var method = Runtime.PyObject_GenericGetAttr(ob, getAttrKey);
-        bool foundMethod = !Exceptions.ErrorOccurred();
-        if (foundMethod && Runtime.PyObject_TypeCheckExact(method.Borrow(), Runtime.PyBoundMethodType))
+        var getattr = Runtime._PyType_Lookup(pyType.Borrow(), getAttrKey);
+        if (getattr.IsNull)
         {
-            using var args = Runtime.PyTuple_New(0);
-            result = Runtime.PyObject_Call(method.Borrow(), args.Borrow(), null);
-            return true;
+            return false;
         }
-        else
-            Exceptions.Clear();
 
-        return false;
+        using var method = Runtime.PyObject_GenericGetAttr(ob, getAttrKey);
+        using var args = Runtime.PyTuple_New(0);
+        result = Runtime.PyObject_Call(method.Borrow(), args.Borrow(), null);
+        return true;
     }
 
-    private static bool TryGetBoundMethod1(BorrowedReference ob, BorrowedReference key, string keyName, out NewReference result)
+    static bool TryCallBoundMethod1(BorrowedReference ob, BorrowedReference key, string keyName, out NewReference result)
     {
         result = default;
 
+        using var pyType = Runtime.PyObject_Type(ob);
         using var getAttrKey = new PyString(keyName);
-        using var method = Runtime.PyObject_GenericGetAttr(ob, getAttrKey);
-        bool foundMethod = !Exceptions.ErrorOccurred();
-        if (foundMethod && Runtime.PyObject_TypeCheckExact(method.Borrow(), Runtime.PyBoundMethodType))
+        var getattr = Runtime._PyType_Lookup(pyType.Borrow(), getAttrKey);
+        if (getattr.IsNull)
         {
-            using var args = Runtime.PyTuple_New(1);
-            Runtime.PyTuple_SetItem(args.Borrow(), 0, key);
-            result = Runtime.PyObject_Call(method.Borrow(), args.Borrow(), null);
-            return true;
+            return false;
         }
-        else
-            Exceptions.Clear();
 
-        return false;
+        using var method = Runtime.PyObject_GenericGetAttr(ob, getAttrKey);
+        using var args = Runtime.PyTuple_New(1);
+        Runtime.PyTuple_SetItem(args.Borrow(), 0, key);
+        result = Runtime.PyObject_Call(method.Borrow(), args.Borrow(), null);
+        return true;
     }
 
-    private static bool TryGetBuiltins(BorrowedReference ob, BorrowedReference key, out NewReference result)
+    static bool TryGetBuiltinAttr(BorrowedReference ob, BorrowedReference key, out NewReference result)
     {
         result = default;
 
