@@ -106,14 +106,18 @@ namespace Python.Runtime
             }
 
             string? name = Runtime.GetManagedString(key);
-            if (name == "__implementation__")
+            if (name != null)
             {
-                return Converter.ToPython(clrObj.inst);
+                if (name == "__implementation__")
+                {
+                    return Converter.ToPython(clrObj.inst);
+                }
+                else if (name == "__raw_implementation__")
+                {
+                    return CLRObject.GetReference(clrObj.inst);
+                }
             }
-            else if (name == "__raw_implementation__")
-            {
-                return CLRObject.GetReference(clrObj.inst);
-            }
+
 
             return Runtime.PyObject_GenericGetAttr(ob, key);
         }
