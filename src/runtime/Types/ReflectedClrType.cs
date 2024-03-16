@@ -267,7 +267,11 @@ internal sealed class ReflectedClrType : PyType
                     return getAttr;
                 }
 
-                Exceptions.SetError(Exceptions.AttributeError, $"");
+                using var objPyRepr = Runtime.PyObject_Repr(ob);
+                using var keyPyRepr = Runtime.PyObject_Repr(key);
+                string objRepr = Runtime.GetManagedString(objPyRepr.Borrow());
+                string keyRepr = Runtime.GetManagedString(keyPyRepr.Borrow());
+                Exceptions.SetError(Exceptions.AttributeError, $"'{objRepr}' object has no attribute '{keyRepr}'");
             }
 
             return getAttro;
