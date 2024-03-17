@@ -177,6 +177,12 @@ namespace Python.Runtime
         public delegate int BP_I32(BorrowedReference ob, IntPtr arg);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate int BPP_I32(BorrowedReference ob, IntPtr a1, IntPtr a2);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate long B_I64(BorrowedReference ob);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         public delegate IntPtr B_P(BorrowedReference ob);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -187,9 +193,6 @@ namespace Python.Runtime
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         public delegate void N_V(NewReference ob);
-
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        public delegate int BPP_I32(BorrowedReference ob, IntPtr a1, IntPtr a2);
     }
 
 
