@@ -294,7 +294,7 @@ namespace Python.Runtime
             Util.WriteIntPtr(type, TypeOffset.tp_itemsize, IntPtr.Zero);
         }
 
-        internal static void InitializeClass(PyType type, ClassBase impl, Type clrType)
+        internal static void InitializeClass(PyType type, ClassBase impl, Type clrType, bool reflected = false)
         {
             // we want to do this after the slot stuff above in case the class itself implements a slot method
             SlotsHolder slotsHolder = CreateSlotsHolder(type);
@@ -306,6 +306,17 @@ namespace Python.Runtime
             // Leverage followup initialization from the Python runtime. Note
             // that the type of the new type must PyType_Type at the time we
             // call this, else PyType_Ready will skip some slot initialization.
+
+            // NOTE:
+            // if this is a reflected type, lets keep these slots empty so
+            // python copies the parent class (also dotnet) slots into this
+            // type. ReflectedCLRType handles overriding these slots if
+            // type has override methods e.g. __str__ or __repr__ overrides
+            if (reflected)
+            {
+                Util.WriteIntPtr(type, TypeOffset.tp_str, IntPtr.Zero);
+                Util.WriteIntPtr(type, TypeOffset.tp_repr, IntPtr.Zero);
+            }
 
             if (!type.IsReady && Runtime.PyType_Ready(type) != 0)
             {
