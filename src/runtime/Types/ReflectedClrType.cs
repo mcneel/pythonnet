@@ -24,7 +24,7 @@ internal sealed class ReflectedClrType : PyType
     /// <remarks>
     /// Returned <see cref="ReflectedClrType"/> might be partially initialized.
     /// </remarks>
-    public static ReflectedClrType GetOrCreate(Type type)
+    public static ReflectedClrType GetOrCreate(Type type, bool reflected = false)
     {
         if (ClassManager.cache.TryGetValue(type, out ReflectedClrType pyType))
         {
@@ -41,7 +41,7 @@ internal sealed class ReflectedClrType : PyType
         // Now we force initialize the Python type object to reflect the given
         // managed type, filling the Python type slots with thunks that
         // point to the managed methods providing the implementation.
-        TypeManager.InitializeClass(pyType, impl, type);
+        TypeManager.InitializeClass(pyType, impl, type, reflected);
 
         return pyType;
     }
@@ -80,7 +80,7 @@ internal sealed class ReflectedClrType : PyType
                 assembly);
 
             ClassManager.cache.Remove(subType);
-            ReflectedClrType pyTypeObj = GetOrCreate(subType);
+            ReflectedClrType pyTypeObj = GetOrCreate(subType, reflected: true);
 
             // by default the class dict will have all the C# methods in it, but as this is a
             // derived class we want the python overrides in there instead if they exist.
@@ -99,6 +99,8 @@ internal sealed class ReflectedClrType : PyType
             var tp_getattro_default = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_getattro), tbFlags);
             Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_getattro, Interop.GetThunk(tp_getattro_default).Address);
 
+            // NOTE:
+            // lets include wrappers that would call python override methods
             using var clsDict = new PyDict(dict);
             using var keys = clsDict.Keys();
             foreach (PyObject pyKey in keys)
@@ -127,12 +129,14 @@ internal sealed class ReflectedClrType : PyType
                     Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_iter, Interop.GetThunk(tp_iter).Address);
                 }
 
+                // include a default tp_str for reflected type so str() can call the overridden __str__
                 if (keyStr.StartsWith(nameof(PyIdentifier.__str__)))
                 {
                     var tp_str = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_str), tbFlags);
                     Util.WriteIntPtr(pyTypeObj, TypeOffset.tp_str, Interop.GetThunk(tp_str).Address);
                 }
 
+                // include a default tp_repr for reflected type so repr() can call the overridden __repr__
                 if (keyStr.StartsWith(nameof(PyIdentifier.__repr__)))
                 {
                     var tp_repr = typeof(ReflectedClrType).GetMethod(nameof(ReflectedClrType.tp_repr), tbFlags);
@@ -269,8 +273,8 @@ internal sealed class ReflectedClrType : PyType
 
                 using var objPyRepr = Runtime.PyObject_Repr(ob);
                 using var keyPyRepr = Runtime.PyObject_Repr(key);
-                string objRepr = Runtime.GetManagedString(objPyRepr.Borrow());
-                string keyRepr = Runtime.GetManagedString(keyPyRepr.Borrow());
+                string? objRepr = Runtime.GetManagedString(objPyRepr.Borrow());
+                string? keyRepr = Runtime.GetManagedString(keyPyRepr.Borrow());
                 Exceptions.SetError(Exceptions.AttributeError, $"'{objRepr}' object has no attribute '{keyRepr}'");
             }
 
@@ -292,9 +296,9 @@ internal sealed class ReflectedClrType : PyType
             return false;
         }
 
-        using var method = Runtime.PyObject_GenericGetAttr(ob, getAttrKey);
-        using var args = Runtime.PyTuple_New(0);
-        result = Runtime.PyObject_Call(method.Borrow(), args.Borrow(), null);
+        using var args = Runtime.PyTuple_New(1);
+        Runtime.PyTuple_SetItem(args.Borrow(), 0, ob);
+        result = Runtime.PyObject_Call(getattr, args.Borrow(), null);
         return true;
     }
 
@@ -310,10 +314,10 @@ internal sealed class ReflectedClrType : PyType
             return false;
         }
 
-        using var method = Runtime.PyObject_GenericGetAttr(ob, getAttrKey);
-        using var args = Runtime.PyTuple_New(1);
-        Runtime.PyTuple_SetItem(args.Borrow(), 0, key);
-        result = Runtime.PyObject_Call(method.Borrow(), args.Borrow(), null);
+        using var args = Runtime.PyTuple_New(2);
+        Runtime.PyTuple_SetItem(args.Borrow(), 0, ob);
+        Runtime.PyTuple_SetItem(args.Borrow(), 1, key);
+        result = Runtime.PyObject_Call(getattr, args.Borrow(), null);
         return true;
     }
 
