@@ -354,7 +354,7 @@ namespace Python.Runtime
 
         private static NewReference DoInstanceCheck(BorrowedReference tp, BorrowedReference args, bool checkType)
         {
-            if (GetManagedObject(tp) is not ClassBase cb || !cb.type.Valid)
+            if (GetManagedObject(tp) is not ClassBase thisType || !thisType.type.Valid)
             {
                 return new NewReference(Runtime.PyFalse);
             }
@@ -366,17 +366,27 @@ namespace Python.Runtime
             }
 
             PyObject arg = argsObj[0];
-            var otherType = checkType ? arg : arg.GetPythonType();
+            PyObject instanceType = checkType ? arg : arg.GetPythonType();
 
-            if (Runtime.PyObject_TYPE(otherType) != PyCLRMetaType)
+            if (Runtime.PyObject_TYPE(instanceType) != PyCLRMetaType)
             {
                 return new NewReference(Runtime.PyFalse);
             }
 
-            if (GetManagedObject(otherType) is ClassBase otherCb && otherCb.type.Valid)
+            ManagedType? instanceClrType = GetManagedObject(instanceType);
+            if (instanceClrType is InterfaceObject interfaceObj
+                    && interfaceObj.type.Valid
+                    && GetManagedObject(arg) is CLRObject clrObj
+                    && clrObj.inst is object instanceObj)
             {
-                return Converter.ToPython(cb.type.Value.IsAssignableFrom(otherCb.type.Value));
+                return Converter.ToPython(thisType.type.Value.IsAssignableFrom(instanceObj.GetType()));
             }
+
+            else if (instanceClrType is ClassBase instanceClassBase && instanceClassBase.type.Valid)
+            {
+                return Converter.ToPython(thisType.type.Value.IsAssignableFrom(instanceClassBase.type.Value));
+            }
+
             return new NewReference(Runtime.PyFalse);
         }
 
