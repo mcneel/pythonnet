@@ -311,8 +311,25 @@ namespace Python.Runtime
             }
             try
             {
-                //if __repr__ is defined, use it
+                // NOTE:
+                // Better repr for System.RuntimeType to match IronPython
+                // <System.RuntimeType object at 0x0000000000000080 [Grasshopper.Kernel.Special.GH_Panel]>
+                if (co.inst is Type type)
+                {
+                    using var typeRepr = GetPythonRepr(ob);
+                    string? typeReprStr = Runtime.GetManagedString(typeRepr.Borrow());
+                    if (typeReprStr is null)
+                    {
+                        return typeRepr;
+                    }
+
+                    typeReprStr = typeReprStr.Replace(">", $" [{type.FullName}]>");
+                    return Runtime.PyString_FromString(typeReprStr);
+                }
+
                 var instType = co.inst.GetType();
+
+                //if __repr__ is defined, use it
                 var methodInfo = instType.GetMethod("__repr__");
                 if (methodInfo != null && methodInfo.IsPublic)
                 {
@@ -327,10 +344,7 @@ namespace Python.Runtime
                 }
 
                 //otherwise use the standard object.__repr__(inst)
-                using var args = Runtime.PyTuple_New(1);
-                Runtime.PyTuple_SetItem(args.Borrow(), 0, ob);
-                using var reprFunc = Runtime.PyObject_GetAttr(Runtime.PyBaseObjectType, PyIdentifier.__repr__);
-                return Runtime.PyObject_Call(reprFunc.Borrow(), args.Borrow(), null);
+                return GetPythonRepr(ob);
             }
             catch (Exception e)
             {
@@ -343,6 +357,13 @@ namespace Python.Runtime
             }
         }
 
+        static NewReference GetPythonRepr(BorrowedReference ob)
+        {
+            using var args = Runtime.PyTuple_New(1);
+            Runtime.PyTuple_SetItem(args.Borrow(), 0, ob);
+            using var reprFunc = Runtime.PyObject_GetAttr(Runtime.PyBaseObjectType, PyIdentifier.__repr__);
+            return Runtime.PyObject_Call(reprFunc.Borrow(), args.Borrow(), null);
+        }
 
         /// <summary>
         /// Standard dealloc implementation for instances of reflected types.
