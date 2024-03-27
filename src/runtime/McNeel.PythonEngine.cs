@@ -513,21 +513,19 @@ namespace Python.Runtime
                                         using var attr = pyObj.GetAttr(item);
                                         all.Add(new PyCompletion(item.ToString()!, GetObjectKind(attr)));
                                     }
-
-                                    return true;
                                 }
                             }
+                            else
+                                foreach (PyObject item in pyObj.Dir())
+                                {
+                                    string name = item.ToString()!;
 
-                            foreach (PyObject item in pyObj.Dir())
-                            {
-                                string name = item.ToString()!;
+                                    if (!privates && name.StartsWith("_"))
+                                        continue;
 
-                                if (!privates && name.StartsWith("_"))
-                                    continue;
-
-                                using var attr = pyObj.GetAttr(item);
-                                all.Add(new PyCompletion(name, GetObjectKind(attr)));
-                            }
+                                    using var attr = pyObj.GetAttr(item);
+                                    all.Add(new PyCompletion(name, GetObjectKind(attr)));
+                                }
 
                             members = all.ToArray();
                             return true;
