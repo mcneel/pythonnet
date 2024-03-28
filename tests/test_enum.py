@@ -176,3 +176,52 @@ def test_enum_conversion():
 
     with pytest.raises(TypeError):
         Test.FieldTest().EnumField = 1
+
+
+def test_byte_enum_to_bool():
+    """Test byte enum to bool"""
+    assert bool(Test.ByteEnum.Zero) == False
+    assert bool(Test.ByteEnum.One) == True
+
+
+def test_sbyte_enum_to_bool():
+    """Test sbyte enum to bool"""
+    assert bool(Test.SByteEnum.Zero) == False
+    assert bool(Test.SByteEnum.One) == True
+
+
+def test_short_enum_to_bool():
+    """Test short enum to bool"""
+    assert bool(Test.ShortEnum.Zero) == False
+    assert bool(Test.ShortEnum.One) == True
+
+
+def test_ushort_enum_to_bool():
+    """Test ushort enum to bool"""
+    assert bool(Test.UShortEnum.Zero) == False
+    assert bool(Test.UShortEnum.One) == True
+
+
+def test_int_enum_to_bool():
+    """Test int enum to bool"""
+    assert bool(Test.IntEnum.Zero) == False
+    assert bool(Test.IntEnum.One) == True
+
+
+def test_uint_enum_to_bool():
+    """Test uint enum to bool"""
+    assert bool(Test.UIntEnum.Zero) == False
+    assert bool(Test.UIntEnum.One) == True
+
+
+def test_long_enum_to_bool():
+    """Test long enum to bool"""
+    assert bool(Test.LongEnum.Zero) == False
+    assert bool(Test.LongEnum.One) == True
+
+
+def test_ulong_enum_to_bool():
+    """Test ulong enum to bool"""
+    assert bool(Test.ULongEnum.Zero) == False
+    assert bool(Test.ULongEnum.One) == True
+
