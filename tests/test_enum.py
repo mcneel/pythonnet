@@ -141,6 +141,14 @@ def test_enum_undefined_value():
     # explicitly permit undefined values
     Test.FieldTest().EnumField = Test.ShortEnum(20, True)
 
+    # second argument must be a boolean
+    with pytest.raises(TypeError):
+        Test.FieldTest().EnumField = Test.ShortEnum(2, 2)
+
+    # do not allow more than two arguments
+    with pytest.raises(TypeError):
+        Test.FieldTest().EnumField = Test.ShortEnum(2, 2, 3)
+
 
 def test_enum_repr():
     """Test enumeration repr."""
