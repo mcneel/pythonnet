@@ -333,6 +333,31 @@ namespace Python.Runtime
 
                 if (!Converter.ToManaged(op, rtype, out object? result, true))
                 {
+                    // NOTE:
+                    // allow conversion of int values from a python delegate
+                    // if expected return value is bool. Converter class
+                    // does not do this by defaults since that would allow
+                    // assignment of integer values to dotnet boolean members.
+                    // e.g. this should fail
+                    // dotnetObject.BooleanField = 1
+                    if (typeof(bool).IsAssignableFrom(rtype))
+                    {
+                        int truthy = Runtime.PyObject_IsTrue(op);
+                        if (truthy > 0)
+                        {
+                            Exceptions.Clear();
+
+                            if (truthy > 1)
+                            {
+                                result = true;
+                                return true;
+                            }
+
+                            result = false;
+                            return true;
+                        }
+                    }
+
                     throw PythonException.ThrowLastAsClrException();
                 }
 
