@@ -86,11 +86,6 @@ def test_ulong_enum():
     assert Test.ULongEnum.Two == Test.ULongEnum(2)
 
 
-def test_simple_enum_to_int():
-    from System import DayOfWeek
-    assert int(DayOfWeek.Sunday) == 0
-
-
 def test_long_enum_to_int():
     assert int(Test.LongEnum.Max) == 9223372036854775807
     assert int(Test.LongEnum.Min) == -9223372036854775808
@@ -104,8 +99,7 @@ def test_instantiate_enum_fails():
     """Test that instantiation of an enum class fails."""
     from System import DayOfWeek
 
-    with pytest.raises(TypeError):
-        _ = DayOfWeek()
+    assert DayOfWeek() == DayOfWeek.Sunday
 
 
 def test_subclass_enum_fails():
@@ -142,6 +136,14 @@ def test_enum_undefined_value():
     # explicitly permit undefined values
     Test.FieldTest().EnumField = Test.ShortEnum(20, True)
 
+    # second argument must be a boolean
+    with pytest.raises(TypeError):
+        Test.FieldTest().EnumField = Test.ShortEnum(2, 2)
+
+    # do not allow more than two arguments
+    with pytest.raises(TypeError):
+        Test.FieldTest().EnumField = Test.ShortEnum(2, 2, 3)
+
 
 def test_enum_repr():
     """Test enumeration repr."""
@@ -169,3 +171,100 @@ def test_enum_conversion():
 
     with pytest.raises(TypeError):
         Test.FieldTest().EnumField = 1
+
+
+def test_byte_enum_to_int():
+    """Test byte enum to int"""
+    assert bool(Test.ByteEnum.Zero) == 0
+    assert bool(Test.ByteEnum.One) == 1
+
+
+def test_sbyte_enum_to_int():
+    """Test sbyte enum to int"""
+    assert bool(Test.SByteEnum.Zero) == 0
+    assert bool(Test.SByteEnum.One) == 1
+
+
+def test_short_enum_to_int():
+    """Test short enum to int"""
+    assert bool(Test.ShortEnum.Zero) == 0
+    assert bool(Test.ShortEnum.One) == 1
+
+
+def test_ushort_enum_to_int():
+    """Test ushort enum to int"""
+    assert bool(Test.UShortEnum.Zero) == 0
+    assert bool(Test.UShortEnum.One) == 1
+
+
+def test_int_enum_to_int():
+    """Test int enum to int"""
+    assert bool(Test.IntEnum.Zero) == 0
+    assert bool(Test.IntEnum.One) == 1
+
+
+def test_uint_enum_to_int():
+    """Test uint enum to int"""
+    assert bool(Test.UIntEnum.Zero) == 0
+    assert bool(Test.UIntEnum.One) == 1
+
+
+def test_long_enum_to_int():
+    """Test long enum to int"""
+    assert bool(Test.LongEnum.Zero) == 0
+    assert bool(Test.LongEnum.One) == 1
+
+
+def test_ulong_enum_to_int():
+    """Test ulong enum to int"""
+    assert bool(Test.ULongEnum.Zero) == 0
+    assert bool(Test.ULongEnum.One) == 1
+
+
+def test_byte_enum_to_bool():
+    """Test byte enum to bool"""
+    assert bool(Test.ByteEnum.Zero) == False
+    assert bool(Test.ByteEnum.One) == True
+
+
+def test_sbyte_enum_to_bool():
+    """Test sbyte enum to bool"""
+    assert bool(Test.SByteEnum.Zero) == False
+    assert bool(Test.SByteEnum.One) == True
+
+
+def test_short_enum_to_bool():
+    """Test short enum to bool"""
+    assert bool(Test.ShortEnum.Zero) == False
+    assert bool(Test.ShortEnum.One) == True
+
+
+def test_ushort_enum_to_bool():
+    """Test ushort enum to bool"""
+    assert bool(Test.UShortEnum.Zero) == False
+    assert bool(Test.UShortEnum.One) == True
+
+
+def test_int_enum_to_bool():
+    """Test int enum to bool"""
+    assert bool(Test.IntEnum.Zero) == False
+    assert bool(Test.IntEnum.One) == True
+
+
+def test_uint_enum_to_bool():
+    """Test uint enum to bool"""
+    assert bool(Test.UIntEnum.Zero) == False
+    assert bool(Test.UIntEnum.One) == True
+
+
+def test_long_enum_to_bool():
+    """Test long enum to bool"""
+    assert bool(Test.LongEnum.Zero) == False
+    assert bool(Test.LongEnum.One) == True
+
+
+def test_ulong_enum_to_bool():
+    """Test ulong enum to bool"""
+    assert bool(Test.ULongEnum.Zero) == False
+    assert bool(Test.ULongEnum.One) == True
+
