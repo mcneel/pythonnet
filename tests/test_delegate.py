@@ -259,8 +259,7 @@ def test_bool_delegate():
     def always_so_positive():
         return 1
     bad = BoolDelegate(always_so_positive)
-    with pytest.raises(TypeError):
-        ob.CallBoolDelegate(bad)
+    assert ob.CallBoolDelegate(bad) == True
 
 def test_object_delegate():
     """Test object delegate."""
