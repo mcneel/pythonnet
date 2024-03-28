@@ -36,10 +36,7 @@ namespace Python.Runtime
             type = tp;
         }
 
-        internal virtual bool CanSubclass()
-        {
-            return !type.Value.IsEnum;
-        }
+        internal virtual bool CanSubclass() => true;
 
         public readonly static Dictionary<string, int> CilToPyOpMap = new()
         {
@@ -268,7 +265,6 @@ namespace Python.Runtime
                 return 0;
             }
         }
-
 
         /// <summary>
         /// Standard __str__ implementation for instances of reflected types.

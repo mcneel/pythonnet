@@ -172,6 +172,11 @@ namespace Python.Runtime
                 impl = new DelegateObject(type);
             }
 
+            else if (type.IsEnum)
+            {
+                impl = new EnumObject(type);
+            }
+
             else if (type.IsArray)
             {
                 impl = new ArrayObject(type);

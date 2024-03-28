@@ -49,38 +49,6 @@ namespace Python.Runtime
             return Runtime.PyString_FromString(str);
         }
 
-        private static string ConvertFlags(Enum value)
-        {
-            Type primitiveType = value.GetType().GetEnumUnderlyingType();
-            string format = "X" + (Marshal.SizeOf(primitiveType) * 2).ToString(CultureInfo.InvariantCulture);
-            var primitive = (IFormattable)Convert.ChangeType(value, primitiveType);
-            return "0x" + primitive.ToString(format, null);
-
-        }
-
-        private static string ConvertValue(Enum value)
-        {
-            Type primitiveType = value.GetType().GetEnumUnderlyingType();
-            return Convert.ChangeType(value, primitiveType).ToString()!;
-        }
-
-        /// <summary>
-        /// given an enum, write a __repr__ string formatted in the same
-        /// way as a python repr string. Something like:
-        ///   '&lt;Color.GREEN: 2&gt;';
-        /// with a binary value for [Flags] enums
-        /// </summary>
-        /// <param name="inst">Instace of the enum object</param>
-        /// <returns></returns>
-        private static string GetEnumReprString(Enum inst)
-        {
-            var obType = inst.GetType();
-
-            string strValue2 = obType.IsFlagsEnum() ? ConvertFlags(inst) : ConvertValue(inst);
-
-            var repr = $"<{obType.Name}.{inst}: {strValue2}>";
-            return repr;
-        }
 
         /// <summary>
         /// ClassObject __repr__ implementation.
@@ -90,10 +58,6 @@ namespace Python.Runtime
             if (GetManagedObject(ob) is not CLRObject co)
             {
                 return Exceptions.RaiseTypeError("invalid object");
-            }
-            if (co.inst.GetType().IsEnum)
-            {
-                return Runtime.PyString_FromString(GetEnumReprString((Enum)co.inst));
             }
 
             return ClassBase.tp_repr(ob);
@@ -130,11 +94,6 @@ namespace Python.Runtime
             {
                 Exceptions.SetError(Exceptions.TypeError, "cannot instantiate abstract class");
                 return default;
-            }
-
-            if (type.IsEnum)
-            {
-                return NewEnum(type, args, tp);
             }
 
             if (type == typeof(string))
@@ -326,7 +285,6 @@ namespace Python.Runtime
 
             Type clrType = type.Value;
             return clrType.IsPrimitive
-                || clrType.IsEnum
                 || clrType == typeof(string)
                 || IsGenericNullable(clrType);
         }
@@ -344,43 +302,6 @@ namespace Python.Runtime
 
         protected virtual NewReference NewObjectToPython(object obj, BorrowedReference tp)
             => CLRObject.GetReference(obj, tp);
-
-        private static NewReference NewEnum(Type type, BorrowedReference args, BorrowedReference tp)
-        {
-            nint argCount = Runtime.PyTuple_Size(args);
-            bool allowUnchecked = false;
-            if (argCount == 2)
-            {
-                var allow = Runtime.PyTuple_GetItem(args, 1);
-                if (!Converter.ToManaged(allow, typeof(bool), out var allowObj, true) || allowObj is null)
-                {
-                    Exceptions.RaiseTypeError("second argument to enum constructor must be a boolean");
-                    return default;
-                }
-                allowUnchecked |= (bool)allowObj;
-            }
-
-            if (argCount < 1 || argCount > 2)
-            {
-                Exceptions.SetError(Exceptions.TypeError, "no constructors match given arguments");
-                return default;
-            }
-
-            var op = Runtime.PyTuple_GetItem(args, 0);
-            if (!Converter.ToManaged(op, type.GetEnumUnderlyingType(), out object? result, true))
-            {
-                return default;
-            }
-
-            if (!allowUnchecked && !Enum.IsDefined(type, result) && !type.IsFlagsEnum())
-            {
-                Exceptions.SetError(Exceptions.ValueError, "Invalid enumeration value. Pass True as the second argument if unchecked conversion is desired");
-                return default;
-            }
-
-            object enumValue = Enum.ToObject(type, result);
-            return CLRObject.GetReference(enumValue, tp);
-        }
 
         private static NewReference NewNullable(Type type, BorrowedReference args, BorrowedReference kw, BorrowedReference tp)
         {
