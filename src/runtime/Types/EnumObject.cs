@@ -131,34 +131,13 @@ namespace Python.Runtime
             }
         }
 
-        //public static NewReference tp_str(BorrowedReference ob)
-        //{
-        //    var co = GetManagedObject(ob) as CLRObject;
-        //    if (co == null)
-        //    {
-        //        return Exceptions.RaiseTypeError("invalid enum object");
-        //    }
-        //    try
-        //    {
-        //        return Runtime.PyString_FromString(co.inst.ToString());
-        //    }
-        //    catch (Exception e)
-        //    {
-        //        if (e.InnerException != null)
-        //        {
-        //            e = e.InnerException;
-        //        }
-        //        Exceptions.SetError(e);
-        //        return default;
-        //    }
-        //}
-
         public new static NewReference tp_repr(BorrowedReference ob)
         {
             if (GetManagedObject(ob) is not CLRObject co)
             {
-                return Exceptions.RaiseTypeError("invalid object");
+                return Exceptions.RaiseTypeError("invalid enum object");
             }
+
             if (co.inst.GetType().IsEnum)
             {
                 return Runtime.PyString_FromString(GetEnumReprString((Enum)co.inst));
