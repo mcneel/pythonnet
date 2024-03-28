@@ -330,6 +330,31 @@ namespace Python.Runtime
             return default;
         }
 
+        /// <summary>
+        /// Raises a <see cref="ValueError"/> and attaches any existing exception as its cause.
+        /// </summary>
+        /// <param name="message">The exception message</param>
+        /// <returns><c>null</c></returns>
+        internal static NewReference RaiseValueError(string message)
+        {
+            var cause = PythonException.FetchCurrentOrNullRaw();
+            cause?.Normalize();
+
+            Exceptions.SetError(Exceptions.ValueError, message);
+
+            if (cause is null) return default;
+
+            var typeError = PythonException.FetchCurrentRaw();
+            typeError.Normalize();
+
+            Runtime.PyException_SetCause(
+                typeError.Value!,
+                new NewReference(cause.Value!).Steal());
+            typeError.Restore();
+
+            return default;
+        }
+
         // 2010-11-16: Arranged in python (2.6 & 2.7) source header file order
         /* Predefined exceptions are
            public static variables on the Exceptions class filled in from
