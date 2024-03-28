@@ -104,8 +104,7 @@ def test_instantiate_enum_fails():
     """Test that instantiation of an enum class fails."""
     from System import DayOfWeek
 
-    with pytest.raises(TypeError):
-        _ = DayOfWeek()
+    assert DayOfWeek() == DayOfWeek.Sunday
 
 
 def test_subclass_enum_fails():
