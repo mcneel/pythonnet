@@ -21,6 +21,7 @@ namespace Python.Runtime
         internal static int mp_length { get; private set; }
         internal static int mp_subscript { get; private set; }
         internal static int name { get; private set; }
+        internal static int nb_bool { get; private set; }
         internal static int nb_positive { get; private set; }
         internal static int nb_negative { get; private set; }
         internal static int nb_add { get; private set; }
