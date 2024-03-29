@@ -963,6 +963,8 @@ namespace Python.Runtime
             var buffer = OutputEncoding.GetBytes(content);
             Write(buffer, 0, buffer.Length);
         }
+
+        public int fileno() => 1;
         #endregion
 
         #region Stream
