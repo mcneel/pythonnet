@@ -288,11 +288,15 @@ namespace Python.Runtime
                                                 && !alreadyOverriden
                                                 && !m.IsPrivate
                                                 && !m.IsAssembly
+                                                // FIXME:
+                                                // crude way of filtering out assembly-internal methods
+                                                // 'private protected'
+                                                // 'internal override'
+                                                && !m.IsFamilyAndAssembly
                                                 // overriding generic virtual methods is not supported
                                                 // so a call to that should be deferred to the base class method.
                                                 && !m.IsGenericMethod
                                                 && !m.Attributes.HasFlag(MethodAttributes.Final)
-                                                && !m.Attributes.HasFlag(MethodAttributes.FamANDAssem)
                                                 && !(IsMethod<OriginalMethod>(m) || IsMethod<RedirectedMethod>(m));
                                          })
                                         .Concat(baseInterfaces.SelectMany(x => x.GetMethods()))

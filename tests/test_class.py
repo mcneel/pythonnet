@@ -329,3 +329,15 @@ def test_callable():
 
     assert callable(System.String("foo")) == False
     assert callable(System.Action(foo)) == True
+
+
+def test_derive_class_with_internal_virutal_method():
+    """Test subclassing classes that have internal override methods work"""
+
+    # this class definition should succeed
+    class MyClass(Test.ClassWithInternal):
+        def __init__(self):
+            pass
+
+    MyClass()
+
