@@ -71,4 +71,17 @@ namespace Python.Test
             }
         }
     }
+
+    public class ClassWithInternalBase
+    {
+        private protected virtual bool ThisShouldBeAccessibleFromPythonDerived() => false;
+    }
+
+    public class ClassWithInternal : ClassWithInternalBase
+    {
+        private protected override bool ThisShouldBeAccessibleFromPythonDerived()
+        {
+            return base.ThisShouldBeAccessibleFromPythonDerived();
+        }
+    }
 }

@@ -284,15 +284,20 @@ namespace Python.Runtime
                                                  ((m.Name.StartsWith("get_") || m.Name.StartsWith("set_"))
                                                      && pyProperties.Contains(m.Name.Substring(4)));
 
-                                             return !alreadyOverriden
+                                             return m.Attributes.HasFlag(MethodAttributes.Virtual)
+                                                && !alreadyOverriden
                                                 && !m.IsPrivate
                                                 && !m.IsAssembly
-                                                && m.Attributes.HasFlag(MethodAttributes.Virtual)
-                                                    && !m.Attributes.HasFlag(MethodAttributes.Final)
-                                                    // overriding generic virtual methods is not supported
-                                                    // so a call to that should be deferred to the base class method.
-                                                    && !m.IsGenericMethod
-                                                    && !(IsMethod<OriginalMethod>(m) || IsMethod<RedirectedMethod>(m));
+                                                // FIXME:
+                                                // crude way of filtering out assembly-internal methods
+                                                // 'private protected'
+                                                // 'internal override'
+                                                && !m.IsFamilyAndAssembly
+                                                // overriding generic virtual methods is not supported
+                                                // so a call to that should be deferred to the base class method.
+                                                && !m.IsGenericMethod
+                                                && !m.Attributes.HasFlag(MethodAttributes.Final)
+                                                && !(IsMethod<OriginalMethod>(m) || IsMethod<RedirectedMethod>(m));
                                          })
                                         .Concat(baseInterfaces.SelectMany(x => x.GetMethods()))
                                         .ToList();
