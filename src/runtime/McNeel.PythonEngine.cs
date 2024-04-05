@@ -556,6 +556,26 @@ namespace Python.Runtime
             return false;
         }
 
+        public bool TryGetFunctionSignature(object pyObject, out string signature)
+        {
+            signature = default;
+
+            using (Py.GIL())
+            using (PyObject pyObj = pyObject.ToPython())
+            {
+                if (pyObj.IsCallable())
+                {
+                    using PyObject threading = Py.Import("inspect");
+                    using PyObject callableSignature = threading.InvokeMethod("signature", pyObj);
+                    using PyObject callableName = pyObj.GetAttr(nameof(PyIdentifier.__name__));
+                    signature = callableName.ToString() + callableSignature.ToString();
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         public bool Evaluate<T>(string pythonCode, object locals, out T? value)
         {
             value = default;
