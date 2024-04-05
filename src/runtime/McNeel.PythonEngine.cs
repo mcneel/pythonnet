@@ -639,7 +639,7 @@ namespace Python.Runtime
 
             try
             {
-                pyscope.Set("__file__", pythonFile ?? string.Empty);
+                pyscope.Set(nameof(PyIdentifier.__file__), pythonFile ?? string.Empty);
 
                 // add default references
                 if (beforeScript is string)
@@ -673,7 +673,7 @@ namespace Python.Runtime
         PyModule PrepareScope(string scopeName, string pythonFile)
         {
             PyModule pyscope = Py.CreateScope(scopeName);
-            pyscope.Set("__file__", pythonFile ?? string.Empty);
+            pyscope.Set(nameof(PyIdentifier.__file__), pythonFile ?? string.Empty);
             return pyscope;
         }
 
