@@ -776,11 +776,11 @@ namespace Python.Runtime
                     switch (item)
                     {
                         case KeyValuePair<object, object> pair:
-                            pyDict[MarshInput(pair.Key, context)] = MarshInput(pair.Key, context);
+                            pyDict[MarshInput(pair.Key, context)] = MarshInput(pair.Value, context);
                             break;
 
                         case DictionaryEntry entry:
-                            pyDict[MarshInput(entry.Key, context)] = MarshInput(entry.Key, context);
+                            pyDict[MarshInput(entry.Key, context)] = MarshInput(entry.Value, context);
                             break;
                     }
                 }
