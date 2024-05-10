@@ -953,7 +953,13 @@ namespace Python.Runtime
                     }
 
                     using var methodNameObj = new PyString(pyMethodName);
-                    using PyObject method = pyself.GetAttr(methodNameObj);
+                    //using PyObject method = pyself.GetAttr(methodNameObj);
+                    using NewReference op = Runtime.PyObject_GetAttr(pyself.BorrowNullable(), methodNameObj.BorrowNullable());
+                    if (op.IsNull())
+                    {
+                        return default;
+                    }
+                    using PyObject method = new PyObject(op.StealNullable());
                     BorrowedReference dt = Runtime.PyObject_TYPE(method);
                     if (method.Reference != Runtime.PyNone && dt != Runtime.PyMethodWrapperType)
                     {
