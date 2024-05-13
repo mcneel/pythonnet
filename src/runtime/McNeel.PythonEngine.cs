@@ -510,8 +510,28 @@ namespace Python.Runtime
                                 {
                                     foreach (PyObject item in list)
                                     {
+                                        string key = item.ToString()!;
+
+                                        if (!privates && key.StartsWith("_"))
+                                            continue;
+
                                         using var attr = pyObj.GetAttr(item);
-                                        all.Add(new PyCompletion(item.ToString()!, GetObjectKind(attr)));
+                                        all.Add(new PyCompletion(key, GetObjectKind(attr)));
+                                    }
+                                }
+                            }
+                            else if (pyObj.HasAttr(nameof(PyIdentifier.__dict__)))
+                            {
+                                using (dynamic __dict__ = pyObj.GetAttr(nameof(PyIdentifier.__dict__)))
+                                {
+                                    // __dict__ is either a 'dict' or a 'mappingproxy'
+                                    foreach (string key in __dict__.keys())
+                                    {
+                                        if (!privates && key.StartsWith("_"))
+                                            continue;
+
+                                        using var attr = pyObj.GetAttr(key);
+                                        all.Add(new PyCompletion(key, GetObjectKind(attr)));
                                     }
                                 }
                             }
