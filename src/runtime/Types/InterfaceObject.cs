@@ -127,7 +127,8 @@ namespace Python.Runtime
                         Exceptions.Clear();
 
                         using var pyObj = Converter.ToPython(clrObj.inst);
-                        return Runtime.PyObject_GenericGetAttr(pyObj.Borrow(), key);
+                        var get = Runtime.PyObject_GenericGetAttr(pyObj.Borrow(), key);
+                        return get;
                     }
                     return value;
                 }
@@ -136,6 +137,48 @@ namespace Python.Runtime
 
             return Runtime.PyObject_GenericGetAttr(ob, key);
         }
+
+        public static int tp_setattro(BorrowedReference ob, BorrowedReference key, BorrowedReference value)
+        {
+            var clrObj = (CLRObject)GetManagedObject(ob)!;
+
+            if (!Runtime.PyString_Check(key))
+            {
+                Exceptions.RaiseTypeError("string expected");
+                return -1;
+            }
+
+            string? name = Runtime.GetManagedString(key);
+            if (name != null)
+            {
+                if (name == "__implementation__"
+                        || name == "__raw_implementation__")
+                {
+                    Exceptions.SetError(Exceptions.AttributeError, "attribute is read-only");
+                    return -1;
+                }
+                else
+                {
+                    // try set attr to wrapped object first we we do not
+                    // add attributes to the object dictionary
+                    using var pyObj = Converter.ToPython(clrObj.inst);
+                    int res = Runtime.PyObject_GenericSetAttr(pyObj.Borrow(), key, value);
+                    if (Exceptions.ErrorOccurred())
+                    {
+                        // if that didn't work, clear errors
+                        // and try set to pure interface wrapper
+                        Exceptions.Clear();
+
+                        return Runtime.PyObject_GenericSetAttr(ob, key, value);
+                    }
+                    return res;
+                }
+            }
+
+
+            return Runtime.PyObject_GenericSetAttr(ob, key, value);
+        }
+
 
         protected override void OnDeserialization(object sender)
         {
