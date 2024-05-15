@@ -161,3 +161,26 @@ def test_methods_of_Object_are_available():
     assert clrVal.GetHashCode() == i.GetHashCode()
     assert clrVal.GetType() == i.GetType()
     assert clrVal.ToString() == i.ToString()
+
+
+def test_interface_getset_can_set_interface_property():
+    # tests an interface instance can set properties
+    # on the wrapped object if they are not part of interface
+
+    from Python.Test import GetSetInterfacePropsTest
+
+    ob = GetSetInterfacePropsTest()
+    ob.Value = True
+
+    assert ob.ValueNotInInterfaceTest == True
+
+def test_interface_getset_can_set_wrapped_object_property():
+    # tests an interface instance can set properties
+    # on the wrapped object if they are not part of interface
+
+    from Python.Test import GetSetInterfacePropsTest
+
+    ob = GetSetInterfacePropsTest()
+    ob.PropertyNotInInterface = True
+
+    assert ob.PropertyNotInInterfaceTest == True
