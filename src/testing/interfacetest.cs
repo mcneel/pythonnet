@@ -94,6 +94,7 @@ namespace Python.Test
         }
     }
 
+
     public interface IGenericInterface<T>
     {
         public T Get(T x);
@@ -112,6 +113,30 @@ namespace Python.Test
         public GenericInterfaceUser(IGenericInterface<T> some, T x)
         {
             some.Get(x);
+        }
+    }
+
+    public interface IGetSetTest
+    {
+        public bool Value { get; set; }
+    }
+
+    public class GetSetInterfacePropsTest : IGetSetTest
+    {
+        public bool ValueNotInInterfaceTest = false;
+
+        public bool Value
+        {
+            get => ValueNotInInterfaceTest;
+            set => ValueNotInInterfaceTest = value;
+        }
+
+        public bool PropertyNotInInterfaceTest = false;
+
+        public bool PropertyNotInInterface
+        {
+            get => PropertyNotInInterfaceTest;
+            set => PropertyNotInInterfaceTest = value;
         }
     }
 }
