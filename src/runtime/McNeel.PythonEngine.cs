@@ -743,10 +743,16 @@ namespace Python.Runtime
             public void Pop() => _parents.Pop();
         }
 
+        public object CreateMarshContext() => new MarshContext();
+
+        public object CreatePyList() => new PyList();
+
         // NOTE:
         // ensures incoming data is marshalled into
         // closest-matching Python objects
-        public PyObject MarshInput(object value) => MarshInput(value, new MarshContext());
+        public object MarshInput(object value) => MarshInput(value, new MarshContext());
+
+        public object MarshInput(object value, object context) => MarshInput(value, (MarshContext)context);
 
         PyObject MarshInput(object value, MarshContext context)
         {
@@ -770,47 +776,54 @@ namespace Python.Runtime
             // marshall dotnet lists and dictionaries into python list and dict
             if (IsGenericType(valueType, typeof(List<>)))
             {
-                IList list = (IList)value;
-
-                context.Push(list);
-
-                PyList pyList = new PyList();
-                foreach (object obj in list)
-                {
-                    pyList.Append(MarshInput(obj, context));
-                }
-
-                context.Pop();
-
-                return pyList;
+                return MarshInputList((IList)value, context);
             }
 
             if (IsGenericType(valueType, typeof(Dictionary<,>)))
             {
-                IDictionary dict = (IDictionary)value;
-                context.Push(dict);
-
-                PyDict pyDict = new PyDict();
-                foreach (object item in dict)
-                {
-                    switch (item)
-                    {
-                        case KeyValuePair<object, object> pair:
-                            pyDict[MarshInput(pair.Key, context)] = MarshInput(pair.Value, context);
-                            break;
-
-                        case DictionaryEntry entry:
-                            pyDict[MarshInput(entry.Key, context)] = MarshInput(entry.Value, context);
-                            break;
-                    }
-                }
-
-                context.Pop();
-
-                return pyDict;
+                return MarshInputDict((IDictionary)value, context);
             }
 
             return MarshToPyObject(value);
+        }
+
+        PyObject MarshInputList(IList value, MarshContext context)
+        {
+            context.Push(value);
+
+            PyList pyList = new PyList();
+            foreach (object obj in value)
+            {
+                pyList.Append(MarshInput(obj, context));
+            }
+
+            context.Pop();
+
+            return pyList;
+        }
+
+        PyObject MarshInputDict(IDictionary value, MarshContext context)
+        {
+            context.Push(value);
+
+            PyDict pyDict = new PyDict();
+            foreach (object item in value)
+            {
+                switch (item)
+                {
+                    case KeyValuePair<object, object> pair:
+                        pyDict[MarshInput(pair.Key, context)] = MarshInput(pair.Value, context);
+                        break;
+
+                    case DictionaryEntry entry:
+                        pyDict[MarshInput(entry.Key, context)] = MarshInput(entry.Value, context);
+                        break;
+                }
+            }
+
+            context.Pop();
+
+            return pyDict;
         }
 
         PyObject MarshToPyObject(object value)
@@ -823,6 +836,8 @@ namespace Python.Runtime
         // ensures outgoing data is marshalled into
         // closest-matching dotnet objects
         public object MarshOutput(object value) => MarshOutput(value, new MarshContext());
+
+        public object MarshOutput(object value, object context) => MarshOutput(value, (MarshContext)context);
 
         object MarshOutput(object value, MarshContext context)
         {
@@ -850,29 +865,10 @@ namespace Python.Runtime
                     return fromPylist;
 
                 case List<object> list:
-                    context.Push(list);
-
-                    var fromClrList = new List<object>();
-                    foreach (object obj in list)
-                    {
-                        fromClrList.Add(MarshOutput(obj, context));
-                    }
-
-                    context.Pop();
-
-                    return fromClrList;
+                    return MarshOutputList(list, context);
 
                 case Dictionary<object, object> dict:
-                    context.Push(dict);
-
-                    var fromClrDict = dict.Select(p =>
-                    {
-                        return new KeyValuePair<object, object>(MarshOutput(p.Key, context), MarshOutput(p.Value, context));
-                    }).ToDictionary(p => p.Key, p => p.Value);
-
-                    context.Pop();
-
-                    return fromClrDict;
+                    return MarshOutputDict(dict, context);
 
                 case PyObject pyObj:
                     return MarshFromPyObject(pyObj, context);
@@ -979,6 +975,35 @@ namespace Python.Runtime
             }
 
             return pyObj;
+        }
+
+        object MarshOutputList(List<object> value, MarshContext context)
+        {
+            context.Push(value);
+
+            var fromClrList = new List<object>();
+            foreach (object obj in value)
+            {
+                fromClrList.Add(MarshOutput(obj, context));
+            }
+
+            context.Pop();
+
+            return fromClrList;
+        }
+
+        object MarshOutputDict(Dictionary<object, object> value, MarshContext context)
+        {
+            context.Push(value);
+
+            var fromClrDict = value.Select(p =>
+            {
+                return new KeyValuePair<object, object>(MarshOutput(p.Key, context), MarshOutput(p.Value, context));
+            }).ToDictionary(p => p.Key, p => p.Value);
+
+            context.Pop();
+
+            return fromClrDict;
         }
 
         static bool IsGenericType(Type type, Type genericType)
