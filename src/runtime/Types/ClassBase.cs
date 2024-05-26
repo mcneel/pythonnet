@@ -324,18 +324,24 @@ namespace Python.Runtime
                 }
 
                 var instType = co.inst.GetType();
-
-                //if __repr__ is defined, use it
-                var methodInfo = instType.GetMethod("__repr__");
-                if (methodInfo != null && methodInfo.IsPublic)
+                // NOTE:
+                // Only do this for types from this assembly otherwise the signature
+                // of __repr__ might be different (e.g. IronPython types) and
+                // .Invoke will throw a parameter mismatch exception
+                if (ReferenceEquals(instType.Assembly, typeof(ClassBase).Assembly))
                 {
-                    if (methodInfo.Invoke(co.inst, null) is string reprString)
+                    //if __repr__ is defined, use it
+                    var methodInfo = instType.GetMethod("__repr__");
+                    if (methodInfo != null && methodInfo.IsPublic)
                     {
-                        return Runtime.PyString_FromString(reprString);
-                    }
-                    else
-                    {
-                        return new NewReference(Runtime.PyNone);
+                        if (methodInfo.Invoke(co.inst, null) is string reprString)
+                        {
+                            return Runtime.PyString_FromString(reprString);
+                        }
+                        else
+                        {
+                            return new NewReference(Runtime.PyNone);
+                        }
                     }
                 }
 
