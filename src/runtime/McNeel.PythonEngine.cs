@@ -266,24 +266,26 @@ namespace Python.Runtime
         #endregion
 
         #region Standard IO
-        public void SetStdIO(Stream stdin, Stream stdout)
+        public void SetStdIO(Stream stdout)
         {
             using (Py.GIL())
             {
                 using var sys = Runtime.PyImport_ImportModule("sys");
                 using (PyObject sysObj = sys.MoveToPyObject())
                 {
-                    using var stdio = PyObject.FromManagedObject(
-                        new RhinoCodePythonEngineIO(stdin, stdout)
-                    );
-                    sysObj.SetAttr("stdin", stdio);
+                    if (sysObj.GetAttr("stdout")
+                              .AsManagedObject(typeof(RhinoCodePythonEngineIO)) is RhinoCodePythonEngineIO currentStdout)
+                    {
+                        currentStdout.Dispose();
+                    }
+
+                    using var stdio = PyObject.FromManagedObject(new RhinoCodePythonEngineIO(stdout));
                     sysObj.SetAttr("stdout", stdio);
-                    sysObj.SetAttr("stderr", stdio);
                 }
             }
         }
 
-        public void ClearStdIO() => SetStdIO(null, null);
+        public void ClearStdIO() => SetStdIO(null);
         #endregion
 
         #region Execution
@@ -1027,10 +1029,9 @@ namespace Python.Runtime
     [SuppressMessage("Python.Runtime", "IDE1006")]
     public class RhinoCodePythonEngineIO : Stream, IDisposable
     {
-        readonly Stream _stdin = null;
-        readonly Stream _stdout = null;
+        Stream _stdout = default;
 
-        public RhinoCodePythonEngineIO(Stream stdin, Stream stdout) { _stdin = stdin; _stdout = stdout; }
+        public RhinoCodePythonEngineIO(Stream stdout) { _stdout = stdout; }
 
         #region Python stream
         public bool isatty() => false;
@@ -1062,17 +1063,27 @@ namespace Python.Runtime
         #region Stream
         public Encoding OutputEncoding { get; set; } = Encoding.UTF8;
 
-        public override bool CanRead => true;
+        public override bool CanRead => false;
         public override bool CanWrite => true;
         public override bool CanSeek => false;
         public override long Length => _stdout?.Length ?? 0;
         public override long Position { get => _stdout?.Position ?? 0; set { if (_stdout is null) return; _stdout.Position = value; } }
         public override long Seek(long offset, SeekOrigin origin) => _stdout?.Seek(offset, origin) ?? 0;
         public override void SetLength(long value) => _stdout.SetLength(value);
-        public override int Read(byte[] buffer, int offset, int count) => _stdin?.Read(buffer, offset, count) ?? 0;
+        public override int Read(byte[] buffer, int offset, int count) => 0;
         public override void Write(byte[] buffer, int offset, int count) => _stdout?.Write(buffer, offset, count);
         public override void Flush() => _stdout?.Flush();
         #endregion
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _stdout = default;
+            }
+
+            base.Dispose(disposing);
+        }
     }
 }
 #pragma warning restore
