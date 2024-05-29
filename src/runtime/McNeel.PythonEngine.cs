@@ -273,10 +273,11 @@ namespace Python.Runtime
                 using var sys = Runtime.PyImport_ImportModule("sys");
                 using (PyObject sysObj = sys.MoveToPyObject())
                 {
-                    if (sysObj.GetAttr("stdout")
-                              .AsManagedObject(typeof(RhinoCodePythonEngineIO)) is RhinoCodePythonEngineIO currentStdout)
+                    if (sysObj.GetAttr("stdout") is PyObject stdoutObj
+                            && ManagedType.GetManagedObject(stdoutObj) is CLRObject clrObj
+                            && clrObj.inst is RhinoCodePythonEngineIO exstStdout)
                     {
-                        currentStdout.Dispose();
+                        exstStdout.Dispose();
                     }
 
                     using var stdio = PyObject.FromManagedObject(new RhinoCodePythonEngineIO(stdout));
