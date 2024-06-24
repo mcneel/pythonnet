@@ -266,7 +266,7 @@ namespace Python.Runtime
         #endregion
 
         #region Standard IO
-        public void SetStdIO(Stream stdout)
+        public void SetStdOut(Stream stdout)
         {
             using (Py.GIL())
             {
@@ -274,19 +274,68 @@ namespace Python.Runtime
                 using (PyObject sysObj = sys.MoveToPyObject())
                 {
                     if (sysObj.GetAttr("stdout") is PyObject stdoutObj
-                            && ManagedType.GetManagedObject(stdoutObj) is CLRObject clrObj
-                            && clrObj.inst is RhinoCodePythonEngineIO exstStdout)
+                            && ManagedType.GetManagedObject(stdoutObj) is CLRObject stdoutClrObj
+                            && stdoutClrObj.inst is PythonStream exstStdout)
                     {
                         exstStdout.Dispose();
                     }
 
-                    using var stdio = PyObject.FromManagedObject(new RhinoCodePythonEngineIO(stdout));
+                    using var stdio = PyObject.FromManagedObject(new PythonStream(stdout, 1));
                     sysObj.SetAttr("stdout", stdio);
                 }
             }
         }
 
-        public void ClearStdIO() => SetStdIO(null);
+        public void SetStdErr(Stream stderr)
+        {
+            using (Py.GIL())
+            {
+                using var sys = Runtime.PyImport_ImportModule("sys");
+                using (PyObject sysObj = sys.MoveToPyObject())
+                {
+                    if (sysObj.GetAttr("stderr") is PyObject stderrObj
+                            && ManagedType.GetManagedObject(stderrObj) is CLRObject stderrClrObj
+                            && stderrClrObj.inst is PythonStream exstStdErr)
+                    {
+                        exstStdErr.Dispose();
+                    }
+
+                    using var newStderr = PyObject.FromManagedObject(new PythonStream(stderr, 2));
+                    sysObj.SetAttr("stderr", newStderr);
+                }
+            }
+        }
+
+        public void SetStdOutErr(Stream stdout, Stream stderr)
+        {
+            using (Py.GIL())
+            {
+                using var sys = Runtime.PyImport_ImportModule("sys");
+                using (PyObject sysObj = sys.MoveToPyObject())
+                {
+                    if (sysObj.GetAttr("stdout") is PyObject stdoutObj
+                            && ManagedType.GetManagedObject(stdoutObj) is CLRObject stdoutClrObj
+                            && stdoutClrObj.inst is PythonStream exstStdout)
+                    {
+                        exstStdout.Dispose();
+                    }
+
+                    if (sysObj.GetAttr("stderr") is PyObject stderrObj
+                            && ManagedType.GetManagedObject(stderrObj) is CLRObject stderrClrObj
+                            && stderrClrObj.inst is PythonStream exstStdErr)
+                    {
+                        exstStdErr.Dispose();
+                    }
+
+                    using var newStdout = PyObject.FromManagedObject(new PythonStream(stdout, 1));
+                    sysObj.SetAttr("stdout", newStdout);
+                    using var newStderr = PyObject.FromManagedObject(new PythonStream(stderr, 2));
+                    sysObj.SetAttr("stderr", newStderr);
+                }
+            }
+        }
+
+        public void ClearStdOutErr() => SetStdOutErr(default, default);
         #endregion
 
         #region Execution
@@ -1028,11 +1077,16 @@ namespace Python.Runtime
     }
 
     [SuppressMessage("Python.Runtime", "IDE1006")]
-    public class RhinoCodePythonEngineIO : Stream, IDisposable
+    public class PythonStream : Stream, IDisposable
     {
-        Stream _stdout = default;
+        readonly int _fileno = -1;
+        Stream _stream = default;
 
-        public RhinoCodePythonEngineIO(Stream stdout) { _stdout = stdout; }
+        public PythonStream(Stream stream, int fileno)
+        {
+            _stream = stream;
+            _fileno = fileno;
+        }
 
         #region Python stream
         public bool isatty() => false;
@@ -1058,7 +1112,7 @@ namespace Python.Runtime
             Write(buffer, 0, buffer.Length);
         }
 
-        public int fileno() => 1;
+        public int fileno() => _fileno;
         #endregion
 
         #region Stream
@@ -1067,20 +1121,20 @@ namespace Python.Runtime
         public override bool CanRead => false;
         public override bool CanWrite => true;
         public override bool CanSeek => false;
-        public override long Length => _stdout?.Length ?? 0;
-        public override long Position { get => _stdout?.Position ?? 0; set { if (_stdout is null) return; _stdout.Position = value; } }
-        public override long Seek(long offset, SeekOrigin origin) => _stdout?.Seek(offset, origin) ?? 0;
-        public override void SetLength(long value) => _stdout.SetLength(value);
+        public override long Length => _stream?.Length ?? 0;
+        public override long Position { get => _stream?.Position ?? 0; set { if (_stream is null) return; _stream.Position = value; } }
+        public override long Seek(long offset, SeekOrigin origin) => _stream?.Seek(offset, origin) ?? 0;
+        public override void SetLength(long value) => _stream.SetLength(value);
         public override int Read(byte[] buffer, int offset, int count) => 0;
-        public override void Write(byte[] buffer, int offset, int count) => _stdout?.Write(buffer, offset, count);
-        public override void Flush() => _stdout?.Flush();
+        public override void Write(byte[] buffer, int offset, int count) => _stream?.Write(buffer, offset, count);
+        public override void Flush() => _stream?.Flush();
         #endregion
 
         protected override void Dispose(bool disposing)
         {
             if (disposing)
             {
-                _stdout = default;
+                _stream = default;
             }
 
             base.Dispose(disposing);
