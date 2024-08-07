@@ -152,6 +152,20 @@ def test_struct_construction():
     # test recursion
     # test
 
+def test_struct_construction_kwargs_only():
+    """Test contruction of structs with kwarg only arguments"""
+    from Python.Test import Point
+
+    # structs can be instantiated using default ctor
+    p = Point()
+    assert p.__class__.__name__ == 'Point'
+    assert p.__module__ == 'Python.Test'
+
+    p = Point(x=10, y=10)
+    assert p.X == 10
+    assert p.Y == 10
+
+
 
 def test_ienumerable_iteration():
     """Test iteration over objects supporting IEnumerable."""
