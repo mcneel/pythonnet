@@ -80,7 +80,8 @@ namespace Python.Runtime
             // ManagedType.GetManagedObject(target) returns the instance
             if (name == "__init__"
                     && !type.Value.IsClass
-                    && Runtime.PyTuple_Size(args) == 0)
+                    && Runtime.PyTuple_Size(args) == 0
+                    && (kw.IsNull || (!kw.IsNull && Runtime.PyDict_Size(kw) == 0)))
             {
                 return new NewReference(Runtime.PyNone);
             }
