@@ -698,6 +698,20 @@ namespace Python.Runtime
 
         public object CreateScope(string scopeName, string pythonFile) => PrepareScope(scopeName, pythonFile);
 
+        public void RunScope(object scope, string script)
+        {
+            PyModule pyscope = (PyModule)scope;
+
+            try
+            {
+                pyscope.Exec(script);
+            }
+            catch (PythonException pyEx)
+            {
+                throw new PyException(pyEx);
+            }
+        }
+
         public void RunScope(
             object scope,
             object code,
