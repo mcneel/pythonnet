@@ -86,10 +86,17 @@ namespace Python.Runtime
 
             SetPyObj((IPythonDerivedType)obj, self.Borrow());
 
+            // NOTE:
+            // + when clr runtime holds onto an instance of a class derived in python and
+            // + invoking members on that instance (e.g. A UI form with event handlers).
+            // + Having a weak ref causes a crash since python gc will collect the python instance
+            // + causing tp_dealloc to be called and clr gc handle to be removed. This throws an
+            // + "invalid object" exception on all subsequent invokations of derived members.
+            // + Comments below are from original developer eirannejad (08-21-2024)
             // Decrement the python object's reference count.
             // This doesn't actually destroy the object, it just sets the reference to this object
             // to be a weak reference and it will be destroyed when the C# object is destroyed.
-            Runtime.XDecref(self.Steal());
+            // Runtime.XDecref(self.Steal());
 
             return Converter.ToPython(obj, type.Value);
         }
@@ -910,21 +917,15 @@ namespace Python.Runtime
                     if (!Indexer.TryGetPropertyMethodName(methodName, out pyMethodName))
                         pyMethodName = methodName;
 
-                    using var pyself = new PyObject(self.CheckRun());
-
-                    if (pyself.IsDisposed)
-                    {
-                        return default;
-                    }
-
-                    using var methodNameObj = new PyString(pyMethodName);
-                    //using PyObject method = pyself.GetAttr(methodNameObj);
-                    using NewReference op = Runtime.PyObject_GetAttr(pyself.BorrowNullable(), methodNameObj.BorrowNullable());
+                    var methodNameObj = new PyString(pyMethodName);
+                    disposeList.Add(methodNameObj);
+                    NewReference op = Runtime.PyObject_GetAttr(self.Ref, methodNameObj.BorrowNullable());
                     if (op.IsNull())
                     {
                         return default;
                     }
-                    using PyObject method = new PyObject(op.StealNullable());
+                    PyObject method = op.MoveToPyObject();
+                    disposeList.Add(method);
                     BorrowedReference dt = Runtime.PyObject_TYPE(method);
                     if (method.Reference != Runtime.PyNone && dt != Runtime.PyMethodWrapperType)
                     {
@@ -941,15 +942,19 @@ namespace Python.Runtime
 
 
                             PyObject py_result = method.Invoke(pyargs);
-                            var clrMethod = methodHandle != default
-                                ? MethodBase.GetMethodFromHandle(methodHandle, declaringTypeHandle)
-                                : null;
-                            PyTuple? result_tuple = MarshalByRefsBack(args, clrMethod, py_result, outsOffset: 1);
-
                             if (typeof(T) == typeof(Void))
+                            {
                                 return default;
+                            }
                             else
+                            {
+                                var clrMethod = methodHandle != default
+                                    ? MethodBase.GetMethodFromHandle(methodHandle, declaringTypeHandle)
+                                    : null;
+                                PyTuple? result_tuple = MarshalByRefsBack(args, clrMethod, py_result, outsOffset: 1);
+
                                 return result_tuple is not null ? result_tuple[0].As<T>() : py_result.As<T>();
+                            }
                         }
                     }
                 }
