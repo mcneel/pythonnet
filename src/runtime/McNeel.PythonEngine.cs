@@ -266,6 +266,9 @@ namespace Python.Runtime
         #endregion
 
         #region Standard IO
+        PyObject _defaultStdOut = default;
+        PyObject _defaultStdErr = default;
+
         public void SetStdOut(Stream stdout)
         {
             using (Py.GIL())
@@ -273,15 +276,7 @@ namespace Python.Runtime
                 using var sys = Runtime.PyImport_ImportModule("sys");
                 using (PyObject sysObj = sys.MoveToPyObject())
                 {
-                    if (sysObj.GetAttr("stdout") is PyObject stdoutObj
-                            && ManagedType.GetManagedObject(stdoutObj) is CLRObject stdoutClrObj
-                            && stdoutClrObj.inst is PythonStream exstStdout)
-                    {
-                        exstStdout.Dispose();
-                    }
-
-                    using var stdio = PyObject.FromManagedObject(new PythonStream(stdout, 1));
-                    sysObj.SetAttr("stdout", stdio);
+                    SetStdOutObj(sysObj, stdout);
                 }
             }
         }
@@ -293,15 +288,7 @@ namespace Python.Runtime
                 using var sys = Runtime.PyImport_ImportModule("sys");
                 using (PyObject sysObj = sys.MoveToPyObject())
                 {
-                    if (sysObj.GetAttr("stderr") is PyObject stderrObj
-                            && ManagedType.GetManagedObject(stderrObj) is CLRObject stderrClrObj
-                            && stderrClrObj.inst is PythonStream exstStdErr)
-                    {
-                        exstStdErr.Dispose();
-                    }
-
-                    using var newStderr = PyObject.FromManagedObject(new PythonStream(stderr, 2));
-                    sysObj.SetAttr("stderr", newStderr);
+                    SetStdErrObj(sysObj, stderr);
                 }
             }
         }
@@ -313,29 +300,106 @@ namespace Python.Runtime
                 using var sys = Runtime.PyImport_ImportModule("sys");
                 using (PyObject sysObj = sys.MoveToPyObject())
                 {
-                    if (sysObj.GetAttr("stdout") is PyObject stdoutObj
-                            && ManagedType.GetManagedObject(stdoutObj) is CLRObject stdoutClrObj
-                            && stdoutClrObj.inst is PythonStream exstStdout)
-                    {
-                        exstStdout.Dispose();
-                    }
-
-                    if (sysObj.GetAttr("stderr") is PyObject stderrObj
-                            && ManagedType.GetManagedObject(stderrObj) is CLRObject stderrClrObj
-                            && stderrClrObj.inst is PythonStream exstStdErr)
-                    {
-                        exstStdErr.Dispose();
-                    }
-
-                    using var newStdout = PyObject.FromManagedObject(new PythonStream(stdout, 1));
-                    sysObj.SetAttr("stdout", newStdout);
-                    using var newStderr = PyObject.FromManagedObject(new PythonStream(stderr, 2));
-                    sysObj.SetAttr("stderr", newStderr);
+                    SetStdOutObj(sysObj, stdout);
+                    SetStdErrObj(sysObj, stderr);
                 }
             }
         }
 
-        public void ClearStdOutErr() => SetStdOutErr(default, default);
+        public void ClearStdOut()
+        {
+            using (Py.GIL())
+            {
+                using var sys = Runtime.PyImport_ImportModule("sys");
+                using (PyObject sysObj = sys.MoveToPyObject())
+                {
+                    SetStdOutObj(sysObj);
+                }
+            }
+        }
+
+        public void ClearStdErr()
+        {
+            using (Py.GIL())
+            {
+                using var sys = Runtime.PyImport_ImportModule("sys");
+                using (PyObject sysObj = sys.MoveToPyObject())
+                {
+                    SetStdErrObj(sysObj);
+                }
+            }
+        }
+
+        public void ClearStdOutErr()
+        {
+            using (Py.GIL())
+            {
+                using var sys = Runtime.PyImport_ImportModule("sys");
+                using (PyObject sysObj = sys.MoveToPyObject())
+                {
+                    SetStdOutObj(sysObj);
+                    SetStdErrObj(sysObj);
+                }
+            }
+        }
+
+        void SetStdOutObj(PyObject sysObj, Stream stream = default)
+        {
+            if (sysObj.GetAttr("stdout") is PyObject stdoutObj)
+            {
+                if (ManagedType.GetManagedObject(stdoutObj) is CLRObject stdoutClrObj
+                        && stdoutClrObj.inst is PythonStream exstStdout)
+                {
+                    exstStdout.Dispose();
+                }
+                else if (_defaultStdOut is null)
+                {
+                    _defaultStdOut = stdoutObj;
+                }
+            }
+
+            if (stream is null)
+            {
+                if (_defaultStdOut is PyObject)
+                {
+                    sysObj.SetAttr("stdout", _defaultStdOut);
+                }
+            }
+            else
+            {
+                using var stdio = PyObject.FromManagedObject(new PythonStream(stream, 1));
+                sysObj.SetAttr("stdout", stdio);
+            }
+        }
+
+        void SetStdErrObj(PyObject sysObj, Stream stream = default)
+        {
+            if (sysObj.GetAttr("stderr") is PyObject stderrObj)
+            {
+                if (ManagedType.GetManagedObject(stderrObj) is CLRObject stderrClrObj
+                        && stderrClrObj.inst is PythonStream exstStdErr)
+                {
+                    exstStdErr.Dispose();
+                }
+                else if (_defaultStdErr is null)
+                {
+                    _defaultStdErr = stderrObj;
+                }
+            }
+
+            if (stream is null)
+            {
+                if (_defaultStdErr is PyObject)
+                {
+                    sysObj.SetAttr("stderr", _defaultStdErr);
+                }
+            }
+            else
+            {
+                using var newStderr = PyObject.FromManagedObject(new PythonStream(stream, 2));
+                sysObj.SetAttr("stderr", newStderr);
+            }
+        }
         #endregion
 
         #region Execution
