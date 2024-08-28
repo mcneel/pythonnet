@@ -267,10 +267,8 @@ namespace Python.Runtime
         #endregion
 
         #region Standard IO
-        static PyObject s_stdin = default;
         static PyObject s_stdout = default;
         static PyObject s_stderr = default;
-        static PyObject s_stdin_prev = default;
         static PyObject s_stdout_prev = default;
         static PyObject s_stderr_prev = default;
 
@@ -362,9 +360,10 @@ namespace Python.Runtime
                 using var sys = Runtime.PyImport_ImportModule("sys");
                 using (PyObject sysObj = sys.MoveToPyObject())
                 {
-                    s_stdin = sysObj.GetAttr("stdin");
                     s_stdout = sysObj.GetAttr("stdout");
                     s_stderr = sysObj.GetAttr("stderr");
+                    s_stdout_prev = s_stdout;
+                    s_stderr_prev = s_stdout;
                 }
             }
         }
@@ -402,7 +401,7 @@ namespace Python.Runtime
                     break;
 
                 case ResetStreamPolicy.ResetToPreviousStream:
-                    sysObj.SetAttr("stdout", s_stdout_prev);
+                    sysObj.SetAttr("stdout", s_stdout_prev ?? s_stdout);
                     break;
             }
         }
@@ -426,7 +425,7 @@ namespace Python.Runtime
                     break;
 
                 case ResetStreamPolicy.ResetToPreviousStream:
-                    sysObj.SetAttr("stderr", s_stderr_prev);
+                    sysObj.SetAttr("stderr", s_stderr_prev ?? s_stderr);
                     break;
             }
         }
