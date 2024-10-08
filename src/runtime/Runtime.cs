@@ -53,6 +53,8 @@ namespace Python.Runtime
             return prefix + "python" + suffix + ext;
         }
 
+        private static PyConfig _configs = new PyConfig();
+
         private static bool _isInitialized = false;
         internal static bool IsInitialized => _isInitialized;
         private static bool _typesInitialized = false;
@@ -117,7 +119,7 @@ namespace Python.Runtime
             );
             if (!interpreterAlreadyInitialized)
             {
-                Py_InitializeEx(initSigs ? 1 : 0);
+                Py_InitializeFromConfig(initSigs ? 1 : 0);
 
                 NewRun();
 
@@ -144,6 +146,7 @@ namespace Python.Runtime
                     NewRun();
                 }
             }
+
             MainManagedThreadId = Thread.CurrentThread.ManagedThreadId;
 
             Finalizer.Initialize();
@@ -188,6 +191,21 @@ namespace Python.Runtime
             clrInterop = GetModuleLazy("clr.interop");
             inspect = GetModuleLazy("inspect");
             hexCallable = new(() => new PyString("%x").GetAttr("__mod__"));
+        }
+
+        static void Py_InitializeFromConfig(int install_signal_handlers)
+        {
+            // Initialize PyConfig
+            Delegates.PyConfig_InitPythonConfig(out _configs);
+            _configs.isolated = 1;
+            _configs.install_signal_handlers = install_signal_handlers;
+
+            PyStatus status = Delegates.Py_InitializeFromConfig(ref _configs);
+            if (status.type != PyStatusType.PyStatus_Ok)
+            {
+                Delegates.PyConfig_Clear(ref _configs);
+                // Handle initialization error
+            }
         }
 
         static void NewRun()
@@ -324,6 +342,8 @@ namespace Python.Runtime
             {
                 PyGILState_Release(state);
             }
+
+            Delegates.PyConfig_Clear(ref _configs);
         }
 
         const int MaxCollectRetriesOnShutdown = 20;
