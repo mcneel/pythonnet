@@ -283,6 +283,10 @@ public unsafe partial class Runtime
 
             PyType_Type = GetFunctionByName(nameof(PyType_Type), GetUnmanagedDll(_PythonDll));
             Py_NoSiteFlag = (int*)GetFunctionByName(nameof(Py_NoSiteFlag), GetUnmanagedDll(_PythonDll));
+
+            PyConfig_InitPythonConfig = (delegate* unmanaged[Cdecl]<out PyConfig, void>)GetFunctionByName(nameof(PyConfig_InitPythonConfig), GetUnmanagedDll(_PythonDll));
+            Py_InitializeFromConfig = (delegate* unmanaged[Cdecl]<ref PyConfig, PyStatus>)GetFunctionByName(nameof(Py_InitializeFromConfig), GetUnmanagedDll(_PythonDll));
+            PyConfig_Clear = (delegate* unmanaged[Cdecl]<ref PyConfig, void>)GetFunctionByName(nameof(PyConfig_Clear), GetUnmanagedDll(_PythonDll));
         }
 
         static global::System.IntPtr GetUnmanagedDll(string? libraryName)
@@ -544,5 +548,9 @@ public unsafe partial class Runtime
         internal static delegate* unmanaged[Cdecl]<int> _Py_IsFinalizing { get; }
         internal static IntPtr PyType_Type { get; }
         internal static int* Py_NoSiteFlag { get; }
+
+        internal static delegate* unmanaged[Cdecl]<out PyConfig, void> PyConfig_InitPythonConfig { get; }
+        internal static delegate* unmanaged[Cdecl]<ref PyConfig, PyStatus> Py_InitializeFromConfig { get; }
+        internal static delegate* unmanaged[Cdecl]<ref PyConfig, void> PyConfig_Clear { get; }
     }
 }
