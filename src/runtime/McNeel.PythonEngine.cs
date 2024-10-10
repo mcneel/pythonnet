@@ -1022,19 +1022,6 @@ namespace Python.Runtime
                 case object[] array:
                     return array.Select(i => MarshOutput(i, context)).ToArray();
 
-                case PyList list:
-                    context.Push(list);
-
-                    var fromPylist = new List<object>();
-                    foreach (object obj in list)
-                    {
-                        fromPylist.Add(MarshOutput(obj, context));
-                    }
-
-                    context.Pop();
-
-                    return fromPylist;
-
                 case List<object> list:
                     return MarshOutputList(list, context);
 
