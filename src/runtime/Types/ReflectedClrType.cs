@@ -337,6 +337,12 @@ internal sealed class ReflectedClrType : PyType
             return true;
         }
 
+        if (keyStr == nameof(PyIdentifier.__dict__))
+        {
+            result = Runtime.PyObject_GenericGetDict(ob);
+            return true;
+        }
+
         return false;
     }
 
