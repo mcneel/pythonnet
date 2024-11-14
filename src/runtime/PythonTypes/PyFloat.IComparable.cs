@@ -31,4 +31,6 @@ partial class PyFloat : IComparable<double>, IComparable<float>
     }
 
     public bool Equals(PyFloat? other) => base.Equals(other);
+
+    public override int GetHashCode() => base.GetHashCode();
 }
