@@ -38,6 +38,11 @@ namespace Python.Runtime.CollectionWrappers
             }
             finally
             {
+                // NOTE:
+                // if the consumer of this iterator, does not iterate
+                // over all the items in pyObject, the iterObject will not
+                // be disposed while holding the GIL.
+                // lets ensure iterObject is disposed while holding the GIL
                 using var _ = Py.GIL();
                 iterObject.Dispose();
             }
