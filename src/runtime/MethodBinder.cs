@@ -57,9 +57,12 @@ namespace Python.Runtime
 
         [NonSerialized]
         public bool init = false;
+
         public const bool DefaultAllowThreads = true;
         public bool allow_threads = DefaultAllowThreads;
         public bool allow_redirected = true;
+
+        public bool argsReversed = false;
 
         internal MethodBinder()
         {
@@ -403,10 +406,10 @@ namespace Python.Runtime
                 _methods = GetMethods();
             }
 
-            return Bind(inst, args, kwargDict, _methods, matchGenerics: true, allowRedirected: allow_redirected);
+            return Bind(inst, args, kwargDict, _methods, matchGenerics: true, argsReversed, allowRedirected: allow_redirected);
         }
 
-        static Binding? Bind(BorrowedReference inst, BorrowedReference args, Dictionary<string, PyObject> kwargDict, MethodBase[] methods, bool matchGenerics, bool allowRedirected)
+        static Binding? Bind(BorrowedReference inst, BorrowedReference args, Dictionary<string, PyObject> kwargDict, MethodBase[] methods, bool matchGenerics, bool argsReversed, bool allowRedirected)
         {
             var pynargs = (int)Runtime.PyTuple_Size(args);
             var isGeneric = false;
@@ -431,7 +434,7 @@ namespace Python.Runtime
                 // Binary operator methods will have 2 CLR args but only one Python arg
                 // (unary operators will have 1 less each), since Python operator methods are bound.
                 isOperator = isOperator && pynargs == pi.Length - 1;
-                bool isReverse = isOperator && OperatorMethod.IsReverse((MethodInfo)mi);  // Only cast if isOperator.
+                bool isReverse = isOperator && argsReversed;  // Only cast if isOperator.
                 if (isReverse && OperatorMethod.IsComparisonOp((MethodInfo)mi))
                     continue;  // Comparison operators in Python have no reverse mode.
                 if (!MatchesArgumentCount(pynargs, pi, kwargDict, out bool paramsArray, out ArrayList? defaultArgList, out int kwargsMatched, out int defaultsNeeded) && !isOperator)
@@ -565,7 +568,7 @@ namespace Python.Runtime
                 MethodInfo[] overloads = MatchParameters(methods, types);
                 if (overloads.Length != 0)
                 {
-                    return Bind(inst, args, kwargDict, overloads, matchGenerics: false, allowRedirected: allowRedirected);
+                    return Bind(inst, args, kwargDict, overloads, matchGenerics: false, argsReversed: false, allowRedirected: allowRedirected);
                 }
             }
             if (mismatchedMethods.Count > 0)
