@@ -24,40 +24,27 @@ namespace Python.Runtime.CollectionWrappers
             {
                 iterObject = PyIter.GetIter(pyObject);
             }
-
-            // NOTE:
-            // if the consumer of this iterator, does not iterate
-            // over all the items in pyObject, the iterObject will not
-            // be disposed while holding the GIL.
-            // lets ensure iterObject is disposed while holding the GIL
-            using var disposer = new DisposeOnGIL(iterObject);
-            while (true)
+            try
             {
-                using var GIL = Py.GIL();
-
-                if (!iterObject.MoveNext())
+                while (true)
                 {
-                    break;
+                    using var _ = Py.GIL();
+                    if (!iterObject.MoveNext())
+                    {
+                        break;
+                    }
+                    yield return iterObject.Current.As<T>()!;
                 }
-
-                yield return iterObject.Current.As<T>()!;
             }
-        }
-
-        private sealed class DisposeOnGIL : IDisposable
-        {
-            readonly PyObject pyObject;
-
-            public DisposeOnGIL(PyObject pyobj) => pyObject = pyobj;
-
-            public void Dispose()
+            finally
             {
-                GC.SuppressFinalize(this);
-
-                using (Py.GIL())
-                {
-                    pyObject?.Dispose();
-                }
+                // NOTE:
+                // if the consumer of this iterator, does not iterate
+                // over all the items in pyObject, the iterObject will not
+                // be disposed while holding the GIL.
+                // lets ensure iterObject is disposed while holding the GIL
+                using var _ = Py.GIL();
+                iterObject.Dispose();
             }
         }
     }
