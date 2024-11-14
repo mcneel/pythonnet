@@ -133,7 +133,8 @@ namespace Python.Runtime
             if (EncodableByUser(type, value))
             {
                 var encoded = PyObjectConversions.TryEncode(value, type);
-                if (encoded != null) {
+                if (encoded != null)
+                {
                     return new NewReference(encoded);
                 }
             }
@@ -348,7 +349,7 @@ namespace Python.Runtime
 
             if (obType.IsGenericType && obType.GetGenericTypeDefinition() == typeof(Nullable<>))
             {
-                if( value == Runtime.PyNone )
+                if (value == Runtime.PyNone)
                 {
                     result = null;
                     return true;
@@ -993,6 +994,12 @@ namespace Python.Runtime
         {
             if (o is null) return Runtime.None;
             return Converter.ToPython(o, o.GetType()).MoveToPyObject();
+        }
+
+        public static PyObject ToPythonAs<T>(this T? o)
+        {
+            if (o is null) return Runtime.None;
+            return Converter.ToPython(o, typeof(T)).MoveToPyObject();
         }
     }
 }
