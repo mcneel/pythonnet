@@ -3,6 +3,14 @@ BASE = System.Object
 IBASE = System.Collections.IEnumerable
 
 
+def test_instance_get_dict():
+    class T:
+        pass
+
+    t = T()
+    assert isinstance(t.__dict__, dict)
+
+
 def test_method_getattribute():
     class S1(BASE):
         def __getattribute__(self, name):

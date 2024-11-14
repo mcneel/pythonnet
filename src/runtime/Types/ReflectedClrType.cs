@@ -331,10 +331,15 @@ internal sealed class ReflectedClrType : PyType
             return false;
         }
 
-        if (keyStr == nameof(PyIdentifier.__init__))
+        switch (keyStr)
         {
-            result = Runtime.PyObject_GenericGetAttr(ob, key);
-            return true;
+            case nameof(PyIdentifier.__init__):
+                result = Runtime.PyObject_GenericGetAttr(ob, key);
+                return true;
+
+            case nameof(PyIdentifier.__dict__):
+                result = Runtime.PyObject_GenericGetDict(ob);
+                return true;
         }
 
         if (keyStr == nameof(PyIdentifier.__dict__))
