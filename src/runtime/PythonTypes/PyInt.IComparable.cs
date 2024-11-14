@@ -133,4 +133,6 @@ partial class PyInt : IComparable<long>, IComparable<int>, IComparable<sbyte>, I
     }
 
     public bool Equals(PyInt? other) => base.Equals(other);
+
+    public override int GetHashCode() => base.GetHashCode();
 }
