@@ -4,11 +4,34 @@ IBASE = System.Collections.IEnumerable
 
 
 def test_instance_get_dict():
-    class T:
+    from Python.Test import ClassTest
+    class T(ClassTest):
         pass
 
     t = T()
     assert isinstance(t.__dict__, dict)
+
+
+def test_instance_get_dict_with_type_field():
+    from Python.Test import ClassTest
+    from types import MappingProxyType
+    class T(ClassTest):
+        type_field = 42
+        pass
+
+    assert isinstance(T.__dict__, MappingProxyType)
+    assert 'type_field' in T.__dict__
+
+
+def test_instance_get_dict_with_instance_field():
+    from Python.Test import ClassTest
+    class T(ClassTest):
+        def __init__(self):
+            self.instance_field = 42
+
+    t = T()
+    assert isinstance(t.__dict__, dict)
+    assert 'instance_field' in t.__dict__
 
 
 def test_method_getattribute():
