@@ -688,6 +688,12 @@ namespace Python.Runtime
                                             continue;
 
                                         using var attr = pyObj.GetAttr(key);
+
+                                        // ensure generic type names are not included. Their non-generic
+                                        // name is already included e.g. 'Stack' and 'Stack`1' (RH-85354)
+                                        if (key.Contains("`"))
+                                            continue;
+
                                         all.Add(new PyCompletion(key, GetObjectKind(attr)));
                                     }
                                 }
