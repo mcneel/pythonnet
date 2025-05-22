@@ -6,7 +6,7 @@
     <LangVersion>10.0</LangVersion>
     <OutputType>Library</OutputType>
     <RootNamespace>Python.Runtime</RootNamespace>
-    <AssemblyName>McNeel.Python39.Runtime</AssemblyName>
+    <AssemblyName>McNeel.Python.Runtime</AssemblyName>
     <NoWarn>1591;NU1701</NoWarn>
     <NoWarn>$(NoWarn);CS0105;CS3021;CS0618;CS0067;CS0649;CS8600</NoWarn>
     <NoWarn>$(NoWarn);CS1030</NoWarn>
