@@ -5,6 +5,13 @@ project adheres to [Semantic Versioning][].
 
 This document follows the conventions laid out in [Keep a CHANGELOG][].
 
+## [3.0.5](https://github.com/pythonnet/pythonnet/releases/tag/v3.0.5) - 2024-12-13
+
+### Added
+
+-  Support for Python 3.13 (#2454)
+
+
 ## [3.0.4](https://github.com/pythonnet/pythonnet/releases/tag/v3.0.4) - 2024-09-19
 
 ### Added
@@ -15,6 +22,7 @@ This document follows the conventions laid out in [Keep a CHANGELOG][].
     and `PyString` to compare with primitive .NET types like `long`.
 
 ### Changed
+
 -   Added a `FormatterFactory` member in RuntimeData to create formatters with
     parameters. For compatibility, the `FormatterType` member is still present
     and has precedence when defining both `FormatterFactory` and `FormatterType`
