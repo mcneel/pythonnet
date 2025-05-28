@@ -261,23 +261,27 @@ namespace Python.Runtime
             return type.Name;
         }
 
-        private static string TracebackToString(PyObject traceback)
+        public static string TracebackToString(PyObject traceback)
         {
-            if (traceback is null)
+            using (var _ = new Py.GILState())
             {
-                throw new ArgumentNullException(nameof(traceback));
-            }
+                if (traceback is null)
+                {
+                    throw new ArgumentNullException(nameof(traceback));
+                }
 
-            using var tracebackModule = PyModule.Import("traceback");
-            using var stackLines = new PyList(tracebackModule.InvokeMethod("format_tb", traceback));
-            stackLines.Reverse();
-            var result = new StringBuilder();
-            foreach (PyObject stackLine in stackLines)
-            {
-                result.Append(stackLine);
-                stackLine.Dispose();
+                using var tracebackModule = PyModule.Import("traceback");
+                using var stackLines = new PyList(tracebackModule.InvokeMethod("format_tb", traceback));
+                // stackLines.Reverse();
+                var result = new StringBuilder();
+                foreach (PyObject stackLine in stackLines)
+                {
+                    result.Append(stackLine);
+                    stackLine.Dispose();
+                }
+                return result.ToString().TrimEnd();
+
             }
-            return result.ToString();
         }
 
         /// <summary>Restores python error.</summary>
@@ -324,7 +328,6 @@ namespace Python.Runtime
                 if (!PythonEngine.IsInitialized && Runtime.Py_IsInitialized() == 0)
                     return "Python stack unavailable as runtime was shut down\n" + base.StackTrace;
 
-                using var _ = new Py.GILState();
                 return TracebackToString(Traceback) + base.StackTrace;
             }
         }

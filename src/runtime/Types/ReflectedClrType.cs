@@ -287,7 +287,7 @@ internal sealed class ReflectedClrType : PyType
                 using var keyPyRepr = Runtime.PyObject_Repr(key);
                 string? objRepr = Runtime.GetManagedString(objPyRepr.Borrow());
                 string? keyRepr = Runtime.GetManagedString(keyPyRepr.Borrow());
-                Exceptions.SetError(Exceptions.AttributeError, $"'{objRepr}' object has no attribute '{keyRepr}'");
+                Exceptions.SetError(Exceptions.AttributeError, $"'{objRepr}' object has no attribute {keyRepr}");
             }
 
             return getAttro;
@@ -352,6 +352,12 @@ internal sealed class ReflectedClrType : PyType
             case nameof(PyIdentifier.__dict__):
                 result = Runtime.PyObject_GenericGetDict(ob);
                 return true;
+        }
+
+        if (keyStr == nameof(PyIdentifier.__dict__))
+        {
+            result = Runtime.PyObject_GenericGetDict(ob);
+            return true;
         }
 
         return false;
