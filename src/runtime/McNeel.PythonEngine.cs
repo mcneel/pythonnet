@@ -405,7 +405,11 @@ namespace Python.Runtime
         #endregion
 
         #region Execution
-        sealed class PyException : Exception
+        // NOTE:
+        // this class must be public otherwise returned type from .ParseException
+        // will be System.Exception type and called can not lookup .LineNumber
+        // by reflecting over the type
+        public sealed class PyException : Exception
         {
             static readonly Regex s_msgParser = new Regex(@"(?<message>.+)\(.+line\s(?<line>\d+?)\)");
             static readonly Regex s_pathParser = new Regex(@"File ""(?<path>.+)"",\sline");
