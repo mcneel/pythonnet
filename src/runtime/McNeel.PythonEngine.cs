@@ -148,31 +148,47 @@ namespace Python.Runtime
         #endregion
 
         #region Standard IO
-        public object SetStdOut(Stream stream)
+        public object SetStdOut(object stream)
         {
             using var sys = Runtime.PyImport_ImportModule("sys");
             using (PyObject sysObj = sys.MoveToPyObject())
             {
                 object prevStdout = sysObj.GetAttr("stdout");
-                using var newStdout = PyObject.FromManagedObject(stream);
-                sysObj.SetAttr("stdout", newStdout);
+                if (stream is PyObject streamObj)
+                {
+                    sysObj.SetAttr("stdout", streamObj);
+                }
+                else
+                {
+                    using var newStdout = PyObject.FromManagedObject(stream);
+                    sysObj.SetAttr("stdout", newStdout);
+                }
                 return prevStdout;
             }
         }
 
-        public object SetStdErr(Stream stream)
+        public object SetStdErr(object stream)
         {
             using var sys = Runtime.PyImport_ImportModule("sys");
             using (PyObject sysObj = sys.MoveToPyObject())
             {
                 object prevStderr = sysObj.GetAttr("stderr");
-                using var newStderr = PyObject.FromManagedObject(stream);
-                sysObj.SetAttr("stderr", newStderr);
+
+                if (stream is PyObject streamObj)
+                {
+                    sysObj.SetAttr("stderr", streamObj);
+                }
+                else
+                {
+                    using var newStderr = PyObject.FromManagedObject(stream);
+                    sysObj.SetAttr("stderr", newStderr);
+                }
+
                 return prevStderr;
             }
         }
 
-        public void ResetStdOut(Stream stream)
+        public void ResetStdOut()
         {
             using var sys = Runtime.PyImport_ImportModule("sys");
             using (PyObject sysObj = sys.MoveToPyObject())
@@ -181,7 +197,7 @@ namespace Python.Runtime
             }
         }
 
-        public void ResetStdErr(Stream stream)
+        public void ResetStdErr()
         {
             using var sys = Runtime.PyImport_ImportModule("sys");
             using (PyObject sysObj = sys.MoveToPyObject())
