@@ -23,11 +23,13 @@ namespace Python.Runtime
     public unsafe class RhinoCodePythonEngine
     {
         #region Fields
-        readonly string[] _searchPaths = default;
+        readonly PyThreadState* m_mainThreadState;
+        readonly PyThreadState* m_swapThreadState;
+        readonly string[] m_searchPaths = default;
         #endregion
 
         #region Initialization
-        public RhinoCodePythonEngine(string enigneRoot, int major, int minor)
+        public RhinoCodePythonEngine(string enigneRoot, int major, int minor, bool useSubInterp)
         {
             Debug.WriteLine($"CPython engine path: {enigneRoot}");
 #if MACOS
@@ -44,21 +46,60 @@ namespace Python.Runtime
 
             // start python runtime
             PythonEngine.Initialize();
-            PythonEngine.BeginAllowThreads();
-
-            // store the default search paths for resetting the engine later
-            // it is okay to use main interpretter for this since we do not
-            // hold on the python objects for the path items.
             using (Py.GIL())
             {
-                _searchPaths = GetSearchPaths();
+                m_mainThreadState = Runtime.PyThreadState_Get();
+                m_swapThreadState = useSubInterp ? Runtime.Py_NewInterpreter() : m_mainThreadState;
+
+                Runtime.InitializeCLR();
+                PythonEngine.InitializeCLR();
+
+                // store the default search paths for resetting the engine later
+                // it is okay to use main interpretter for this since we do not
+                // hold on the python objects for the path items.
+                m_searchPaths = GetSearchPaths();
+
+                if (useSubInterp)
+                {
+                    Runtime.PyThreadState_Swap(m_mainThreadState);
+                }
             }
 
             PyObjectConversions.RegisterDecoder(Python.Runtime.Codecs.SequenceDecoder.Instance);
             PyObjectConversions.RegisterDecoder(Python.Runtime.Codecs.IterableDecoder.Instance);
             PyObjectConversions.RegisterDecoder(Python.Runtime.Codecs.ListDecoder.Instance);
 
+            PythonEngine.BeginAllowThreads();
+
             Debug.WriteLine($"Initialized python engine");
+        }
+        #endregion
+
+        #region Interpretters
+        readonly struct PyThreadStateSwap
+        {
+            public readonly PyThreadState* Begin;
+            public readonly PyThreadState* End;
+
+            public PyThreadStateSwap(PyThreadState* beginState, PyThreadState* endState)
+            {
+                Begin = beginState;
+                End = endState;
+            }
+        }
+
+        public object GetInterpretter() => new PyThreadStateSwap(m_swapThreadState, m_mainThreadState);
+
+        public void BeginInterpretter(object interpState)
+        {
+            PyThreadStateSwap swap = (PyThreadStateSwap)interpState;
+            Runtime.PyThreadState_Swap(swap.Begin);
+        }
+
+        public void EndInterpretter(object interpState)
+        {
+            PyThreadStateSwap swap = (PyThreadStateSwap)interpState;
+            Runtime.PyThreadState_Swap(swap.End);
         }
         #endregion
 
@@ -83,7 +124,7 @@ namespace Python.Runtime
         public void SetSearchPaths(IEnumerable<string> paths)
         {
             // set sys paths
-            PyList sysPaths = RestoreSysPaths(_searchPaths);
+            PyList sysPaths = RestoreSysPaths(m_searchPaths);
 
             // manually add PYTHONPATH since we are overwriting the sys paths
             var pythonPath = Environment.GetEnvironmentVariable("PYTHONPATH");
@@ -258,7 +299,6 @@ namespace Python.Runtime
 
                             }
                             break;
-
                     }
                     break;
 
@@ -548,6 +588,8 @@ namespace Python.Runtime
                 throw new PyException(pyEx);
             }
         }
+
+        public bool HasGIL() => Runtime.PyGILState_Check() != 0;
 
         public IDisposable GIL() => Py.GIL();
 

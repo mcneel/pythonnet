@@ -222,7 +222,10 @@ namespace Python.Runtime
             {
                 Py.SetArgv(args);
             }
+        }
 
+        public static void InitializeCLR()
+        {
             // Load the clr.py resource into the clr module
             BorrowedReference clr_dict = Runtime.PyModule_GetDict(ImportHook.ClrModuleReference);
 

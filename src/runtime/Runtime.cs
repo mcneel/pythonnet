@@ -148,7 +148,10 @@ namespace Python.Runtime
             }
 
             MainManagedThreadId = Thread.CurrentThread.ManagedThreadId;
+        }
 
+        internal static void InitializeCLR()
+        {
             Finalizer.Initialize();
 
             InitPyMembers();
