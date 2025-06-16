@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Diagnostics;
 using System.Collections;
 using System.Collections.Generic;
@@ -23,9 +24,14 @@ namespace Python.Runtime
     public unsafe class RhinoCodePythonEngine
     {
         #region Fields
-        readonly PyThreadState* m_mainThreadState;
-        readonly PyThreadState* m_swapThreadState;
-        readonly string[] m_searchPaths = default;
+        // NOTE:
+        // PyGILState_Ensure automatically creates threadstate for calling
+        // threads. When using sub-interpretters, we need to manage our
+        // threadstates manually since we use PyEval_AcquireThread to lock
+        readonly ThreadLocal<IntPtr> m_threadState = new ThreadLocal<IntPtr>();
+        readonly PyThreadState* m_mainInterpState;
+        readonly PyThreadState* m_swapInterpState;
+        readonly string[] m_searchPaths = Array.Empty<string>();
         #endregion
 
         #region Initialization
@@ -48,8 +54,9 @@ namespace Python.Runtime
             PythonEngine.Initialize();
             using (Py.GIL())
             {
-                m_mainThreadState = Runtime.PyThreadState_Get();
-                m_swapThreadState = useSubInterp ? Runtime.Py_NewInterpreter() : m_mainThreadState;
+                m_mainInterpState = Runtime.PyThreadState_Get();
+                m_swapInterpState = useSubInterp ? Runtime.Py_NewInterpreter() : m_mainInterpState;
+                m_threadState.Value = (IntPtr)m_swapInterpState;
 
                 Runtime.InitializeCLR();
                 PythonEngine.InitializeCLR();
@@ -61,7 +68,7 @@ namespace Python.Runtime
 
                 if (useSubInterp)
                 {
-                    Runtime.PyThreadState_Swap(m_mainThreadState);
+                    Runtime.PyThreadState_Swap(m_mainInterpState);
                 }
             }
 
@@ -76,30 +83,26 @@ namespace Python.Runtime
         #endregion
 
         #region Interpretters
-        readonly struct PyThreadStateSwap
+        public void BeginInterpretter()
         {
-            public readonly PyThreadState* Begin;
-            public readonly PyThreadState* End;
-
-            public PyThreadStateSwap(PyThreadState* beginState, PyThreadState* endState)
+            IntPtr state = m_threadState.Value;
+            if (IntPtr.Zero == state)
             {
-                Begin = beginState;
-                End = endState;
+                m_threadState.Value = (IntPtr)Runtime.PyThreadState_New((PyInterpreterState*)m_swapInterpState->interp);
             }
+
+            Runtime.PyEval_AcquireThread((PyThreadState*)m_threadState.Value);
         }
 
-        public object GetInterpretter() => new PyThreadStateSwap(m_swapThreadState, m_mainThreadState);
-
-        public void BeginInterpretter(object interpState)
+        public void EndInterpretter()
         {
-            PyThreadStateSwap swap = (PyThreadStateSwap)interpState;
-            Runtime.PyThreadState_Swap(swap.Begin);
-        }
+            IntPtr state = m_threadState.Value;
+            if (IntPtr.Zero == state)
+            {
+                return;
+            }
 
-        public void EndInterpretter(object interpState)
-        {
-            PyThreadStateSwap swap = (PyThreadStateSwap)interpState;
-            Runtime.PyThreadState_Swap(swap.End);
+            Runtime.PyEval_ReleaseThread((PyThreadState*)m_threadState.Value);
         }
         #endregion
 
