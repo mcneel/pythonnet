@@ -562,6 +562,17 @@ namespace Python.Runtime
             return exception;
         }
 
+        public bool TryGetExeptionLineNumber(object exception, out int linenum)
+        {
+            linenum = default;
+            if (exception is PyException pyex)
+            {
+                linenum = pyex.LineNumber;
+                return true;
+            }
+            return false;
+        }
+
         public int GetLineNumber(object frame) => Runtime.PyFrame_GetLineNumber(((PyObject)frame).Handle);
 
         public object CompileCode(string pythonCode, string pythonFile)
@@ -598,6 +609,19 @@ namespace Python.Runtime
 
         public object CreateScope(string scopeName, string pythonFile) => PrepareScope(scopeName, pythonFile);
 
+        public void ScopeSet(object scope, string attrName, object attrValue) => ((PyModule)scope).Set(attrName, attrValue);
+
+        public bool ScopeTryGet(object scope, string attrName, out object attrValue)
+        {
+            attrValue = default;
+            if (((PyModule)scope).TryGet(attrName, out PyObject? valueObj))
+            {
+                attrValue = valueObj;
+                return true;
+            }
+            return false;
+        }
+
         public void RunScope(object scope, string script)
         {
             PyModule pyscope = (PyModule)scope;
@@ -612,13 +636,7 @@ namespace Python.Runtime
             }
         }
 
-        public void RunScope(
-            object scope,
-            object code,
-            string pythonFile,
-            string beforeScript = null,
-            string afterScript = null
-        )
+        public void RunScope(object scope, object code, string pythonFile)
         {
             PyModule pyscope = (PyModule)scope;
             PyObject pycode = (PyObject)code;
@@ -626,15 +644,25 @@ namespace Python.Runtime
             try
             {
                 pyscope.Set(nameof(PyIdentifier.__file__), pythonFile ?? string.Empty);
-
-                // add default references
-                if (beforeScript is string)
-                    pyscope.Exec(beforeScript);
-
                 pyscope.Execute(pycode);
+            }
+            catch (PythonException pyEx)
+            {
+                throw new PyException(pyEx);
+            }
+        }
 
-                if (afterScript is string)
-                    pyscope.Exec(afterScript);
+        public void RunScope(object scope, object code, string pythonFile, string beforeScript, string afterScript)
+        {
+            PyModule pyscope = (PyModule)scope;
+            PyObject pycode = (PyObject)code;
+
+            try
+            {
+                pyscope.Set(nameof(PyIdentifier.__file__), pythonFile ?? string.Empty);
+                pyscope.Exec(beforeScript);
+                pyscope.Execute(pycode);
+                pyscope.Exec(afterScript);
             }
             catch (PythonException pyEx)
             {
@@ -644,14 +672,12 @@ namespace Python.Runtime
 
         public void DisposeCode(object code)
         {
-            if (code is PyObject pycode)
-                pycode.Dispose();
+            (code as PyObject)?.Dispose();
         }
 
         public void DisposeScope(object scope)
         {
-            if (scope is PyModule pyscope)
-                pyscope.Dispose();
+            (scope as PyModule)?.Dispose();
         }
 
         PyModule PrepareScope(string scopeName, string pythonFile)
