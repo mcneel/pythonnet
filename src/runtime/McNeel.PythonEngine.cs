@@ -8,6 +8,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
+using System.Runtime.InteropServices;
 using System.Dynamic;
 
 using Python.Runtime.Platform;
@@ -21,7 +22,7 @@ using Python.Runtime.Native;
 
 namespace Python.Runtime
 {
-    public unsafe class RhinoCodePythonEngine
+    public unsafe class PythonEngineWrapper
     {
         #region Fields
         // NOTE:
@@ -35,27 +36,44 @@ namespace Python.Runtime
         #endregion
 
         #region Initialization
-        public RhinoCodePythonEngine(string enigneRoot, int major, int minor, bool useSubInterp)
+        public PythonEngineWrapper(string pythonHome, int major, int minor)
         {
-            Debug.WriteLine($"CPython engine path: {enigneRoot}");
-#if MACOS
+            Debug.WriteLine($"CPython engine path: {pythonHome}");
+
             // setup the darwin loader manually so it can find the native python shared lib
             // this is so less code changes are done the pythonnet source
-            var pythonLib = $"libpython{major}.{minor}.dylib";
-#elif WINDOWS
-            var pythonLib = $"python{major}{minor}.dll";
-#endif
-            var dllPath = Path.Combine(enigneRoot, pythonLib);
-            LibraryLoader.Instance.Load(dllPath);
-            PythonEngine.PythonHome = enigneRoot;
-            Debug.WriteLine($"Library loader set to: {dllPath}");
+            string pythonLib;
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                pythonLib = $"python{major}{minor}.dll";
+            else
+                pythonLib = $"libpython{major}.{minor}.dylib";
 
-            // start python runtime
+            string pythonLibPath = Path.Combine(pythonHome, pythonLib);
+            LibraryLoader.Instance.Load(pythonLibPath);
+            PythonEngine.PythonHome = pythonHome;
+            Debug.WriteLine($"Library loader set to: {pythonLibPath}");
+
+            // NOTE:
+            // code here is configured to allow creating a new subinterpretter
+            // using Runtime.Py_NewInterpreter() and assign to m_swapInterpState.
+            // however at this point, pythonnet is not designed to support
+            // subinterpretters. see https://github.com/pythonnet/pythonnet/issues/2333
+            // under current implementation, BeginInterpretter and EndInterpretter
+            // methods are not called so threadstate fields (m_*InterpState)
+            // are not used. Once support for subinterpretters is added, you have
+            // to decide whether it needs a new instance of this assembly to
+            // be loaded in a different netcore LoadContext, or another
+            // subinterpretter can be created using this already loaded engine.
+            // My assumption is that when ticket above is fixed, there would
+            // be new api to create new subinterpretters and GIL object would
+            // be modified to know how to handle the subinterpretters.
             PythonEngine.Initialize();
             using (Py.GIL())
             {
                 m_mainInterpState = Runtime.PyThreadState_Get();
-                m_swapInterpState = useSubInterp ? Runtime.Py_NewInterpreter() : m_mainInterpState;
+                // see not above on subinterpretters
+                // m_swapInterpState = useSubInterp ? Runtime.Py_NewInterpreter() : m_mainInterpState;
+                m_swapInterpState = m_mainInterpState;
                 m_threadState.Value = (IntPtr)m_swapInterpState;
 
                 Runtime.InitializeCLR();
@@ -66,10 +84,12 @@ namespace Python.Runtime
                 // hold on the python objects for the path items.
                 m_searchPaths = GetSearchPaths();
 
-                if (useSubInterp)
-                {
-                    Runtime.PyThreadState_Swap(m_mainInterpState);
-                }
+                // see not above on subinterpretters
+                // if (useSubInterp)
+                // {
+                //     // revert back to the main interpretter
+                //     Runtime.PyThreadState_Swap(m_mainInterpState);
+                // }
             }
 
             PyObjectConversions.RegisterDecoder(Python.Runtime.Codecs.SequenceDecoder.Instance);
@@ -85,6 +105,11 @@ namespace Python.Runtime
         #region Interpretters
         public void BeginInterpretter()
         {
+            if (m_mainInterpState == m_swapInterpState)
+            {
+                return;
+            }
+
             IntPtr state = m_threadState.Value;
             if (IntPtr.Zero == state)
             {
@@ -96,6 +121,11 @@ namespace Python.Runtime
 
         public void EndInterpretter()
         {
+            if (m_mainInterpState == m_swapInterpState)
+            {
+                return;
+            }
+
             IntPtr state = m_threadState.Value;
             if (IntPtr.Zero == state)
             {
