@@ -43,12 +43,19 @@ namespace Python.Runtime
             // setup the darwin loader manually so it can find the native python shared lib
             // this is so less code changes are done the pythonnet source
             string pythonLib;
+            string pythonLibDir = pythonHome;
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 pythonLib = $"python{major}{minor}.dll";
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                // python-build-standalone layout: libpython lives under <home>/lib/
+                pythonLib = $"libpython{major}.{minor}.so.1.0";
+                pythonLibDir = Path.Combine(pythonHome, "lib");
+            }
             else
                 pythonLib = $"libpython{major}.{minor}.dylib";
 
-            string pythonLibPath = Path.Combine(pythonHome, pythonLib);
+            string pythonLibPath = Path.Combine(pythonLibDir, pythonLib);
             LibraryLoader.Instance.Load(pythonLibPath);
             PythonEngine.PythonHome = pythonHome;
             Debug.WriteLine($"Library loader set to: {pythonLibPath}");
