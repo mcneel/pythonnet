@@ -19,9 +19,9 @@ jobs:
 
     - name: Upload artifact
       # Automatically uploads an artifact from the './_site' directory by default
-      uses: actions/upload-pages-artifact@v1
+      uses: actions/upload-pages-artifact@v7
       with:
-        path: doc/build/html/
+        path: doc/build/html/**
 
   deploy:
     if: github.ref == 'refs/heads/master'
