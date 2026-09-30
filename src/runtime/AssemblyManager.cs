@@ -244,6 +244,7 @@ namespace Python.Runtime
         {
             string path = FindAssembly(name);
             if (path == null) return null;
+            if (IsIOS) return LoadBundledAssembly(path);
             return Assembly.LoadFrom(path);
         }
 
@@ -258,10 +259,26 @@ namespace Python.Runtime
             {
                 if (File.Exists(name))
                 {
+                    if (IsIOS) return LoadBundledAssembly(name);
                     return Assembly.LoadFrom(name);
                 }
             }
             return null;
+        }
+
+        // RV-1505: an AOT-compiled iOS app aborts on Assembly.LoadFrom; only assemblies compiled into the app can load, by name.
+        static readonly bool IsIOS = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Create("IOS"));
+
+        static Assembly? LoadBundledAssembly(string path)
+        {
+            try
+            {
+                return Assembly.Load(AssemblyName.GetAssemblyName(path));
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         /// <summary>

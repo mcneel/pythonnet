@@ -52,6 +52,12 @@ namespace Python.Runtime
                 pythonLib = $"libpython{major}.{minor}.so.1.0";
                 pythonLibDir = Path.Combine(pythonHome, "lib");
             }
+            // RV-1505: iOS only loads signed frameworks, so libpython is the app's embedded Python.framework.
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Create("IOS")))
+            {
+                pythonLib = "Python";
+                pythonLibDir = Path.Combine(AppContext.BaseDirectory, "Frameworks", "Python.framework");
+            }
             else
                 pythonLib = $"libpython{major}.{minor}.dylib";
 
