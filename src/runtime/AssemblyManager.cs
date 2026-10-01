@@ -470,6 +470,11 @@ namespace Python.Runtime
                 {
                     return new Type[0];
                 }
+                // RV-1505: Rhino.Runtime.Code references Roslyn, which iOS doesn't ship; keep the types that did load.
+                catch (ReflectionTypeLoadException exc) when (IsIOS)
+                {
+                    return exc.Types.Where(x => x != null && IsExported(x)).ToArray();
+                }
             }
         }
 
