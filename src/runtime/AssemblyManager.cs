@@ -96,7 +96,8 @@ namespace Python.Runtime
         private static void AssemblyLoadHandler(object ob, AssemblyLoadEventArgs args)
         {
             Assembly assembly = args.LoadedAssembly;
-            if (assembly.ReflectionOnly) return;
+            // RV-1505: Mono's AssemblyBuilder throws NotImplementedException from ReflectionOnly; dynamic assemblies never are.
+            if (!(IsIOS && assembly.IsDynamic) && assembly.ReflectionOnly) return;
 
             assemblies.Enqueue(assembly);
             ScanAssembly(assembly);
