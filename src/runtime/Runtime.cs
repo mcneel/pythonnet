@@ -69,6 +69,9 @@ namespace Python.Runtime
         // .NET core: System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
         internal static bool IsWindows = Environment.OSVersion.Platform == PlatformID.Win32NT;
 
+        // RV-1505: True on iOS and Mac Catalyst.
+        internal static readonly bool IsIOS = RuntimeInformation.IsOSPlatform(OSPlatform.Create("IOS"));
+
         internal static Version InteropVersion { get; }
             = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
 

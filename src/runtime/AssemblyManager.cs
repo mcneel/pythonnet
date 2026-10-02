@@ -96,8 +96,13 @@ namespace Python.Runtime
         private static void AssemblyLoadHandler(object ob, AssemblyLoadEventArgs args)
         {
             Assembly assembly = args.LoadedAssembly;
-            // RV-1505: Mono's AssemblyBuilder throws NotImplementedException from ReflectionOnly; dynamic assemblies never are.
-            if (!(IsIOS && assembly.IsDynamic) && assembly.ReflectionOnly) return;
+
+            // RV-1505: On iOS, asking a code-generated (dynamic) assembly whether it is ReflectionOnly throws, because Mono never implemented it.
+            // Modern .NET has no reflection-only assemblies anyway, so skip the question on iOS.
+            if (!Runtime.IsIOS && assembly.ReflectionOnly)
+            {
+                return;
+            }
 
             assemblies.Enqueue(assembly);
             ScanAssembly(assembly);
@@ -245,7 +250,7 @@ namespace Python.Runtime
         {
             string path = FindAssembly(name);
             if (path == null) return null;
-            if (IsIOS) return LoadBundledAssembly(path);
+            if (Runtime.IsIOS) return LoadBundledAssembly(path);
             return Assembly.LoadFrom(path);
         }
 
@@ -260,16 +265,15 @@ namespace Python.Runtime
             {
                 if (File.Exists(name))
                 {
-                    if (IsIOS) return LoadBundledAssembly(name);
+                    if (Runtime.IsIOS) return LoadBundledAssembly(name);
                     return Assembly.LoadFrom(name);
                 }
             }
             return null;
         }
 
-        // RV-1505: an AOT-compiled iOS app aborts on Assembly.LoadFrom; only assemblies compiled into the app can load, by name.
-        static readonly bool IsIOS = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Create("IOS"));
-
+        // RV-1505: iOS apps can't load new code from a file; Assembly.LoadFrom kills the app.
+        // Only assemblies built into the app can run, so we read the name from the file and load the built-in copy.
         static Assembly? LoadBundledAssembly(string path)
         {
             try
@@ -470,10 +474,11 @@ namespace Python.Runtime
                 {
                     return new Type[0];
                 }
-                // RV-1505: Rhino.Runtime.Code references Roslyn, which iOS doesn't ship; keep the types that did load.
-                catch (ReflectionTypeLoadException exc) when (IsIOS)
+                // RV-1505: On iOS, an assembly can reference libraries the app doesn't include, so some of its types fail to load.
+                // Keep the types that did load instead of losing the whole assembly.
+                catch (ReflectionTypeLoadException exc) when (Runtime.IsIOS)
                 {
-                    return exc.Types.Where(x => x != null && IsExported(x)).ToArray();
+                    return exc.Types.Where(x => x != null && x.IsVisible && IsExported(x)).ToArray();
                 }
             }
         }

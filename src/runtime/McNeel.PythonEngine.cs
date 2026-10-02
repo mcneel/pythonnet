@@ -37,31 +37,17 @@ namespace Python.Runtime
 
         #region Initialization
         public PythonEngineWrapper(string pythonHome, int major, int minor)
+            : this(pythonHome, GetDefaultPythonLibPath(pythonHome, major, minor), major, minor)
+        {
+        }
+
+        /// <summary>Use when libpython is not in its default place under <paramref name="pythonHome"/>.</summary>
+        public PythonEngineWrapper(string pythonHome, string pythonLibPath, int major, int minor)
         {
             Debug.WriteLine($"CPython engine path: {pythonHome}");
 
             // setup the darwin loader manually so it can find the native python shared lib
             // this is so less code changes are done the pythonnet source
-            string pythonLib;
-            string pythonLibDir = pythonHome;
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                pythonLib = $"python{major}{minor}.dll";
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            {
-                // python-build-standalone layout: libpython lives under <home>/lib/
-                pythonLib = $"libpython{major}.{minor}.so.1.0";
-                pythonLibDir = Path.Combine(pythonHome, "lib");
-            }
-            // RV-1505: iOS only loads signed frameworks, so libpython is the app's embedded Python.framework.
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Create("IOS")))
-            {
-                pythonLib = "Python";
-                pythonLibDir = Path.Combine(AppContext.BaseDirectory, "Frameworks", "Python.framework");
-            }
-            else
-                pythonLib = $"libpython{major}.{minor}.dylib";
-
-            string pythonLibPath = Path.Combine(pythonLibDir, pythonLib);
             LibraryLoader.Instance.Load(pythonLibPath);
             PythonEngine.PythonHome = pythonHome;
             Debug.WriteLine($"Library loader set to: {pythonLibPath}");
@@ -112,6 +98,18 @@ namespace Python.Runtime
             PythonEngine.BeginAllowThreads();
 
             Debug.WriteLine($"Initialized python engine");
+        }
+
+        static string GetDefaultPythonLibPath(string pythonHome, int major, int minor)
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                return Path.Combine(pythonHome, $"python{major}{minor}.dll");
+
+            // python-build-standalone layout: libpython lives under <home>/lib/
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                return Path.Combine(pythonHome, "lib", $"libpython{major}.{minor}.so.1.0");
+
+            return Path.Combine(pythonHome, $"libpython{major}.{minor}.dylib");
         }
         #endregion
 
