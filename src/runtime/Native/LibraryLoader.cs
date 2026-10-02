@@ -31,6 +31,9 @@ namespace Python.Runtime.Platform
                         _instance = new PosixLoader(LinuxLibDL.GetInstance());
                     else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
                         _instance = new PosixLoader(new MacLibDL());
+                    // RV-1505: iOS shares Darwin's dlopen flags and RTLD_DEFAULT.
+                    else if (RuntimeInformation.IsOSPlatform(OSPlatform.Create("IOS")))
+                        _instance = new PosixLoader(new MacLibDL());
                     else
                         throw new PlatformNotSupportedException(
                             "This operating system is not supported"

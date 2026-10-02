@@ -96,7 +96,8 @@ namespace Python.Runtime
         private static void AssemblyLoadHandler(object ob, AssemblyLoadEventArgs args)
         {
             Assembly assembly = args.LoadedAssembly;
-            if (assembly.ReflectionOnly) return;
+            // RV-1505: Mono's AssemblyBuilder throws NotImplementedException from ReflectionOnly; dynamic assemblies never are.
+            if (!(IsIOS && assembly.IsDynamic) && assembly.ReflectionOnly) return;
 
             assemblies.Enqueue(assembly);
             ScanAssembly(assembly);
@@ -244,6 +245,7 @@ namespace Python.Runtime
         {
             string path = FindAssembly(name);
             if (path == null) return null;
+            if (IsIOS) return LoadBundledAssembly(path);
             return Assembly.LoadFrom(path);
         }
 
@@ -258,10 +260,26 @@ namespace Python.Runtime
             {
                 if (File.Exists(name))
                 {
+                    if (IsIOS) return LoadBundledAssembly(name);
                     return Assembly.LoadFrom(name);
                 }
             }
             return null;
+        }
+
+        // RV-1505: an AOT-compiled iOS app aborts on Assembly.LoadFrom; only assemblies compiled into the app can load, by name.
+        static readonly bool IsIOS = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Create("IOS"));
+
+        static Assembly? LoadBundledAssembly(string path)
+        {
+            try
+            {
+                return Assembly.Load(AssemblyName.GetAssemblyName(path));
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -451,6 +469,11 @@ namespace Python.Runtime
                 catch (FileNotFoundException)
                 {
                     return new Type[0];
+                }
+                // RV-1505: Rhino.Runtime.Code references Roslyn, which iOS doesn't ship; keep the types that did load.
+                catch (ReflectionTypeLoadException exc) when (IsIOS)
+                {
+                    return exc.Types.Where(x => x != null && IsExported(x)).ToArray();
                 }
             }
         }
