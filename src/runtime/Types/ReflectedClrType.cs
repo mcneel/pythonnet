@@ -52,6 +52,9 @@ internal sealed class ReflectedClrType : PyType
         }
         catch (Exception e)
         {
+            // NOTE: RH-100050
+            // this type failed to build, so forget it rather than hand out a broken copy later
+            ClassManager.cache.Remove(type);
             throw new InternalPythonnetException($"Failed to create Python type for {type.FullName}", e);
         }
 

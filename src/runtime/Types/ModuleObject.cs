@@ -190,15 +190,24 @@ namespace Python.Runtime
                     continue;
                 }
 
-                using var attrVal = GetAttribute(name, true);
-                if (!attrVal.IsNull())
+                try
                 {
-                    // if it's a valid attribute, add it to __all__
-                    using var pyname = Runtime.PyString_FromString(name);
-                    if (Runtime.PyList_Append(__all__, pyname.Borrow()) != 0)
+                    using var attrVal = GetAttribute(name, true);
+                    if (!attrVal.IsNull())
                     {
-                        throw PythonException.ThrowLastAsClrException();
+                        // if it's a valid attribute, add it to __all__
+                        using var pyname = Runtime.PyString_FromString(name);
+                        if (Runtime.PyList_Append(__all__, pyname.Borrow()) != 0)
+                        {
+                            throw PythonException.ThrowLastAsClrException();
+                        }
                     }
+                }
+                catch (InternalPythonnetException)
+                {
+                    // NOTE: RH-100050
+                    // a loaded type can fail to build when a referenced DLL is missing;
+                    // skip it so the other names, and Python startup, still load
                 }
             }
         }
