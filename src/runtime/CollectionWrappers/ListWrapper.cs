@@ -17,13 +17,16 @@ namespace Python.Runtime.CollectionWrappers
         {
             get
             {
+                // .NET callers may not hold the GIL (MethodBinder releases it); Python 3.12+ crashes without it
+                using var _ = Py.GIL();
                 var item = Runtime.PyList_GetItem(pyObject, index);
-                var pyItem = new PyObject(item);
+                using var pyItem = new PyObject(item);
                 return pyItem.As<T>()!;
             }
             set
             {
-                var pyItem = value.ToPython();
+                using var _ = Py.GIL();
+                using var pyItem = value.ToPython();
                 var result = Runtime.PyList_SetItem(pyObject, index, new NewReference(pyItem).Steal());
                 if (result == -1)
                     Runtime.CheckExceptionOccurred();
@@ -40,7 +43,8 @@ namespace Python.Runtime.CollectionWrappers
             if (IsReadOnly)
                 throw new InvalidOperationException("Collection is read-only");
 
-            var pyItem = item.ToPython();
+            using var _ = Py.GIL();
+            using var pyItem = item.ToPython();
 
             int result = Runtime.PyList_Insert(pyObject, index, pyItem);
             if (result == -1)
