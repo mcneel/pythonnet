@@ -360,7 +360,7 @@ obj.Field += 10
         public static void InitPython(string dllName)
         {
             PyRuntime.PythonDLL = dllName;
-            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
+            PythonEngine.Initialize();
             _state = PythonEngine.BeginAllowThreads();
         }
 

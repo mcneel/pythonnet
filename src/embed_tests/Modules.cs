@@ -31,7 +31,7 @@ namespace Python.EmbeddingTest
         [OneTimeSetUp]
         public void OneTimeSetUp()
         {
-            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
+            PythonEngine.Initialize();
         }
 
         [OneTimeTearDown]

@@ -12,7 +12,7 @@ namespace Python.EmbeddingTest
         [OneTimeSetUp]
         public void SetUp()
         {
-            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
+            PythonEngine.Initialize();
             using var locals = new PyDict();
             PythonEngine.Exec(InheritanceTestBaseClassWrapper.ClassSourceCode, locals: locals);
             ExtraBaseTypeProvider.ExtraBase = new PyType(locals[InheritanceTestBaseClassWrapper.ClassName]);

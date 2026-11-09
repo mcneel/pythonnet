@@ -11,7 +11,7 @@ namespace Python.EmbeddingTest {
         [OneTimeSetUp]
         public void SetUp()
         {
-            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
+            PythonEngine.Initialize();
             TupleCodec<ValueTuple>.Register();
         }
 

@@ -13,7 +13,7 @@ public class Events
     [OneTimeSetUp]
     public void SetUp()
     {
-        PythonEngine.Initialize(new[] { "--pythonnet-tests" });
+        PythonEngine.Initialize();
     }
 
     [OneTimeTearDown]

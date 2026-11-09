@@ -17,7 +17,7 @@ namespace Python.EmbeddingTest
         public void SetUp()
         {
             _oldThreshold = Finalizer.Instance.Threshold;
-            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
+            PythonEngine.Initialize();
             Exceptions.Clear();
         }
 
@@ -104,7 +104,7 @@ namespace Python.EmbeddingTest
 
             if (garbage.Count > 0)
             {
-                PythonEngine.Initialize(new[] { "--pythonnet-tests" });
+                PythonEngine.Initialize();
                 string objects = string.Join("\n", garbage.Select(ob =>
                 {
                     var obj = new PyObject(new BorrowedReference(ob));

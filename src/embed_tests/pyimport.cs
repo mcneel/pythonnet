@@ -24,7 +24,7 @@ namespace Python.EmbeddingTest
         [OneTimeSetUp]
         public void SetUp()
         {
-            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
+            PythonEngine.Initialize();
 
             /* Append the tests directory to sys.path
              * using reflection to circumvent the private

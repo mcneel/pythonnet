@@ -7,7 +7,7 @@ namespace Python.EmbeddingTest {
     public class TestCallbacks {
         [OneTimeSetUp]
         public void SetUp() {
-            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
+            PythonEngine.Initialize();
         }
 
         [OneTimeTearDown]

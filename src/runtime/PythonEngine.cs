@@ -32,9 +32,9 @@ namespace Python.Runtime
             Initialize(args);
         }
 
-        public PythonEngine(IEnumerable<string> args)
+        public PythonEngine(IEnumerable<string> args, bool initCLR = true)
         {
-            Initialize(args);
+            Initialize(args, initCLR: initCLR);
         }
 
         public void Dispose()
@@ -183,9 +183,9 @@ namespace Python.Runtime
             Initialize(setSysArgv: true);
         }
 
-        public static void Initialize(bool setSysArgv = true, bool initSigs = false)
+        public static void Initialize(bool setSysArgv = true, bool initSigs = false, bool initCLR = true)
         {
-            Initialize(Enumerable.Empty<string>(), setSysArgv: setSysArgv, initSigs: initSigs);
+            Initialize(Enumerable.Empty<string>(), setSysArgv: setSysArgv, initSigs: initSigs, initCLR: initCLR);
         }
 
         /// <summary>
@@ -197,16 +197,14 @@ namespace Python.Runtime
         /// first call. It is *not* necessary to hold the Python global
         /// interpreter lock (GIL) to call this method.
         /// initSigs can be set to 1 to do default python signal configuration. This will override the way signals are handled by the application.
+        /// initCLR runs the CLR half of startup; pass false to run it yourself later (PythonEngineWrapper does).
         /// </remarks>
-        public static void Initialize(IEnumerable<string> args, bool setSysArgv = true, bool initSigs = false)
+        public static void Initialize(IEnumerable<string> args, bool setSysArgv = true, bool initSigs = false, bool initCLR = true)
         {
             if (initialized)
             {
                 return;
             }
-            // test fixtures pass this so the CLR half of startup runs too (Rhino does it in McNeel.PythonEngine)
-            const string testsArg = "--pythonnet-tests";
-            bool forTests = args.Contains(testsArg);
             // Creating the delegateManager MUST happen before Runtime.Initialize
             // is called. If it happens afterwards, DelegateManager's CodeGenerator
             // throws an exception in its ctor.  This exception is eaten somehow
@@ -223,10 +221,10 @@ namespace Python.Runtime
 
             if (setSysArgv)
             {
-                Py.SetArgv(args.Where(a => a != testsArg));
+                Py.SetArgv(args);
             }
 
-            if (forTests)
+            if (initCLR)
             {
                 using (Py.GIL())
                 {

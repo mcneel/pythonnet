@@ -11,7 +11,7 @@ public class ExtensionTypes
     [OneTimeSetUp]
     public void SetUp()
     {
-        PythonEngine.Initialize(new[] { "--pythonnet-tests" });
+        PythonEngine.Initialize();
     }
 
     [OneTimeTearDown]

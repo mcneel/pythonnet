@@ -14,7 +14,7 @@ namespace Python.EmbeddingTest
         [SetUp]
         public void SetUp()
         {
-            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
+            PythonEngine.Initialize();
         }
 
         [TearDown]
