@@ -96,7 +96,7 @@ import clr
 clr.AddReference('{path}')
 ";
 
-            // off Windows, .NET 9 parses the full path as an assembly name first and fails with FileNotFoundException
+            // On macOS and Linux, .NET 9 reports a missing file instead of a bad image here.
             Assert.That(() => PythonEngine.Exec(code),
                 Throws.InstanceOf<BadImageFormatException>().Or.InstanceOf<FileNotFoundException>());
         }
