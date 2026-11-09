@@ -58,10 +58,11 @@ namespace Python.Runtime
                     return int32Type;
                 }
 
+                // clear each failed try's OverflowError; left set, it makes the next try reject an all-ones value (e.g. UInt64.MaxValue)
+                Exceptions.Clear();
                 nuint? uint32 = Runtime.PyLong_AsUnsignedSize_t(op);
                 if (uint32 != null)
                 {
-                    Exceptions.Clear();
                     if (uint32 > UInt32.MaxValue)
                     {
                         return uint64Type;
@@ -69,17 +70,17 @@ namespace Python.Runtime
                     return uint32Type;
                 }
 
+                Exceptions.Clear();
                 long? int64 = Runtime.PyLong_AsLongLong(op);
                 if (int64 != null)
                 {
-                    Exceptions.Clear();
                     return int64Type;
                 }
 
+                Exceptions.Clear();
                 ulong? uint64 = Runtime.PyLong_AsUnsignedLongLong(op);
                 if (uint64 != null)
                 {
-                    Exceptions.Clear();
                     return uint64Type;
                 }
 
