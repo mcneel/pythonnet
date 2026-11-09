@@ -30,48 +30,57 @@ partial class PyInt : IComparable<long>, IComparable<int>, IComparable<sbyte>, I
     #region Signed
     public int CompareTo(long other)
     {
+        // typed compare/equals are reachable from .NET callers without the GIL
+        using var _ = Py.GIL();
         using var pyOther = Runtime.PyInt_FromInt64(other);
         return this.CompareTo(pyOther.BorrowOrThrow());
     }
 
     public int CompareTo(int other)
     {
+        using var _ = Py.GIL();
         using var pyOther = Runtime.PyInt_FromInt32(other);
         return this.CompareTo(pyOther.BorrowOrThrow());
     }
 
     public int CompareTo(short other)
     {
+        using var _ = Py.GIL();
         using var pyOther = Runtime.PyInt_FromInt32(other);
         return this.CompareTo(pyOther.BorrowOrThrow());
     }
 
     public int CompareTo(sbyte other)
     {
+        using var _ = Py.GIL();
         using var pyOther = Runtime.PyInt_FromInt32(other);
         return this.CompareTo(pyOther.BorrowOrThrow());
     }
 
     public bool Equals(long other)
     {
+        using var _ = Py.GIL();
         using var pyOther = Runtime.PyInt_FromInt64(other);
         return this.Equals(pyOther.BorrowOrThrow());
     }
 
     public bool Equals(int other)
     {
+        using var _ = Py.GIL();
         using var pyOther = Runtime.PyInt_FromInt32(other);
         return this.Equals(pyOther.BorrowOrThrow());
     }
 
     public bool Equals(short other)
     {
+        using var _ = Py.GIL();
         using var pyOther = Runtime.PyInt_FromInt32(other);
         return this.Equals(pyOther.BorrowOrThrow());
     }
 
     public bool Equals(sbyte other)
     {
+        using var _ = Py.GIL();
         using var pyOther = Runtime.PyInt_FromInt32(other);
         return this.Equals(pyOther.BorrowOrThrow());
     }
@@ -80,48 +89,56 @@ partial class PyInt : IComparable<long>, IComparable<int>, IComparable<sbyte>, I
     #region Unsigned
     public int CompareTo(ulong other)
     {
+        using var _ = Py.GIL();
         using var pyOther = Runtime.PyLong_FromUnsignedLongLong(other);
         return this.CompareTo(pyOther.BorrowOrThrow());
     }
 
     public int CompareTo(uint other)
     {
+        using var _ = Py.GIL();
         using var pyOther = Runtime.PyLong_FromUnsignedLongLong(other);
         return this.CompareTo(pyOther.BorrowOrThrow());
     }
 
     public int CompareTo(ushort other)
     {
+        using var _ = Py.GIL();
         using var pyOther = Runtime.PyLong_FromUnsignedLongLong(other);
         return this.CompareTo(pyOther.BorrowOrThrow());
     }
 
     public int CompareTo(byte other)
     {
+        using var _ = Py.GIL();
         using var pyOther = Runtime.PyLong_FromUnsignedLongLong(other);
         return this.CompareTo(pyOther.BorrowOrThrow());
     }
 
     public bool Equals(ulong other)
     {
+        using var _ = Py.GIL();
         using var pyOther = Runtime.PyLong_FromUnsignedLongLong(other);
         return this.Equals(pyOther.BorrowOrThrow());
     }
 
     public bool Equals(uint other)
     {
+        using var _ = Py.GIL();
         using var pyOther = Runtime.PyLong_FromUnsignedLongLong(other);
         return this.Equals(pyOther.BorrowOrThrow());
     }
 
     public bool Equals(ushort other)
     {
+        using var _ = Py.GIL();
         using var pyOther = Runtime.PyLong_FromUnsignedLongLong(other);
         return this.Equals(pyOther.BorrowOrThrow());
     }
 
     public bool Equals(byte other)
     {
+        using var _ = Py.GIL();
         using var pyOther = Runtime.PyLong_FromUnsignedLongLong(other);
         return this.Equals(pyOther.BorrowOrThrow());
     }
@@ -129,6 +146,7 @@ partial class PyInt : IComparable<long>, IComparable<int>, IComparable<sbyte>, I
 
     public int CompareTo(PyInt? other)
     {
+        using var _ = Py.GIL();
         return other is null ? 1 : this.CompareTo(other.BorrowNullable());
     }
 

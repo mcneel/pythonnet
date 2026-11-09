@@ -70,10 +70,11 @@ namespace Python.Runtime
             return result!;
         }
 
+        // ToString takes the GIL; these are reachable from .NET callers without it
         public bool Equals(string? other)
-            => this.ToStringUnderGIL().Equals(other, StringComparison.CurrentCulture);
+            => this.ToString().Equals(other, StringComparison.CurrentCulture);
         public int CompareTo(string? other)
-            => string.Compare(this.ToStringUnderGIL(), other, StringComparison.CurrentCulture);
+            => string.Compare(this.ToString(), other, StringComparison.CurrentCulture);
 
         public override string ToString()
         {
