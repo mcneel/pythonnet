@@ -58,7 +58,8 @@ namespace Python.Runtime
                     return int32Type;
                 }
 
-                // clear each failed try's OverflowError; left set, it makes the next try reject an all-ones value (e.g. UInt64.MaxValue)
+                // Clear the error from the previous failed attempt. Otherwise the next attempt
+                // wrongly fails for UInt64.MaxValue, whose bit pattern looks like Python's error marker.
                 Exceptions.Clear();
                 nuint? uint32 = Runtime.PyLong_AsUnsignedSize_t(op);
                 if (uint32 != null)

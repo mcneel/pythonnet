@@ -197,7 +197,7 @@ namespace Python.Runtime
         /// first call. It is *not* necessary to hold the Python global
         /// interpreter lock (GIL) to call this method.
         /// initSigs can be set to 1 to do default python signal configuration. This will override the way signals are handled by the application.
-        /// initCLR runs the CLR half of startup; pass false to run it yourself later (PythonEngineWrapper does).
+        /// initCLR starts the CLR side as well. Pass false to start it yourself later, as PythonEngineWrapper does.
         /// </remarks>
         public static void Initialize(IEnumerable<string> args, bool setSysArgv = true, bool initSigs = false, bool initCLR = true)
         {
