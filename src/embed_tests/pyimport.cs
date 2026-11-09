@@ -96,7 +96,9 @@ import clr
 clr.AddReference('{path}')
 ";
 
-            Assert.Throws<BadImageFormatException>(() => PythonEngine.Exec(code));
+            // On macOS and Linux, .NET 9 reports a missing file instead of a bad image here.
+            Assert.That(() => PythonEngine.Exec(code),
+                Throws.InstanceOf<BadImageFormatException>().Or.InstanceOf<FileNotFoundException>());
         }
     }
 }

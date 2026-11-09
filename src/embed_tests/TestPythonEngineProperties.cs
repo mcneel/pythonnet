@@ -103,9 +103,17 @@ namespace Python.EmbeddingTest
 
             PythonEngine.Initialize();
             string enginePythonHome = PythonEngine.PythonHome;
+            // Ask for the version before shutting down; it needs a running Python.
+            Version pyVersion = Runtime.Runtime.PyVersion;
+            PythonEngine.Shutdown();
+
+            // From Python 3.13 on, PythonHome no longer reflects the PYTHONHOME environment variable.
+            if (pyVersion >= new Version(3, 13))
+            {
+                Assert.Ignore("Py_GetPythonHome ignores PYTHONHOME on Python 3.13+");
+            }
 
             Assert.AreEqual(envPythonHome, enginePythonHome);
-            PythonEngine.Shutdown();
         }
 
         [Test]

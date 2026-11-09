@@ -196,6 +196,9 @@ namespace Python.Runtime
                 throw new InvalidOperationException("Python runtime must be initialized");
             }
 
+            // .NET code may dispose a PyObject it was handed without holding the GIL.
+            // not on the GC finalizer thread: shutdown waits for finalizers while holding the GIL
+            using var gil = disposing ? Py.GIL() : null;
             nint refcount = Runtime.Refcount(this.obj);
             Debug.Assert(refcount > 0, "Object refcount is 0 or less");
 
@@ -272,6 +275,8 @@ namespace Python.Runtime
         /// </remarks>
         public PyType GetPythonType()
         {
+            // queries are reachable from .NET callers without the GIL
+            using var _ = Py.GIL();
             var tp = Runtime.PyObject_Type(Reference);
             return new PyType(tp.StealOrThrow(), prevalidated: true);
         }
@@ -288,6 +293,7 @@ namespace Python.Runtime
         {
             if (typeOrClass == null) throw new ArgumentNullException(nameof(typeOrClass));
 
+            using var _ = Py.GIL();
             return Runtime.PyObject_TypeCheck(obj, typeOrClass.obj);
         }
 
@@ -304,6 +310,8 @@ namespace Python.Runtime
         {
             if (name == null) throw new ArgumentNullException(nameof(name));
 
+            // attribute and call members are reachable from .NET callers without the GIL
+            using var _ = Py.GIL();
             return Runtime.PyObject_HasAttrString(Reference, name) != 0;
         }
 
@@ -319,6 +327,7 @@ namespace Python.Runtime
         {
             if (name == null) throw new ArgumentNullException(nameof(name));
 
+            using var _ = Py.GIL();
             return Runtime.PyObject_HasAttr(Reference, name.Reference) != 0;
         }
 
@@ -334,6 +343,7 @@ namespace Python.Runtime
         {
             if (name == null) throw new ArgumentNullException(nameof(name));
 
+            using var _ = Py.GIL();
             using var op = Runtime.PyObject_GetAttrString(obj, name);
             return new PyObject(op.StealOrThrow());
         }
@@ -358,6 +368,7 @@ namespace Python.Runtime
         {
             if (name == null) throw new ArgumentNullException(nameof(name));
 
+            using var _ = Py.GIL();
             using var op = Runtime.PyObject_GetAttrString(obj, name);
             if (op.IsNull())
             {
@@ -387,6 +398,7 @@ namespace Python.Runtime
         {
             if (name == null) throw new ArgumentNullException(nameof(name));
 
+            using var _ = Py.GIL();
             using var op = Runtime.PyObject_GetAttr(obj, name.obj);
             return new PyObject(op.StealOrThrow());
         }
@@ -411,6 +423,7 @@ namespace Python.Runtime
         {
             if (name == null) throw new ArgumentNullException(nameof(name));
 
+            using var _ = Py.GIL();
             using var op = Runtime.PyObject_GetAttr(obj, name.obj);
             if (op.IsNull())
             {
@@ -440,6 +453,7 @@ namespace Python.Runtime
             if (name == null) throw new ArgumentNullException(nameof(name));
             if (value == null) throw new ArgumentNullException(nameof(value));
 
+            using var _ = Py.GIL();
             int r = Runtime.PyObject_SetAttrString(obj, name, value.obj);
             if (r < 0)
             {
@@ -461,6 +475,7 @@ namespace Python.Runtime
             if (name == null) throw new ArgumentNullException(nameof(name));
             if (value == null) throw new ArgumentNullException(nameof(value));
 
+            using var _ = Py.GIL();
             int r = Runtime.PyObject_SetAttr(obj, name.obj, value.obj);
             if (r < 0)
             {
@@ -480,6 +495,7 @@ namespace Python.Runtime
         {
             if (name == null) throw new ArgumentNullException(nameof(name));
 
+            using var _ = Py.GIL();
             int r = Runtime.PyObject_DelAttrString(obj, name);
             if (r < 0)
             {
@@ -500,6 +516,7 @@ namespace Python.Runtime
         {
             if (name == null) throw new ArgumentNullException(nameof(name));
 
+            using var _ = Py.GIL();
             int r = Runtime.PyObject_DelAttr(obj, name.obj);
             if (r < 0)
             {
@@ -520,6 +537,8 @@ namespace Python.Runtime
         {
             if (key == null) throw new ArgumentNullException(nameof(key));
 
+            // indexers and item access are reachable from .NET callers (e.g. IronPython) without the GIL
+            using var _ = Py.GIL();
             using var op = Runtime.PyObject_GetItem(obj, key.obj);
             if (op.IsNull())
             {
@@ -541,6 +560,7 @@ namespace Python.Runtime
         {
             if (key == null) throw new ArgumentNullException(nameof(key));
 
+            using var _ = Py.GIL();
             using var pyKey = new PyString(key);
             return GetItem(pyKey);
         }
@@ -556,6 +576,7 @@ namespace Python.Runtime
         /// </remarks>
         public virtual PyObject GetItem(int index)
         {
+            using var _ = Py.GIL();
             using var key = new PyInt(index);
             return GetItem(key);
         }
@@ -574,6 +595,7 @@ namespace Python.Runtime
             if (key == null) throw new ArgumentNullException(nameof(key));
             if (value == null) throw new ArgumentNullException(nameof(value));
 
+            using var _ = Py.GIL();
             int r = Runtime.PyObject_SetItem(obj, key.obj, value.obj);
             if (r < 0)
             {
@@ -595,6 +617,7 @@ namespace Python.Runtime
             if (key == null) throw new ArgumentNullException(nameof(key));
             if (value == null) throw new ArgumentNullException(nameof(value));
 
+            using var _ = Py.GIL();
             using var pyKey = new PyString(key);
             SetItem(pyKey, value);
         }
@@ -612,6 +635,7 @@ namespace Python.Runtime
         {
             if (value == null) throw new ArgumentNullException(nameof(value));
 
+            using var _ = Py.GIL();
             using var pyindex = new PyInt(index);
             SetItem(pyindex, value);
         }
@@ -629,6 +653,7 @@ namespace Python.Runtime
         {
             if (key == null) throw new ArgumentNullException(nameof(key));
 
+            using var _ = Py.GIL();
             int r = Runtime.PyObject_DelItem(obj, key.obj);
             if (r < 0)
             {
@@ -649,6 +674,7 @@ namespace Python.Runtime
         {
             if (key == null) throw new ArgumentNullException(nameof(key));
 
+            using var _ = Py.GIL();
             using var pyKey = new PyString(key);
             DelItem(pyKey);
         }
@@ -664,6 +690,7 @@ namespace Python.Runtime
         /// </remarks>
         public virtual void DelItem(int index)
         {
+            using var _ = Py.GIL();
             using var pyindex = new PyInt(index);
             DelItem(pyindex);
         }
@@ -675,6 +702,7 @@ namespace Python.Runtime
         /// </summary>
         public virtual long Length()
         {
+            using var _ = Py.GIL();
             var s = Runtime.PyObject_Size(Reference);
             if (s < 0)
             {
@@ -745,6 +773,7 @@ namespace Python.Runtime
             if (args == null) throw new ArgumentNullException(nameof(args));
             if (args.Contains(null)) throw new ArgumentNullException();
 
+            using var _ = Py.GIL();
             var t = new PyTuple(args);
             using var r = Runtime.PyObject_Call(obj, t.obj, null);
             t.Dispose();
@@ -763,6 +792,7 @@ namespace Python.Runtime
         {
             if (args == null) throw new ArgumentNullException(nameof(args));
 
+            using var _ = Py.GIL();
             using var r = Runtime.PyObject_Call(obj, args.obj, null);
             return new PyObject(r.StealOrThrow());
         }
@@ -780,6 +810,7 @@ namespace Python.Runtime
             if (args == null) throw new ArgumentNullException(nameof(args));
             if (args.Contains(null)) throw new ArgumentNullException();
 
+            using var _ = Py.GIL();
             using var t = new PyTuple(args);
             using var r = Runtime.PyObject_Call(obj, t.obj, kw is null ? null : kw.obj);
             return new PyObject(r.StealOrThrow());
@@ -797,6 +828,7 @@ namespace Python.Runtime
         {
             if (args == null) throw new ArgumentNullException(nameof(args));
 
+            using var _ = Py.GIL();
             using var r = Runtime.PyObject_Call(obj, args.obj, kw is null ? null : kw.obj);
             return new PyObject(r.StealOrThrow());
         }
@@ -815,6 +847,8 @@ namespace Python.Runtime
             if (args == null) throw new ArgumentNullException(nameof(args));
             if (args.Contains(null)) throw new ArgumentNullException();
 
+            // hold the GIL across lookup, call and dispose of the bound method
+            using var _ = Py.GIL();
             PyObject method = GetAttr(name);
             PyObject result = method.Invoke(args);
             method.Dispose();
@@ -834,6 +868,8 @@ namespace Python.Runtime
             if (name == null) throw new ArgumentNullException(nameof(name));
             if (args == null) throw new ArgumentNullException(nameof(args));
 
+            // hold the GIL across lookup, call and dispose of the bound method
+            using var _ = Py.GIL();
             PyObject method = GetAttr(name);
             PyObject result = method.Invoke(args);
             method.Dispose();
@@ -853,6 +889,8 @@ namespace Python.Runtime
             if (args == null) throw new ArgumentNullException(nameof(args));
             if (args.Contains(null)) throw new ArgumentNullException();
 
+            // hold the GIL across lookup, call and dispose of the bound method
+            using var _ = Py.GIL();
             PyObject method = GetAttr(name);
             PyObject result = method.Invoke(args);
             method.Dispose();
@@ -872,6 +910,8 @@ namespace Python.Runtime
             if (name == null) throw new ArgumentNullException(nameof(name));
             if (args == null) throw new ArgumentNullException(nameof(args));
 
+            // hold the GIL across lookup, call and dispose of the bound method
+            using var _ = Py.GIL();
             PyObject method = GetAttr(name);
             PyObject result = method.Invoke(args);
             method.Dispose();
@@ -893,6 +933,8 @@ namespace Python.Runtime
             if (args == null) throw new ArgumentNullException(nameof(args));
             if (args.Contains(null)) throw new ArgumentNullException();
 
+            // hold the GIL across lookup, call and dispose of the bound method
+            using var _ = Py.GIL();
             PyObject method = GetAttr(name);
             PyObject result = method.Invoke(args, kw);
             method.Dispose();
@@ -913,6 +955,8 @@ namespace Python.Runtime
             if (name == null) throw new ArgumentNullException(nameof(name));
             if (args == null) throw new ArgumentNullException(nameof(args));
 
+            // hold the GIL across lookup, call and dispose of the bound method
+            using var _ = Py.GIL();
             PyObject method = GetAttr(name);
             PyObject result = method.Invoke(args, kw);
             method.Dispose();
@@ -931,6 +975,7 @@ namespace Python.Runtime
         {
             if (typeOrClass == null) throw new ArgumentNullException(nameof(typeOrClass));
 
+            using var _ = Py.GIL();
             int r = Runtime.PyObject_IsInstance(obj, typeOrClass.obj);
             if (r < 0)
             {
@@ -956,6 +1001,7 @@ namespace Python.Runtime
         {
             if (typeOrClass.IsNull) throw new ArgumentNullException(nameof(typeOrClass));
 
+            using var _ = Py.GIL();
             int r = Runtime.PyObject_IsSubclass(Reference, typeOrClass);
             if (r < 0)
             {
@@ -975,6 +1021,7 @@ namespace Python.Runtime
         /// </remarks>
         public bool IsCallable()
         {
+            using var _ = Py.GIL();
             return Runtime.PyCallable_Check(obj) != 0;
         }
 
@@ -988,6 +1035,7 @@ namespace Python.Runtime
         /// </remarks>
         public bool IsIterable()
         {
+            using var _ = Py.GIL();
             return Runtime.PyObject_IsIterable(obj);
         }
 
@@ -1001,6 +1049,7 @@ namespace Python.Runtime
         /// </remarks>
         public bool IsTrue()
         {
+            using var _ = Py.GIL();
             return Runtime.PyObject_IsTrue(obj) != 0;
         }
 
@@ -1018,6 +1067,7 @@ namespace Python.Runtime
         /// </remarks>
         public PyList Dir()
         {
+            using var _ = Py.GIL();
             using var r = Runtime.PyObject_Dir(obj);
             return new PyList(r.StealOrThrow());
         }
@@ -1032,6 +1082,7 @@ namespace Python.Runtime
         /// </remarks>
         public string? Repr()
         {
+            using var _ = Py.GIL();
             using var strval = Runtime.PyObject_Repr(obj);
             return Runtime.GetManagedString(strval.BorrowOrThrow());
         }
@@ -1088,6 +1139,7 @@ namespace Python.Runtime
             {
                 return true;
             }
+            using var _ = Py.GIL();
             int result = Runtime.PyObject_RichCompareBool(obj, other.obj, Runtime.Py_EQ);
             if (result < 0) throw PythonException.ThrowLastAsClrException();
             return result != 0;

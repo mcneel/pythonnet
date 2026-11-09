@@ -14,6 +14,8 @@ namespace Python.Runtime.CollectionWrappers
         {
             get
             {
+                // .NET callers may not hold the GIL (MethodBinder releases it)
+                using var _ = Py.GIL();
                 var size = Runtime.PySequence_Size(pyObject.Reference);
                 if (size == -1)
                 {
@@ -38,6 +40,7 @@ namespace Python.Runtime.CollectionWrappers
         {
             if (IsReadOnly)
                 throw new NotImplementedException();
+            using var _ = Py.GIL();
             int result = Runtime.PySequence_DelSlice(pyObject, 0, Count);
             if (result == -1)
             {
@@ -78,7 +81,10 @@ namespace Python.Runtime.CollectionWrappers
             //it is idiomatic in C# to return a bool rather than
             //throw for a failed Remove in ICollection
             if (result == false)
+            {
+                using var _ = Py.GIL();
                 Runtime.PyErr_Clear();
+            }
             return result;
         }
 
@@ -86,6 +92,7 @@ namespace Python.Runtime.CollectionWrappers
         {
             if (IsReadOnly)
                 throw new NotImplementedException();
+            using var _ = Py.GIL();
             if (index >= Count || index < 0)
                 return false;
 

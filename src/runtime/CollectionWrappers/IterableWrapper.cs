@@ -28,12 +28,17 @@ namespace Python.Runtime.CollectionWrappers
             {
                 while (true)
                 {
-                    using var _ = Py.GIL();
-                    if (!iterObject.MoveNext())
+                    // release the GIL before yielding; the consumer may block, switch threads or never finish
+                    T item;
+                    using (Py.GIL())
                     {
-                        break;
+                        if (!iterObject.MoveNext())
+                        {
+                            break;
+                        }
+                        item = iterObject.Current.As<T>()!;
                     }
-                    yield return iterObject.Current.As<T>()!;
+                    yield return item;
                 }
             }
             finally

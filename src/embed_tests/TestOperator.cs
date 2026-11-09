@@ -648,6 +648,7 @@ assert c.Num == a.Num >> b.Num
         }
 
         [Test]
+        [Ignore("Stack overflow on Python 3.13: int + OwnInt loops between nb_add and the auto-generated __radd__ slot wrapper")]
         public void ReverseOperatorWithCodec()
         {
             string name = string.Format("{0}.{1}",

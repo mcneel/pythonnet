@@ -17,16 +17,34 @@ partial class PyFloat : IComparable<double>, IComparable<float>
         };
     }
 
-    public int CompareTo(double other) => this.ToDouble().CompareTo(other);
+    public int CompareTo(double other)
+    {
+        // typed compare/equals are reachable from .NET callers without the GIL
+        using var _ = Py.GIL();
+        return this.ToDouble().CompareTo(other);
+    }
 
-    public int CompareTo(float other) => this.ToDouble().CompareTo(other);
+    public int CompareTo(float other)
+    {
+        using var _ = Py.GIL();
+        return this.ToDouble().CompareTo(other);
+    }
 
-    public bool Equals(double other) => this.ToDouble().Equals(other);
+    public bool Equals(double other)
+    {
+        using var _ = Py.GIL();
+        return this.ToDouble().Equals(other);
+    }
 
-    public bool Equals(float other) => this.ToDouble().Equals(other);
+    public bool Equals(float other)
+    {
+        using var _ = Py.GIL();
+        return this.ToDouble().Equals(other);
+    }
 
     public int CompareTo(PyFloat? other)
     {
+        using var _ = Py.GIL();
         return other is null ? 1 : this.CompareTo(other.BorrowNullable());
     }
 

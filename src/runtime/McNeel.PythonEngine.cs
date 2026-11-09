@@ -66,7 +66,8 @@ namespace Python.Runtime
             // My assumption is that when ticket above is fixed, there would
             // be new api to create new subinterpretters and GIL object would
             // be modified to know how to handle the subinterpretters.
-            PythonEngine.Initialize();
+            // We start the CLR side ourselves below, after saving the main thread state.
+            PythonEngine.Initialize(initCLR: false);
             using (Py.GIL())
             {
                 m_mainInterpState = Runtime.PyThreadState_Get();

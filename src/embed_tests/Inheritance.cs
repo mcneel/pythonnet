@@ -166,7 +166,9 @@ namespace Python.EmbeddingTest
   def callVirt(self):
     return self.virt()
   def __getattr__(self, name):
-    return '__getattr__:' + name
+    # Unknown names must raise. During shutdown the .NET methods are removed from the class,
+    # and any value returned here would be mistaken for a Python override and called.
+    raise AttributeError(name)
   def __setattr__(self, name, value):
     value[name] = name
 " + ClassName + " = " + ClassName + "\n";

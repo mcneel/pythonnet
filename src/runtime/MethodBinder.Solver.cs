@@ -1240,6 +1240,10 @@ namespace Python.Runtime
             {
                 distance += castDistance;
             }
+            else if (TryGetIteratorDistance(arg, to, out uint iterDistance))
+            {
+                return distance + iterDistance;
+            }
             else if (TryGetManagedValue(arg, to, out object? _, setError: false))
             {
                 distance += MATCH_MAX_DIST - 1;
@@ -1298,6 +1302,24 @@ namespace Python.Runtime
             }
 
             distance = depth;
+            return true;
+        }
+
+        // Generators and other iterators can only be read once. Test-converting one
+        // here would empty it before the real call, so assume it will convert.
+        // 0 <= x <= MATCH_MAX_DIST
+        static bool TryGetIteratorDistance(BorrowedReference arg, Type to, out uint distance)
+        {
+            distance = default;
+
+            if (to == typeof(string)
+                    || !typeof(System.Collections.IEnumerable).IsAssignableFrom(to)
+                    || !Runtime.PyIter_Check(arg))
+            {
+                return false;
+            }
+
+            distance = MATCH_MAX_DIST - 1;
             return true;
         }
 

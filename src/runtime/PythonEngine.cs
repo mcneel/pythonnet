@@ -32,9 +32,9 @@ namespace Python.Runtime
             Initialize(args);
         }
 
-        public PythonEngine(IEnumerable<string> args)
+        public PythonEngine(IEnumerable<string> args, bool initCLR = true)
         {
-            Initialize(args);
+            Initialize(args, initCLR: initCLR);
         }
 
         public void Dispose()
@@ -183,9 +183,9 @@ namespace Python.Runtime
             Initialize(setSysArgv: true);
         }
 
-        public static void Initialize(bool setSysArgv = true, bool initSigs = false)
+        public static void Initialize(bool setSysArgv = true, bool initSigs = false, bool initCLR = true)
         {
-            Initialize(Enumerable.Empty<string>(), setSysArgv: setSysArgv, initSigs: initSigs);
+            Initialize(Enumerable.Empty<string>(), setSysArgv: setSysArgv, initSigs: initSigs, initCLR: initCLR);
         }
 
         /// <summary>
@@ -197,8 +197,9 @@ namespace Python.Runtime
         /// first call. It is *not* necessary to hold the Python global
         /// interpreter lock (GIL) to call this method.
         /// initSigs can be set to 1 to do default python signal configuration. This will override the way signals are handled by the application.
+        /// initCLR starts the CLR side as well. Pass false to start it yourself later, as PythonEngineWrapper does.
         /// </remarks>
-        public static void Initialize(IEnumerable<string> args, bool setSysArgv = true, bool initSigs = false)
+        public static void Initialize(IEnumerable<string> args, bool setSysArgv = true, bool initSigs = false, bool initCLR = true)
         {
             if (initialized)
             {
@@ -221,6 +222,15 @@ namespace Python.Runtime
             if (setSysArgv)
             {
                 Py.SetArgv(args);
+            }
+
+            if (initCLR)
+            {
+                using (Py.GIL())
+                {
+                    Runtime.InitializeCLR();
+                    InitializeCLR();
+                }
             }
         }
 

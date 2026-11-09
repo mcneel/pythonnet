@@ -58,10 +58,12 @@ namespace Python.Runtime
                     return int32Type;
                 }
 
+                // Clear the error from the previous failed attempt. Otherwise the next attempt
+                // wrongly fails for UInt64.MaxValue, whose bit pattern looks like Python's error marker.
+                Exceptions.Clear();
                 nuint? uint32 = Runtime.PyLong_AsUnsignedSize_t(op);
                 if (uint32 != null)
                 {
-                    Exceptions.Clear();
                     if (uint32 > UInt32.MaxValue)
                     {
                         return uint64Type;
@@ -69,17 +71,17 @@ namespace Python.Runtime
                     return uint32Type;
                 }
 
+                Exceptions.Clear();
                 long? int64 = Runtime.PyLong_AsLongLong(op);
                 if (int64 != null)
                 {
-                    Exceptions.Clear();
                     return int64Type;
                 }
 
+                Exceptions.Clear();
                 ulong? uint64 = Runtime.PyLong_AsUnsignedLongLong(op);
                 if (uint64 != null)
                 {
-                    Exceptions.Clear();
                     return uint64Type;
                 }
 

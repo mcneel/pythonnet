@@ -53,6 +53,8 @@ namespace Python.Runtime
             {
                 throw new ArgumentNullException();
             }
+            // .NET callers (e.g. foreach over PyIterable) may not hold the GIL
+            using var _ = Py.GIL();
             var val = Runtime.PyObject_GetIter(iterable.Reference);
             PythonException.ThrowIfIsNull(val);
             return new PyIter(val.Steal());
@@ -66,6 +68,7 @@ namespace Python.Runtime
 
         public bool MoveNext()
         {
+            using var _ = Py.GIL();
             NewReference next = Runtime.PyIter_Next(Reference);
             if (next.IsNull())
             {
