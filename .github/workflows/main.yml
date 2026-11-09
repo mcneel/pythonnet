@@ -67,24 +67,12 @@ jobs:
           Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append -InputObject "PYTHONNET_PYDLL=$(python -m find_libpython)"
           Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append -InputObject "PYTHONHOME=$(python -c 'import sys; print(sys.prefix)')"
 
+      # .NET Core only (Rhino 9 runs on net9.0); .NET Framework and Mono are not tested
       - name: Embedding tests
-        run: dotnet test --runtime any-${{ matrix.os.platform }} --logger "console;verbosity=detailed" src/embed_tests/
-        env:
-          MONO_THREADS_SUSPEND: preemptive # https://github.com/mono/mono/issues/21466
-
-      - name: Python Tests (Mono)
-        if: ${{ matrix.os.category != 'windows' }}
-        run: pytest --runtime mono
+        run: dotnet test --framework net9.0 --runtime any-${{ matrix.os.platform }} --logger "console;verbosity=detailed" src/embed_tests/
 
       - name: Python Tests (.NET Core)
-        if: ${{ matrix.os.platform == 'x64' }}
         run: pytest --runtime coreclr
 
-      - name: Python Tests (.NET Framework)
-        if: ${{ matrix.os.category == 'windows' }}
-        run: pytest --runtime netfx
-
       - name: Python tests run from .NET
-        run: dotnet test --runtime any-${{ matrix.os.platform }} src/python_tests_runner/
-
-      # TODO: Run mono tests on Windows?
+        run: dotnet test --framework net9.0 --runtime any-${{ matrix.os.platform }} src/python_tests_runner/
