@@ -17,7 +17,7 @@ namespace Python.PythonTestsRunner
         [OneTimeSetUp]
         public void SetUp()
         {
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
         }
 
         [OneTimeTearDown]
