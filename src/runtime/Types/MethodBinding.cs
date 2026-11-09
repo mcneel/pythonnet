@@ -19,14 +19,12 @@ namespace Python.Runtime
         internal MaybeMethodInfo info;
         internal MethodObject m;
         internal PyObject? target;
-        internal PyType? targetType;
+        internal PyType targetType;
 
-        public MethodBinding(MethodObject m, PyObject? target, PyType? targetType = null)
+        public MethodBinding(MethodObject m, PyObject? target, PyType targetType)
         {
             this.target = target;
-
-            this.targetType = targetType ?? target?.GetPythonType();
-
+            this.targetType = targetType;
             this.info = null;
             this.m = m;
         }
@@ -55,7 +53,7 @@ namespace Python.Runtime
             }
 
             MethodObject overloaded = self.m.WithOverloads(overloads);
-            var mb = new MethodBinding(overloaded, self.target, self.targetType);
+            var mb = new MethodBinding(overloaded, self.target?.NewReference(), self.targetType.NewReference());
             return mb.Alloc();
         }
 
@@ -142,7 +140,7 @@ namespace Python.Runtime
                 // FIXME: deprecate __overloads__ soon...
                 case "__overloads__":
                 case "Overloads":
-                    var om = new OverloadMapper(self.m, self.target);
+                    var om = new OverloadMapper(self.m, self.target?.NewReference(), self.targetType.NewReference());
                     return om.Alloc();
                 case "__signature__" when Runtime.InspectModule is not null:
                     var sig = self.Signature;
@@ -285,6 +283,13 @@ namespace Python.Runtime
             string type = self.target is null ? "unbound" : "bound";
             string name = self.m.name;
             return Runtime.PyString_FromString($"<{type} method '{name}'>");
+        }
+
+        protected override void OnClear()
+        {
+            target?.Dispose();
+            targetType.Dispose();
+            target = null;
         }
     }
 }

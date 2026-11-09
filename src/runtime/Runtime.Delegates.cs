@@ -15,6 +15,15 @@ public unsafe partial class Runtime
         {
             Py_IncRef = (delegate* unmanaged[Cdecl]<BorrowedReference, void>)GetFunctionByName(nameof(Py_IncRef), GetUnmanagedDll(_PythonDll));
             Py_DecRef = (delegate* unmanaged[Cdecl]<StolenReference, void>)GetFunctionByName(nameof(Py_DecRef), GetUnmanagedDll(_PythonDll));
+            try
+            {
+                // Exported as a function only on CPython 3.14+; required for free-threaded.
+                Py_REFCNT = (delegate* unmanaged[Cdecl]<BorrowedReference, nint>)GetFunctionByName(nameof(Py_REFCNT), GetUnmanagedDll(_PythonDll));
+            }
+            catch (MissingMethodException)
+            {
+                Py_REFCNT = null;
+            }
             Py_Initialize = (delegate* unmanaged[Cdecl]<void>)GetFunctionByName(nameof(Py_Initialize), GetUnmanagedDll(_PythonDll));
             Py_InitializeEx = (delegate* unmanaged[Cdecl]<int, void>)GetFunctionByName(nameof(Py_InitializeEx), GetUnmanagedDll(_PythonDll));
             Py_IsInitialized = (delegate* unmanaged[Cdecl]<int>)GetFunctionByName(nameof(Py_IsInitialized), GetUnmanagedDll(_PythonDll));
@@ -247,7 +256,6 @@ public unsafe partial class Runtime
             catch (MissingMethodException) { }
             PyObject_GC_Track = (delegate* unmanaged[Cdecl]<BorrowedReference, void>)GetFunctionByName(nameof(PyObject_GC_Track), GetUnmanagedDll(_PythonDll));
             PyObject_GC_UnTrack = (delegate* unmanaged[Cdecl]<BorrowedReference, void>)GetFunctionByName(nameof(PyObject_GC_UnTrack), GetUnmanagedDll(_PythonDll));
-            _PyObject_Dump = (delegate* unmanaged[Cdecl]<BorrowedReference, void>)GetFunctionByName(nameof(_PyObject_Dump), GetUnmanagedDll(_PythonDll));
             PyMem_Malloc = (delegate* unmanaged[Cdecl]<IntPtr, IntPtr>)GetFunctionByName(nameof(PyMem_Malloc), GetUnmanagedDll(_PythonDll));
             PyMem_Realloc = (delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr>)GetFunctionByName(nameof(PyMem_Realloc), GetUnmanagedDll(_PythonDll));
             PyMem_Free = (delegate* unmanaged[Cdecl]<IntPtr, void>)GetFunctionByName(nameof(PyMem_Free), GetUnmanagedDll(_PythonDll));
@@ -314,13 +322,15 @@ public unsafe partial class Runtime
             {
                 throw new BadPythonDllException(
                     "Runtime.PythonDLL was not set or does not point to a supported Python runtime DLL." +
-                    " See https://github.com/pythonnet/pythonnet#embedding-python-in-net",
+                    " See https://github.com/pythonnet/pythonnet#embedding-python-in-net." +
+                    $" Value of PythonDLL: {PythonDLL ?? "null"}",
                     e);
             }
         }
 
         internal static delegate* unmanaged[Cdecl]<BorrowedReference, void> Py_IncRef { get; }
         internal static delegate* unmanaged[Cdecl]<StolenReference, void> Py_DecRef { get; }
+        internal static delegate* unmanaged[Cdecl]<BorrowedReference, nint> Py_REFCNT { get; }
         internal static delegate* unmanaged[Cdecl]<void> Py_Initialize { get; }
         internal static delegate* unmanaged[Cdecl]<int, void> Py_InitializeEx { get; }
         internal static delegate* unmanaged[Cdecl]<int> Py_IsInitialized { get; }
@@ -520,7 +530,6 @@ public unsafe partial class Runtime
         internal static delegate* unmanaged[Cdecl]<BorrowedReference, int> PyObject_GC_IsTracked { get; }
         internal static delegate* unmanaged[Cdecl]<BorrowedReference, void> PyObject_GC_Track { get; }
         internal static delegate* unmanaged[Cdecl]<BorrowedReference, void> PyObject_GC_UnTrack { get; }
-        internal static delegate* unmanaged[Cdecl]<BorrowedReference, void> _PyObject_Dump { get; }
         internal static delegate* unmanaged[Cdecl]<nint, IntPtr> PyMem_Malloc { get; }
         internal static delegate* unmanaged[Cdecl]<IntPtr, nint, IntPtr> PyMem_Realloc { get; }
         internal static delegate* unmanaged[Cdecl]<IntPtr, void> PyMem_Free { get; }

@@ -26,39 +26,48 @@ internal sealed class ReflectedClrType : PyType
     /// </remarks>
     public static ReflectedClrType GetOrCreate(Type type, bool reflected = false)
     {
-        if (ClassManager.cache.TryGetValue(type, out ReflectedClrType pyType))
+        // Fast path: `cache` holds only fully-initialised types.
+        if (ClassManager.cache.TryGetValue(type, out var pyType))
+            return pyType;
+
+        // Shared with ClassManager.cache + TypeManager._slotsHolders writes
+        // so the multi-step type build below is atomic.
+        lock (ClassManager._cacheCreateLock)
         {
+            // Re-check now that we hold the lock; another thread may have finished.
+            if (ClassManager.cache.TryGetValue(type, out pyType))
+                return pyType;
+            // Reentrant call from the same thread (self-referential class) sees the
+            // partial type that the outer frame allocated.
+            if (ClassManager._inProgressCache.TryGetValue(type, out pyType))
+                return pyType;
+
+            try
+            {
+                pyType = AllocateClass(type);
+                ClassManager._inProgressCache[type] = pyType;
+
+                var impl = ClassManager.CreateClass(type);
+                TypeManager.InitializeClassCore(type, pyType, impl);
+                ClassManager.InitClassBase(type, impl, pyType);
+                TypeManager.InitializeClass(pyType, impl, type, reflected);
+
+                // Publish the completed type so the fast path can see it.
+                ClassManager.cache[type] = pyType;
+            }
+            catch (Exception e)
+            {
+                // NOTE: RH-100050
+                // a failed type is never published to the cache, so later lookups retry instead of getting a broken copy
+                throw new InternalPythonnetException($"Failed to create Python type for {type.FullName}", e);
+            }
+            finally
+            {
+                ClassManager._inProgressCache.Remove(type);
+            }
+
             return pyType;
         }
-
-        try
-        {
-            // Ensure, that matching Python type exists first.
-            // It is required for self-referential classes
-            // (e.g. with members, that refer to the same class)
-            pyType = AllocateClass(type);
-            ClassManager.cache.Add(type, pyType);
-
-            ClassBase impl = ClassManager.CreateClass(type);
-
-            TypeManager.InitializeClassCore(type, pyType, impl);
-
-            ClassManager.InitClassBase(type, impl, pyType);
-
-            // Now we force initialize the Python type object to reflect the given
-            // managed type, filling the Python type slots with thunks that
-            // point to the managed methods providing the implementation.
-            TypeManager.InitializeClass(pyType, impl, type, reflected);
-        }
-        catch (Exception e)
-        {
-            // NOTE: RH-100050
-            // this type failed to build, so forget it rather than hand out a broken copy later
-            ClassManager.cache.Remove(type);
-            throw new InternalPythonnetException($"Failed to create Python type for {type.FullName}", e);
-        }
-
-        return pyType;
     }
 
     internal void Restore(Dictionary<string, object?> context)
@@ -94,7 +103,7 @@ internal sealed class ReflectedClrType : PyType
                 ns,
                 assembly);
 
-            ClassManager.cache.Remove(subType);
+            ClassManager.cache.TryRemove(subType, out _);
             ReflectedClrType pyTypeObj = GetOrCreate(subType, reflected: true);
 
             // by default the class dict will have all the C# methods in it, but as this is a
