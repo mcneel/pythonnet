@@ -50,7 +50,7 @@ namespace Python.Runtime
             // this is so less code changes are done the pythonnet source
             LibraryLoader.Instance.Load(pythonLibPath);
 
-            // ignore PYTHONNET_PYDLL / PYTHONNET_VENV / VIRTUAL_ENV inherited by Rhino (e.g. launched from
+            // ignore PYTHONNET_PYDLL / PYTHONNET_VENV / VIRTUAL_ENV inherited by the host (e.g. launched from
             // a terminal with a venv active) so they can't swap in another libpython or program name
             Runtime.PythonEnvironment = new PythonEnvironment();
 

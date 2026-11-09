@@ -27,6 +27,10 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference -->
   </ItemGroup>
+  <ItemGroup>
+    <!-- Host overrides the assembly version; keep pythonnet's own version readable -->
+    <AssemblyMetadata Include="UpstreamVersion" Value="$(FullVersion)" />
+  </ItemGroup>
 
   <Import Condition="Exists('$(MSBuildThisFileDirectory)..\..\Directory.Build.props')"
           Project="$(MSBuildThisFileDirectory)..\..\Directory.Build.props" />
