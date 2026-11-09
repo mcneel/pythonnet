@@ -15,7 +15,7 @@ namespace Python.EmbeddingTest
         [OneTimeSetUp]
         public void SetUp()
         {
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             // workaround for assert tlock.locked() warning
             threading = Py.Import("threading");
         }

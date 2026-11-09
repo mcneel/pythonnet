@@ -32,4 +32,12 @@
     </PackageReference>
   </ItemGroup>
 
+  <!-- .NET 9 removed BinaryFormatter; pythonnet's shutdown stashes state with it. Unsupported compat package restores it for tests -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net9.0'">
+    <EnableUnsafeBinaryFormatterSerialization>true</EnableUnsafeBinaryFormatterSerialization>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
+    <PackageReference Include="System.Runtime.Serialization.Formatters" Version="9.0.*" />
+  </ItemGroup>
+
 </Project>

@@ -12,7 +12,7 @@ namespace Python.EmbeddingTest
         [OneTimeSetUp]
         public void SetUp()
         {
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             using var locals = new PyDict();
             PythonEngine.Exec(InheritanceTestBaseClassWrapper.ClassSourceCode, locals: locals);
             ExtraBaseTypeProvider.ExtraBase = new PyType(locals[InheritanceTestBaseClassWrapper.ClassName]);
@@ -166,7 +166,8 @@ namespace Python.EmbeddingTest
   def callVirt(self):
     return self.virt()
   def __getattr__(self, name):
-    return '__getattr__:' + name
+    # must raise for unknown names: shutdown strips .NET members, and a returned value would be called as an override
+    raise AttributeError(name)
   def __setattr__(self, name, value):
     value[name] = name
 " + ClassName + " = " + ClassName + "\n";

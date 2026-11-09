@@ -24,7 +24,7 @@ namespace Python.EmbeddingTest
         [OneTimeSetUp]
         public void SetUp()
         {
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
 
             /* Append the tests directory to sys.path
              * using reflection to circumvent the private
@@ -96,7 +96,9 @@ import clr
 clr.AddReference('{path}')
 ";
 
-            Assert.Throws<BadImageFormatException>(() => PythonEngine.Exec(code));
+            // off Windows, .NET 9 parses the full path as an assembly name first and fails with FileNotFoundException
+            Assert.That(() => PythonEngine.Exec(code),
+                Throws.InstanceOf<BadImageFormatException>().Or.InstanceOf<FileNotFoundException>());
         }
     }
 }

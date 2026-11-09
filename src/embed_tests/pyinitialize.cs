@@ -13,17 +13,17 @@ namespace Python.EmbeddingTest
         [Test]
         public static void StartAndStopTwice()
         {
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             PythonEngine.Shutdown();
 
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             PythonEngine.Shutdown();
         }
 
         [Test]
         public static void LoadDefaultArgs()
         {
-            using (new PythonEngine())
+            using (new PythonEngine("--pythonnet-tests"))
             {
                 using(var argv = new PyList(Runtime.Runtime.PySys_GetObject("argv")))
                 {
@@ -36,7 +36,7 @@ namespace Python.EmbeddingTest
         public static void LoadSpecificArgs()
         {
             var args = new[] { "test1", "test2" };
-            using (new PythonEngine(args))
+            using (new PythonEngine(args[0], args[1], "--pythonnet-tests"))
             {
                 using (var argv = new PyList(Runtime.Runtime.PySys_GetObject("argv")))
                 {
@@ -52,7 +52,7 @@ namespace Python.EmbeddingTest
         [Test]
         public void ImportClassShutdownRefcount()
         {
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
 
             PyObject ns = Py.Import(typeof(ImportClassShutdownRefcountClass).Namespace);
             PyObject cls = ns.GetAttr(nameof(ImportClassShutdownRefcountClass));
@@ -79,7 +79,7 @@ namespace Python.EmbeddingTest
         public void ReInitialize()
         {
             var code = "from System import Int32\n";
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             using (Py.GIL())
             {
                 // Import any class or struct from .NET
@@ -87,7 +87,7 @@ namespace Python.EmbeddingTest
             }
             PythonEngine.Shutdown();
 
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             using (Py.GIL())
             {
                 // Import a class/struct from .NET
@@ -122,14 +122,14 @@ namespace Python.EmbeddingTest
         {
             // Test we can run one shutdown handler.
             shutdown_count = 0;
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             PythonEngine.AddShutdownHandler(OnShutdownIncrement);
             PythonEngine.Shutdown();
             Assert.That(shutdown_count, Is.EqualTo(1));
 
             // Test we can run multiple shutdown handlers in the right order.
             shutdown_count = 4;
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             PythonEngine.AddShutdownHandler(OnShutdownIncrement);
             PythonEngine.AddShutdownHandler(OnShutdownDouble);
             PythonEngine.Shutdown();
@@ -139,7 +139,7 @@ namespace Python.EmbeddingTest
 
             // Test we can remove shutdown handlers, handling duplicates.
             shutdown_count = 4;
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             PythonEngine.AddShutdownHandler(OnShutdownIncrement);
             PythonEngine.AddShutdownHandler(OnShutdownIncrement);
             PythonEngine.AddShutdownHandler(OnShutdownDouble);

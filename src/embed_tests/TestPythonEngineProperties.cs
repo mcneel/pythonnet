@@ -9,7 +9,7 @@ namespace Python.EmbeddingTest
         [Test]
         public static void GetBuildinfoDoesntCrash()
         {
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             using (Py.GIL())
             {
                 string s = PythonEngine.BuildInfo;
@@ -22,7 +22,7 @@ namespace Python.EmbeddingTest
         [Test]
         public static void GetCompilerDoesntCrash()
         {
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             using (Py.GIL())
             {
                 string s = PythonEngine.Compiler;
@@ -36,7 +36,7 @@ namespace Python.EmbeddingTest
         [Test]
         public static void GetCopyrightDoesntCrash()
         {
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             using (Py.GIL())
             {
                 string s = PythonEngine.Copyright;
@@ -49,7 +49,7 @@ namespace Python.EmbeddingTest
         [Test]
         public static void GetPlatformDoesntCrash()
         {
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             using (Py.GIL())
             {
                 string s = PythonEngine.Platform;
@@ -62,7 +62,7 @@ namespace Python.EmbeddingTest
         [Test]
         public static void GetVersionDoesntCrash()
         {
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             using (Py.GIL())
             {
                 string s = PythonEngine.Version;
@@ -75,7 +75,7 @@ namespace Python.EmbeddingTest
         [Test]
         public static void GetPythonPathDefault()
         {
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             string s = PythonEngine.PythonPath;
 
             StringAssert.Contains("python", s.ToLower());
@@ -85,7 +85,7 @@ namespace Python.EmbeddingTest
         [Test]
         public static void GetProgramNameDefault()
         {
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             string s = PythonEngine.ProgramName;
 
             Assert.NotNull(s);
@@ -101,17 +101,25 @@ namespace Python.EmbeddingTest
         {
             string envPythonHome = Environment.GetEnvironmentVariable("PYTHONHOME") ?? "";
 
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             string enginePythonHome = PythonEngine.PythonHome;
+            // read before Shutdown: PyVersion asks the running interpreter
+            Version pyVersion = Runtime.Runtime.PyVersion;
+            PythonEngine.Shutdown();
+
+            // Python 3.13's Py_GetPythonHome no longer reports the PYTHONHOME environment variable
+            if (pyVersion >= new Version(3, 13))
+            {
+                Assert.Ignore("Py_GetPythonHome ignores PYTHONHOME on Python 3.13+");
+            }
 
             Assert.AreEqual(envPythonHome, enginePythonHome);
-            PythonEngine.Shutdown();
         }
 
         [Test]
         public void SetPythonHome()
         {
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             var pythonHomeBackup = PythonEngine.PythonHome;
             PythonEngine.Shutdown();
 
@@ -121,7 +129,7 @@ namespace Python.EmbeddingTest
             var pythonHome = "/dummypath/";
 
             PythonEngine.PythonHome = pythonHome;
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
 
             Assert.AreEqual(pythonHome, PythonEngine.PythonHome);
             PythonEngine.Shutdown();
@@ -133,7 +141,7 @@ namespace Python.EmbeddingTest
         [Test]
         public void SetPythonHomeTwice()
         {
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
             var pythonHomeBackup = PythonEngine.PythonHome;
             PythonEngine.Shutdown();
 
@@ -144,7 +152,7 @@ namespace Python.EmbeddingTest
 
             PythonEngine.PythonHome = "/dummypath2/";
             PythonEngine.PythonHome = pythonHome;
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
 
             Assert.AreEqual(pythonHome, PythonEngine.PythonHome);
             PythonEngine.Shutdown();
@@ -156,7 +164,7 @@ namespace Python.EmbeddingTest
         [Ignore("Currently buggy in Python")]
         public void SetPythonHomeEmptyString()
         {
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
 
             var backup = PythonEngine.PythonHome;
             if (backup == "")
@@ -185,7 +193,7 @@ namespace Python.EmbeddingTest
             var programName = "FooBar";
 
             PythonEngine.ProgramName = programName;
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
 
             Assert.AreEqual(programName, PythonEngine.ProgramName);
             PythonEngine.Shutdown();
@@ -196,7 +204,7 @@ namespace Python.EmbeddingTest
         [Test]
         public void SetPythonPath()
         {
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
 
             const string moduleName = "pytest";
             bool importShouldSucceed;
@@ -223,7 +231,7 @@ namespace Python.EmbeddingTest
             PythonEngine.Shutdown();
 
             PythonEngine.PythonPath = path;
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
 
             Assert.AreEqual(path, PythonEngine.PythonPath);
             if (importShouldSucceed) Py.Import(moduleName);

@@ -120,7 +120,7 @@ namespace Python.EmbeddingTest
         [SetUp]
         public void SetUp()
         {
-            PythonEngine.Initialize();
+            PythonEngine.Initialize(new[] { "--pythonnet-tests" });
         }
 
         [TearDown]

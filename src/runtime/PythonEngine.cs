@@ -204,6 +204,9 @@ namespace Python.Runtime
             {
                 return;
             }
+            // test fixtures pass this so the CLR half of startup runs too (Rhino does it in McNeel.PythonEngine)
+            const string testsArg = "--pythonnet-tests";
+            bool forTests = args.Contains(testsArg);
             // Creating the delegateManager MUST happen before Runtime.Initialize
             // is called. If it happens afterwards, DelegateManager's CodeGenerator
             // throws an exception in its ctor.  This exception is eaten somehow
@@ -220,7 +223,16 @@ namespace Python.Runtime
 
             if (setSysArgv)
             {
-                Py.SetArgv(args);
+                Py.SetArgv(args.Where(a => a != testsArg));
+            }
+
+            if (forTests)
+            {
+                using (Py.GIL())
+                {
+                    Runtime.InitializeCLR();
+                    InitializeCLR();
+                }
             }
         }
 
