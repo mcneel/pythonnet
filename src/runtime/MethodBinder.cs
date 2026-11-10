@@ -301,7 +301,9 @@ namespace Python.Runtime
         /// The overloads of this method
         /// </summary>
         [NonSerialized] MethodBase[]? methods = default;
-        [NonSerialized] bool methodsInit = false;
+        // volatile + lock: first-time GetMethods() races would otherwise sort `list`
+        // concurrently and publish a partial methods array (free-threaded Python)
+        [NonSerialized] volatile bool methodsInit = false;
         readonly List<MaybeMethodBase> list;
 
         public bool AllowRedirected = true;
@@ -321,8 +323,20 @@ namespace Python.Runtime
 
         internal void AddMethod(MethodBase m)
         {
-            list.Add(m);
-            methodsInit = false;
+            lock (list)
+            {
+                list.Add(m);
+                methodsInit = false;
+            }
+        }
+
+        internal void AddRange(IEnumerable<MethodBase> methods)
+        {
+            lock (list)
+            {
+                list.AddRange(methods.Select(m => new MaybeMethodBase(m)));
+                methodsInit = false;
+            }
         }
 
         /// <summary>
@@ -332,15 +346,16 @@ namespace Python.Runtime
         /// </summary>
         internal MethodBase[] GetMethods()
         {
-            if (!methodsInit)
+            if (methodsInit) return methods!;
+            lock (list)
             {
-                // I'm sure this could be made more efficient.
+                if (methodsInit) return methods!;
+
                 list.Sort(new Sorter());
                 methods = (from method in list where method.Valid select method.Value).ToArray();
                 methodsInit = true;
+                return methods!;
             }
-
-            return methods!;
         }
 
         #region Invoke
@@ -453,6 +468,8 @@ namespace Python.Runtime
                     if (AllowThreads)
                     {
                         PythonEngine.EndAllowThreads(threadState);
+                        // result conversion below can throw; the catch must not restore the thread state twice
+                        threadState = IntPtr.Zero;
                     }
 
                     if (spec.Returns > 0)
@@ -528,7 +545,7 @@ namespace Python.Runtime
                         e = e.InnerException;
                     }
 
-                    if (AllowThreads)
+                    if (AllowThreads && threadState != IntPtr.Zero)
                     {
                         PythonEngine.EndAllowThreads(threadState);
                     }

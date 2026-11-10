@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -13,12 +14,15 @@ namespace Python.Runtime
     [Serializable]
     internal class ModuleObject : ExtensionType
     {
-        private readonly Dictionary<string, PyObject> cache = new();
+        [NonSerialized]
+        private ConcurrentDictionary<string, PyObject> cache = new();
 
         internal string moduleName;
         internal PyDict dict;
         protected string _namespace;
         private readonly PyList __all__ = new ();
+        [NonSerialized]
+        private ConcurrentDictionary<string, byte> allNames = new();
 
         // Attributes to be set on the module according to PEP302 and 451
         // by the import machinery.
@@ -178,36 +182,38 @@ namespace Python.Runtime
         {
             foreach (string name in AssemblyManager.GetNames(_namespace))
             {
-                cache.TryGetValue(name, out var m);
-                if (m != null)
+                bool hasValidAttribute = cache.TryGetValue(name, out var m);
+                if (!hasValidAttribute)
                 {
-                    continue;
-                }
-                BorrowedReference attr = Runtime.PyDict_GetItemString(dict, name);
-                // If __dict__ has already set a custom property, skip it.
-                if (!attr.IsNull)
-                {
-                    continue;
-                }
-
-                try
-                {
-                    using var attrVal = GetAttribute(name, true);
-                    if (!attrVal.IsNull())
+                    BorrowedReference attr = Runtime.PyDict_GetItemString(dict, name);
+                    // If __dict__ has already set a custom property, skip it.
+                    if (!attr.IsNull)
                     {
-                        // if it's a valid attribute, add it to __all__
-                        using var pyname = Runtime.PyString_FromString(name);
-                        if (Runtime.PyList_Append(__all__, pyname.Borrow()) != 0)
-                        {
-                            throw PythonException.ThrowLastAsClrException();
-                        }
+                        continue;
+                    }
+
+                    try
+                    {
+                        using var attrVal = GetAttribute(name, true);
+                        hasValidAttribute = !attrVal.IsNull();
+                    }
+                    catch (InternalPythonnetException)
+                    {
+                        // NOTE: RH-100050
+                        // a loaded type can fail to build when a referenced DLL is missing;
+                        // skip it so the other names, and Python startup, still load
+                        continue;
                     }
                 }
-                catch (InternalPythonnetException)
+
+                if (hasValidAttribute && allNames.TryAdd(name, 0))
                 {
-                    // NOTE: RH-100050
-                    // a loaded type can fail to build when a referenced DLL is missing;
-                    // skip it so the other names, and Python startup, still load
+                    // if it's a valid attribute, add it to __all__ once.
+                    using var pyname = Runtime.PyString_FromString(name);
+                    if (Runtime.PyList_Append(__all__, pyname.Borrow()) != 0)
+                    {
+                        throw PythonException.ThrowLastAsClrException();
+                    }
                 }
             }
         }
@@ -306,7 +312,7 @@ namespace Python.Runtime
                     }
                     Runtime.PyErr_Clear();
                 }
-                cache.Remove(memberName);
+                cache.TryRemove(memberName, out _);
             }
         }
 
@@ -416,7 +422,8 @@ namespace Python.Runtime
 
         protected override Dictionary<string, object?>? OnSave(BorrowedReference ob)
         {
-            var context = base.OnSave(ob);
+            var context = base.OnSave(ob) ?? new();
+            context[nameof(allNames)] = allNames.Keys.ToArray();
             System.Diagnostics.Debug.Assert(dict == GetObjectDict(ob));
             // destroy the cache(s)
             foreach (var pair in cache)
@@ -440,6 +447,9 @@ namespace Python.Runtime
 
         protected override void OnLoad(BorrowedReference ob, Dictionary<string, object?>? context)
         {
+            cache = new();
+            allNames = new(((string[])context![nameof(allNames)]!)
+                .Select(name => new KeyValuePair<string, byte>(name, 0)));
             base.OnLoad(ob, context);
             SetObjectDict(ob, new NewReference(dict).Steal());
         }

@@ -14,9 +14,7 @@ namespace Python.Runtime
 
         public static Type CreateType(this TypeBuilder typeBuilder)
         {
-#pragma warning disable CS8603 // Possible null reference return.
-            return typeBuilder.CreateTypeInfo();
-#pragma warning restore CS8603 // Possible null reference return.
+            return typeBuilder.CreateTypeInfo()!;
         }
 
         public static T GetCustomAttribute<T>(this Type type) where T: Attribute

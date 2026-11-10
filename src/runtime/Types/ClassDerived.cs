@@ -2,6 +2,7 @@ using System;
 using System.Text;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Dynamic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -55,6 +56,7 @@ namespace Python.Runtime
 
         private static Dictionary<string, AssemblyBuilder> assemblyBuilders;
         private static Dictionary<Tuple<string, string>, ModuleBuilder> moduleBuilders;
+        private static readonly object _buildersLock = new();
 
         /// <summary>
         /// Cache stores generated derived types. An instance of these types
@@ -72,8 +74,13 @@ namespace Python.Runtime
 
         public static void Reset()
         {
-            assemblyBuilders = new Dictionary<string, AssemblyBuilder>();
-            moduleBuilders = new Dictionary<Tuple<string, string>, ModuleBuilder>();
+            // Atomic replacement of both builder caches so a concurrent
+            // GetModuleBuilder cannot observe one new + one old.
+            lock (_buildersLock)
+            {
+                assemblyBuilders = new Dictionary<string, AssemblyBuilder>();
+                moduleBuilders = new Dictionary<Tuple<string, string>, ModuleBuilder>();
+            }
         }
 
         internal ClassDerivedObject(Type tp) : base(tp)
@@ -124,7 +131,7 @@ namespace Python.Runtime
         static int mp_ass_subscript_impl(BorrowedReference ob, BorrowedReference idx, BorrowedReference v)
             => Ass_Substrict(ob, idx, v, allowRedirected: true);
 
-        public new static void tp_dealloc(NewReference ob)
+        public new static unsafe void tp_dealloc(NewReference ob)
         {
             var self = (CLRObject?)GetManagedObject(ob.Borrow());
 
@@ -134,14 +141,35 @@ namespace Python.Runtime
             // self may be null after Shutdown begun
             if (self is not null)
             {
-                // The python should now have a ref count of 0, but we don't actually want to
-                // deallocate the object until the C# object that references it is destroyed.
-                // So we don't call PyObject_GC_Del here and instead we set the python
-                // reference to a weak reference so that the C# object can be collected.
-                GCHandle oldHandle = GetGCHandle(ob.Borrow());
-                GCHandle gc = GCHandle.Alloc(self, GCHandleType.Weak);
-                SetGCHandle(ob.Borrow(), gc);
-                oldHandle.Free();
+                // Python refcount has reached 0 but we do NOT free the PyObject:
+                // the C# wrapper (via IPythonDerivedType.__pyobj__) may still
+                // reference it, and a later ToPython() on that wrapper will
+                // resurrect a strong handle and call _Py_NewReference.
+                //
+                // Demote the GCHandle from strong -> weak so the C# wrapper can
+                // be collected; when it is, PyFinalize enqueues the actual
+                // PyObject_GC_Del.  Until then the slot keeps the wrapper
+                // reachable from Python -> C# but not the other way.
+                //
+                // Interlocked.Exchange: under FT (or .NET-finalizer-thread
+                // races) tp_clear can hit the same slot.  Whichever thread
+                // observes the original handle frees it; the loser frees the
+                // weak handle it just allocated.  Without the atomic swap both
+                // threads could see and free the same handle (double-free).
+                GCHandle weak = GCHandle.Alloc(self, GCHandleType.Weak);
+                BorrowedReference borrow = ob.Borrow();
+                int offset = Util.ReadInt32(Runtime.PyObject_TYPE(borrow), Offsets.tp_clr_inst_offset);
+                IntPtr* slot = (IntPtr*)(borrow.DangerousGetAddress() + offset);
+                IntPtr oldRaw = System.Threading.Interlocked.Exchange(ref *slot, (IntPtr)weak);
+                if (oldRaw != IntPtr.Zero)
+                    ((GCHandle)oldRaw).Free();
+                else
+                {
+                    // tp_clear already cleared the slot; put it back to zero before
+                    // freeing our weak so a later read can't see a dangling handle.
+                    System.Threading.Interlocked.Exchange(ref *slot, IntPtr.Zero);
+                    weak.Free();
+                }
             }
         }
 
@@ -212,9 +240,29 @@ namespace Python.Runtime
             // is executed more that once. we just keep using the same type created before
             // since the dotnet implementation of that type does not change during runtime
             typeName = CreateUniqueTypeName(namespaceName, typeName, baseType, interfaces);
-            if (cache.TryGetValue(typeName, out Type derivedType))
-                return derivedType;
 
+            // Reflection.Emit is not thread-safe; the cache check sits inside the lock
+            // too since another thread may be building the same type
+            lock (_buildersLock)
+            {
+                if (cache.TryGetValue(typeName, out Type derivedType))
+                    return derivedType;
+
+                return CreateDerivedTypeImpl(typeName, baseType, interfaces, pyDict, assemblyName, moduleName);
+            }
+        }
+
+        /// <summary>
+        /// Emits the CLR type for a Python subclass.  Must be called under
+        /// <c>_buildersLock</c> since Reflection.Emit is not thread-safe.
+        /// </summary>
+        private static Type CreateDerivedTypeImpl(string typeName,
+            Type baseType,
+            IEnumerable<Type> interfaces,
+            BorrowedReference pyDict,
+            string assemblyName,
+            string moduleName)
+        {
             ModuleBuilder moduleBuilder = GetModuleBuilder(assemblyName, moduleName);
 
             var baseInterfaces = new HashSet<Type> { typeof(IPythonDerivedType) };
@@ -311,6 +359,13 @@ namespace Python.Runtime
 
             foreach (MethodInfo method in virtualMethods)
             {
+                // Avoid re-entrant DLR binder recursion when Python derives from
+                // DynamicObject-based types (including overrides in intermediate bases).
+                if (IsDynamicObjectHookMethod(method))
+                {
+                    continue;
+                }
+
                 // override the virtual method to call out to the python method, if there is one.
                 AddVirtualMethod(method, baseType, typeBuilder);
                 redirectedMethods.Add(method.Name);
@@ -357,8 +412,14 @@ namespace Python.Runtime
 #pragma warning disable CS0618 // PythonDerivedType is for internal use only
                 il.Emit(OpCodes.Call, typeof(PythonDerivedType).GetMethod(nameof(PyFinalize)));
 #pragma warning restore CS0618 // PythonDerivedType is for internal use only
-                il.Emit(OpCodes.Ldarg_0);
-                il.Emit(OpCodes.Call, finalizeMethod);
+                // Only chain to the base Finalize if it's not another pythonnet-emitted
+                // type: those already call PyFinalize themselves, which would double-queue
+                // the same __pyobj__ and trigger PyObject_GC_Del on freed memory.
+                if (!typeof(IPythonDerivedType).IsAssignableFrom(baseType))
+                {
+                    il.Emit(OpCodes.Ldarg_0);
+                    il.Emit(OpCodes.Call, finalizeMethod);
+                }
                 il.Emit(OpCodes.Ret);
             }
 
@@ -374,6 +435,35 @@ namespace Python.Runtime
 
             cache[typeName] = type;
             return type;
+        }
+
+        static bool IsDynamicObjectHookMethod(MethodInfo method)
+        {
+            MethodInfo origin = method.GetBaseDefinition();
+            Type? originType = origin.DeclaringType;
+            if (originType == typeof(DynamicObject))
+            {
+                return origin.Name switch
+                {
+                    nameof(DynamicObject.TryGetMember)
+                    or nameof(DynamicObject.TrySetMember)
+                    or nameof(DynamicObject.TryDeleteMember)
+                    or nameof(DynamicObject.TryInvokeMember)
+                    or nameof(DynamicObject.TryConvert)
+                    or nameof(DynamicObject.TryGetIndex)
+                    or nameof(DynamicObject.TrySetIndex)
+                    or nameof(DynamicObject.GetDynamicMemberNames)
+                    or nameof(IDynamicMetaObjectProvider.GetMetaObject) => true,
+                    _ => false,
+                };
+            }
+
+            if (originType == typeof(IDynamicMetaObjectProvider))
+            {
+                return origin.Name == nameof(IDynamicMetaObjectProvider.GetMetaObject);
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -796,33 +886,25 @@ namespace Python.Runtime
 
         private static ModuleBuilder GetModuleBuilder(string assemblyName, string moduleName)
         {
-            // find or create a dynamic assembly and module
-            AppDomain domain = AppDomain.CurrentDomain;
-            ModuleBuilder moduleBuilder;
+            var key = Tuple.Create(assemblyName, moduleName);
+            // Cache check-and-create must be atomic; DefineDynamicAssembly /
+            // DefineDynamicModule produce duplicate builders under contention.
+            lock (_buildersLock)
+            {
+                if (moduleBuilders.TryGetValue(key, out ModuleBuilder? existing))
+                    return existing;
 
-            if (moduleBuilders.ContainsKey(Tuple.Create(assemblyName, moduleName)))
-            {
-                moduleBuilder = moduleBuilders[Tuple.Create(assemblyName, moduleName)];
-            }
-            else
-            {
-                AssemblyBuilder assemblyBuilder;
-                if (assemblyBuilders.ContainsKey(assemblyName))
+                if (!assemblyBuilders.TryGetValue(assemblyName, out AssemblyBuilder? assemblyBuilder))
                 {
-                    assemblyBuilder = assemblyBuilders[assemblyName];
-                }
-                else
-                {
-                    assemblyBuilder = domain.DefineDynamicAssembly(new AssemblyName(assemblyName),
-                        AssemblyBuilderAccess.Run);
+                    assemblyBuilder = AppDomain.CurrentDomain.DefineDynamicAssembly(
+                        new AssemblyName(assemblyName), AssemblyBuilderAccess.Run);
                     assemblyBuilders[assemblyName] = assemblyBuilder;
                 }
 
-                moduleBuilder = assemblyBuilder.DefineDynamicModule(moduleName);
-                moduleBuilders[Tuple.Create(assemblyName, moduleName)] = moduleBuilder;
+                var moduleBuilder = assemblyBuilder.DefineDynamicModule(moduleName);
+                moduleBuilders[key] = moduleBuilder;
+                return moduleBuilder;
             }
-
-            return moduleBuilder;
         }
 
         /// <summary>

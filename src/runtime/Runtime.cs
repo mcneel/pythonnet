@@ -7,7 +7,6 @@ using System.Threading;
 using System.Collections.Generic;
 using Python.Runtime.Native;
 using System.Linq;
-using static System.FormattableString;
 
 namespace Python.Runtime
 {
@@ -18,6 +17,8 @@ namespace Python.Runtime
     /// </summary>
     public unsafe partial class Runtime
     {
+        internal static PythonEnvironment PythonEnvironment = PythonEnvironment.FromEnv();
+
         public static string? PythonDLL
         {
             get => _PythonDll;
@@ -25,39 +26,18 @@ namespace Python.Runtime
             {
                 if (_isInitialized)
                     throw new InvalidOperationException("This property must be set before runtime is initialized");
-                _PythonDll = value;
+                PythonEnvironment.LibPython = value;
             }
         }
 
-        static string? _PythonDll = GetDefaultDllName();
-        private static string? GetDefaultDllName()
-        {
-            string dll = Environment.GetEnvironmentVariable("PYTHONNET_PYDLL");
-            if (dll is not null) return dll;
-
-            string verString = Environment.GetEnvironmentVariable("PYTHONNET_PYVER");
-            if (!Version.TryParse(verString, out var version)) return null;
-
-            return GetDefaultDllName(version);
-        }
-
-        private static string GetDefaultDllName(Version version)
-        {
-            string prefix = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "" : "lib";
-            string suffix = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-                ? Invariant($"{version.Major}{version.Minor}")
-                : Invariant($"{version.Major}.{version.Minor}");
-            string ext = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".dll"
-                : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? ".dylib"
-                : ".so";
-            return prefix + "python" + suffix + ext;
-        }
+        static string? _PythonDll => PythonEnvironment.LibPython;
 
         private static PyConfig _configs = new PyConfig();
 
-        private static bool _isInitialized = false;
+        // volatile: read from worker threads, written from Initialize/Shutdown.
+        private static volatile bool _isInitialized = false;
         internal static bool IsInitialized => _isInitialized;
-        private static bool _typesInitialized = false;
+        private static volatile bool _typesInitialized = false;
         internal static bool TypeManagerInitialized => _typesInitialized;
         internal static readonly bool Is32Bit = IntPtr.Size == 4;
 
@@ -77,7 +57,9 @@ namespace Python.Runtime
 
         public static int MainManagedThreadId { get; private set; }
 
+        // Lock guards re-init from embedders racing on SetPyMember/ResetPyMembers.
         private static readonly List<PyObject> _pyRefs = new();
+        private static readonly object _pyRefsLock = new();
 
         internal static Version PyVersion
         {
@@ -96,9 +78,21 @@ namespace Python.Runtime
 
         internal static int GetRun()
         {
-            int runNumber = run;
+            int runNumber = Volatile.Read(ref run);
             Debug.Assert(runNumber > 0, "This must only be called after Runtime is initialized at least once");
             return runNumber;
+        }
+
+        static void EnsureProgramName()
+        {
+            if (!string.IsNullOrEmpty(PythonEngine.ProgramName))
+                return;
+
+            if (PythonEnvironment.IsValid)
+            {
+                PythonEngine.ProgramName = PythonEnvironment.ProgramName!;
+                return;
+            }
         }
 
         internal static bool HostedInPython;
@@ -122,6 +116,8 @@ namespace Python.Runtime
             );
             if (!interpreterAlreadyInitialized)
             {
+                EnsureProgramName();
+
                 Py_InitializeFromConfig(initSigs ? 1 : 0);
 
                 NewRun();
@@ -217,8 +213,8 @@ namespace Python.Runtime
 
         static void NewRun()
         {
-            run++;
-            using var pyRun = PyLong_FromLongLong(run);
+            int newRun = Interlocked.Increment(ref run);
+            using var pyRun = PyLong_FromLongLong(newRun);
             PySys_SetObject(RunSysPropName, pyRun.BorrowOrThrow());
         }
 
@@ -314,7 +310,7 @@ namespace Python.Runtime
                                  obj: true, derived: false, buffer: false);
             CLRObject.creationBlocked = true;
 
-            NullGCHandles(ExtensionType.loadedExtensions);
+            NullGCHandles(ExtensionType.loadedExtensions.Keys);
             ClassManager.RemoveClasses();
             TypeManager.RemoveTypes();
             _typesInitialized = false;
@@ -389,7 +385,7 @@ namespace Python.Runtime
                 }
                 else if (forceBreakLoops)
                 {
-                    NullGCHandles(CLRObject.reflectedObjects);
+                    NullGCHandles(CLRObject.reflectedObjects.Keys);
                     CLRObject.reflectedObjects.Clear();
                 }
             }
@@ -425,14 +421,14 @@ namespace Python.Runtime
                 throw PythonException.ThrowLastAsClrException();
             }
             obj = new PyObject(value);
-            _pyRefs.Add(obj);
+            lock (_pyRefsLock) _pyRefs.Add(obj);
         }
 
         private static void SetPyMemberTypeOf(out PyType obj, PyObject value)
         {
             var type = PyObject_Type(value);
             obj = new PyType(type.StealOrThrow(), prevalidated: true);
-            _pyRefs.Add(obj);
+            lock (_pyRefsLock) _pyRefs.Add(obj);
         }
 
         private static void SetPyMemberTypeOf(out PyObject obj, StolenReference value)
@@ -449,9 +445,16 @@ namespace Python.Runtime
 
         private static void ResetPyMembers()
         {
-            foreach (var pyObj in _pyRefs)
+            // Snapshot under lock; Dispose() runs outside it so a callback that
+            // re-enters SetPyMember does not deadlock.
+            PyObject[] snapshot;
+            lock (_pyRefsLock)
+            {
+                snapshot = _pyRefs.ToArray();
+                _pyRefs.Clear();
+            }
+            foreach (var pyObj in snapshot)
                 pyObj.Dispose();
-            _pyRefs.Clear();
         }
 
         private static void ClearClrModules()
@@ -648,7 +651,8 @@ namespace Python.Runtime
         internal static unsafe void XDecref(StolenReference op)
         {
 #if DEBUG
-            Debug.Assert(op == null || Refcount(new BorrowedReference(op.Pointer)) > 0);
+            // Skip on FT: the split refcount can race here and trip the assert spuriously.
+            Debug.Assert(op == null || Native.ABI.IsFreeThreaded || Refcount(new BorrowedReference(op.Pointer)) > 0);
             Debug.Assert(_isInitialized || Py_IsInitialized() != 0 || _Py_IsFinalizing() != false);
 #endif
             if (op == null) return;
@@ -659,12 +663,10 @@ namespace Python.Runtime
         [Pure]
         internal static unsafe nint Refcount(BorrowedReference op)
         {
-            if (op == null)
-            {
-                return 0;
-            }
-            var p = (nint*)(op.DangerousGetAddress() + ABI.RefCountOffset);
-            return *p;
+            if (op == null) return 0;
+            // Py_REFCNT is a real symbol on 3.14+; older Pythons expose it as a macro.
+            if (Delegates.Py_REFCNT != null) return Delegates.Py_REFCNT(op);
+            return *(nint*)(op.DangerousGetAddress() + ABI.RefCountOffset);
         }
         [Pure]
         internal static int Refcount32(BorrowedReference op) => checked((int)Refcount(op));
@@ -1716,8 +1718,6 @@ namespace Python.Runtime
         internal static void PyObject_GC_Track(BorrowedReference ob) => Delegates.PyObject_GC_Track(ob);
 
         internal static void PyObject_GC_UnTrack(BorrowedReference ob) => Delegates.PyObject_GC_UnTrack(ob);
-
-        internal static void _PyObject_Dump(BorrowedReference ob) => Delegates._PyObject_Dump(ob);
 
         //====================================================================
         // Python memory API
