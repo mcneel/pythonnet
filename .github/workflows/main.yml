@@ -28,7 +28,7 @@ jobs:
           # macOS dropped for now: macos-13 runners are retired and arm64 runners need Mono setup work
 
         # Rhino 9 ships Python 3.13
-        python: ["3.13"]
+        python: ["3.13.13"]
 
     steps:
       - name: Checkout code
