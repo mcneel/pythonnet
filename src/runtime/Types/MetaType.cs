@@ -312,6 +312,18 @@ namespace Python.Runtime
                 }
             }
 
+            // data descriptors on the metatype (e.g. type.__bases__, __name__) must run their setter,
+            // as PyObject_GenericSetAttr did; writing them into the type dict silently does nothing
+            BorrowedReference metaDescr = Runtime._PyType_Lookup(Runtime.PyObject_TYPE(tp), name);
+            if (metaDescr != null)
+            {
+                IntPtr metaSet = Util.ReadIntPtr(Runtime.PyObject_TYPE(metaDescr), TypeOffset.tp_descr_set);
+                if (metaSet != IntPtr.Zero)
+                {
+                    return NativeCall.Int_Call_3(metaSet, metaDescr, tp, value);
+                }
+            }
+
             // Access the type's dictionary directly
             //
             // We can not use the PyObject_GenericSetAttr because since Python
