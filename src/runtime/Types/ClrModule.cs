@@ -202,5 +202,20 @@ namespace Python.Runtime
         [ModuleFunction]
         [ForbidPythonThreads]
         public static int _add_pending_namespaces() => ImportHook.AddPendingNamespaces();
+
+        /// <summary>
+        /// Note: This should *not* be called directly. Used by pickle via clr._extras.serialization.
+        /// </summary>
+        [ModuleFunction]
+        [ForbidPythonThreads]
+        public static PyObject _pickle_state(object obj) => PickleSupport.GetState(obj);
+
+        /// <summary>
+        /// Note: This should *not* be called directly. Used by pickle via clr._extras.serialization.
+        /// </summary>
+        [ModuleFunction]
+        [ForbidPythonThreads]
+        public static object? _unpickle_state(string typeName, string kind, PyObject state)
+            => PickleSupport.FromState(typeName, kind, state);
     }
 }

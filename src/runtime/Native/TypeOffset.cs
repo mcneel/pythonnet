@@ -190,6 +190,8 @@ namespace Python.Runtime
                 "ListAssemblies",
                 nameof(CLRModule._load_clr_module),
                 nameof(CLRModule._add_pending_namespaces),
+                nameof(CLRModule._pickle_state),
+                nameof(CLRModule._unpickle_state),
                 "Release",
                 "Reset",
                 "set_SuppressDocs",
