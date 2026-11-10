@@ -16,23 +16,30 @@ class SerializationMixinsProvider : IPythonBaseTypeProvider, IDisposable
     public IEnumerable<PyType> GetBaseTypes(Type type, IList<PyType> existingBases)
     {
         if (type is null)
+        {
             throw new ArgumentNullException(nameof(type));
+        }
 
         if (existingBases is null)
+        {
             throw new ArgumentNullException(nameof(existingBases));
+        }
 
-        // add once at the top-most serializable type; subclasses inherit it
-        if (type.IsInterface
-            || !PickleSupport.IsPicklable(type)
-            || (type.BaseType is not null && PickleSupport.IsPicklable(type.BaseType)))
+        if (type.IsInterface || !PickleSupport.IsPicklable(type))
         {
             return existingBases;
         }
 
-        return new List<PyType>(existingBases)
+        // Only the top-most serializable class gets the mixin; its child classes inherit it from there
+        bool parentHasMixin = type.BaseType is not null && PickleSupport.IsPicklable(type.BaseType);
+        if (parentHasMixin)
         {
-            new(Mixins.GetAttr("SerializableMixin"))
-        };
+            return existingBases;
+        }
+
+        var bases = new List<PyType>(existingBases);
+        bases.Add(new PyType(Mixins.GetAttr("SerializableMixin")));
+        return bases;
     }
 
     public void Dispose()

@@ -138,6 +138,20 @@ def test_non_serializable_raises_type_error():
         pickle.dumps(NonSerializableClass())
 
 
+def test_unloaded_assembly_is_not_loaded():
+    from clr._extras.serialization import _reconstruct
+
+    with pytest.raises(TypeError, match=r"assembly 'NoSuchAssembly' is not loaded.*clr\.AddReference"):
+        _reconstruct("Some.Type, NoSuchAssembly", "fields", ())
+
+
+def test_unknown_type_in_loaded_assembly():
+    from clr._extras.serialization import _reconstruct
+
+    with pytest.raises(TypeError, match="was not found"):
+        _reconstruct("Python.Test.NoSuchType, Python.Test", "fields", ())
+
+
 def test_exceptions_still_pickle_as_before():
     exc = System.Exception("test")
     assert pickle.loads(pickle.dumps(exc)).args == exc.args
