@@ -13,6 +13,9 @@ class SerializableMixin:
 
 
 def _reconstruct(type_name, kind, state):
-    """Rebuilds a .NET object pickled by SerializableMixin. Must stay importable by this name."""
+    """Rebuilds a .NET object pickled by SerializableMixin.
+
+    Pickled data refers to this function by name, so renaming or moving it breaks existing pickles.
+    """
     import clr
     return clr._unpickle_state(type_name, kind, state)

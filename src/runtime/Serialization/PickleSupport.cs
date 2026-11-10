@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
@@ -8,37 +7,59 @@ using System.Runtime.Serialization;
 namespace Python.Runtime
 {
     /// <summary>
-    /// Pickle state for serializable .NET objects. Used by <c>clr._extras.serialization</c>
-    /// through <c>clr._pickle_state</c> and <c>clr._unpickle_state</c>.
+    /// Saves and rebuilds serializable .NET objects for Python's pickle and copy.
+    /// Called from <c>clr._extras.serialization</c> through <c>clr._pickle_state</c> and <c>clr._unpickle_state</c>.
     /// </summary>
     static class PickleSupport
     {
-        const string KindSerializable = "iserializable";
-        const string KindFields = "fields";
-        const string KindArray = "array";
-        const string KindEnum = "enum";
+        const string KIND_SERIALIZABLE = "iserializable";
+        const string KIND_FIELDS = "fields";
+        const string KIND_ARRAY = "array";
+        const string KIND_ENUM = "enum";
 
-        const BindingFlags DeclaredInstanceFields =
+        const BindingFlags DECLARED_INSTANCE_FIELDS =
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
 
-        static readonly StreamingContext Context = new(StreamingContextStates.All);
+        const BindingFlags ANY_INSTANCE_CONSTRUCTOR =
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
 
-        // core library types are written without assembly so pickles move between .NET Framework and .NET
-        static readonly Assembly CoreLibrary = typeof(object).Assembly;
+        static readonly Type[] s_serializationConstructorArguments = { typeof(SerializationInfo), typeof(StreamingContext) };
 
-        /// <summary>True when instances of <paramref name="type"/> can be pickled.</summary>
+        static readonly StreamingContext s_context = new(StreamingContextStates.All);
+
+        // Built-in .NET types are saved without an assembly name,
+        // so a pickle made on .NET Framework still loads on .NET and the other way round
+        static readonly Assembly s_coreLibrary = typeof(object).Assembly;
+
+        #region Internal
+
+        /// <summary>True when objects of <paramref name="type"/> can be pickled.</summary>
         internal static bool IsPicklable(Type type)
         {
-            // System.Object is [Serializable] on .NET but has no state, and sits above Python's object in the MRO.
-            // exceptions already pickle through BaseException, delegates do not serialize on .NET
-            if (type == typeof(object)
-                || typeof(Exception).IsAssignableFrom(type)
-                || typeof(Delegate).IsAssignableFrom(type))
+            // System.Object has nothing to save, and marking it would break Python's class ordering
+            if (type == typeof(object))
             {
                 return false;
             }
 
-            return type.IsSerializable || typeof(ISerializable).IsAssignableFrom(type);
+            // Exceptions already pickle their own way
+            if (typeof(Exception).IsAssignableFrom(type))
+            {
+                return false;
+            }
+
+            // Delegates can't be saved on modern .NET
+            if (typeof(Delegate).IsAssignableFrom(type))
+            {
+                return false;
+            }
+
+            if (type.IsSerializable)
+            {
+                return true;
+            }
+
+            return typeof(ISerializable).IsAssignableFrom(type);
         }
 
         /// <summary>Returns <c>(type_name, kind, state)</c> for <paramref name="obj"/>.</summary>
@@ -50,157 +71,246 @@ namespace Python.Runtime
                 throw TypeError($"cannot pickle '{type.FullName}' object: type is not serializable");
             }
 
-            string kind;
-            PyObject state;
-
             if (type.IsEnum)
             {
-                kind = KindEnum;
-                state = IsUnsigned(Enum.GetUnderlyingType(type))
-                    ? Convert.ToUInt64(obj).ToPython()
-                    : Convert.ToInt64(obj).ToPython();
+                return MakeState(type, KIND_ENUM, EnumToState(obj));
             }
-            else if (type.IsArray)
+
+            if (type.IsArray)
             {
-                if (type.GetArrayRank() != 1 || type != type.GetElementType()!.MakeArrayType())
+                if (!IsSimpleArray(type))
                 {
                     throw TypeError($"cannot pickle '{type.FullName}' object: only one-dimensional, zero-based arrays are supported");
                 }
 
-                kind = KindArray;
-                type = type.GetElementType()!;
-                var items = ((Array)obj).Cast<object?>().Select(EncodeValue).ToArray();
-                state = new PyList(items);
+                return MakeState(type.GetElementType()!, KIND_ARRAY, ArrayToState((Array)obj));
             }
-            else if (obj is ISerializable serializable)
+
+            if (obj is ISerializable serializable)
             {
-                kind = KindSerializable;
                 var info = new SerializationInfo(type, new FormatterConverter());
-                serializable.GetObjectData(info, Context);
+                serializable.GetObjectData(info, s_context);
 
-                // GetObjectData may redirect to a different type (e.g. a serialization holder)
-                type = info.ObjectType;
-
-                var entries = new List<PyObject>();
-                foreach (SerializationEntry entry in info)
-                {
-                    entries.Add(new PyTuple(new[]
-                    {
-                        entry.Name.ToPython(),
-                        GetTypeName(entry.ObjectType).ToPython(),
-                        EncodeValue(entry.Value),
-                    }));
-                }
-                state = new PyTuple(entries.ToArray());
-            }
-            else
-            {
-                kind = KindFields;
-                var entries = new List<PyObject>();
-                foreach (FieldInfo field in GetSerializableFields(type))
-                {
-                    entries.Add(new PyTuple(new[]
-                    {
-                        GetFieldKey(field).ToPython(),
-                        EncodeValue(field.GetValue(obj)),
-                    }));
-                }
-                state = new PyTuple(entries.ToArray());
+                // Some types ask to be saved as a different type, so rebuild that one instead
+                return MakeState(info.ObjectType, KIND_SERIALIZABLE, SerializationInfoToState(info));
             }
 
-            return new PyTuple(new[] { GetTypeName(type).ToPython(), kind.ToPython(), state });
+            return MakeState(type, KIND_FIELDS, FieldsToState(obj, type));
         }
 
-        /// <summary>Rebuilds the object described by <see cref="GetState"/>.</summary>
+        /// <summary>Rebuilds an object from what <see cref="GetState"/> returned.</summary>
         internal static object? FromState(string typeName, string kind, PyObject state)
         {
             Type type = ResolveType(typeName);
 
             switch (kind)
             {
-                case KindEnum:
-                    return Enum.ToObject(type, IsUnsigned(Enum.GetUnderlyingType(type))
-                        ? state.As<ulong>()
-                        : (object)state.As<long>());
+                case KIND_ENUM:
+                    return EnumFromState(type, state);
 
-                case KindArray:
-                {
-                    var items = new PyList(state);
-                    var array = Array.CreateInstance(type, (int)items.Length());
-                    for (int i = 0; i < array.Length; i++)
-                    {
-                        using var item = items[i];
-                        array.SetValue(DecodeValue(item), i);
-                    }
-                    return array;
-                }
+                case KIND_ARRAY:
+                    return ArrayFromState(type, state);
 
-                case KindSerializable:
-                {
-                    var info = new SerializationInfo(type, new FormatterConverter());
-                    var values = new Dictionary<string, object?>();
-                    foreach (PyObject entry in new PyIterable(state))
-                    {
-                        using var name = entry[0];
-                        using var declaredType = entry[1];
-                        using var value = entry[2];
-                        string entryName = name.As<string>();
-                        object? decoded = DecodeValue(value);
-                        info.AddValue(entryName, decoded, ResolveType(declaredType.As<string>()));
-                        values[entryName] = decoded;
-                        entry.Dispose();
-                    }
+                case KIND_SERIALIZABLE:
+                    return SerializableFromState(type, typeName, state);
 
-                    ConstructorInfo? ctor = type.GetConstructor(
-                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-                        binder: null,
-                        new[] { typeof(SerializationInfo), typeof(StreamingContext) },
-                        modifiers: null);
-                    if (ctor is not null)
-                    {
-                        return Complete(ctor.Invoke(new object[] { info, Context }));
-                    }
-
-                    // GetObjectData redirected to a plain [Serializable] type: fill its fields by name, like BinaryFormatter
-                    if (!type.IsSerializable || typeof(ISerializable).IsAssignableFrom(type))
-                    {
-                        throw TypeError($"cannot unpickle '{typeName}': missing (SerializationInfo, StreamingContext) constructor");
-                    }
-
-                    object target = FormatterServices.GetUninitializedObject(type);
-                    foreach (FieldInfo field in GetSerializableFields(type))
-                    {
-                        if (values.TryGetValue(field.Name, out object? fieldValue))
-                        {
-                            field.SetValue(target, fieldValue);
-                        }
-                    }
-                    return Complete(target);
-                }
-
-                case KindFields:
-                {
-                    var fields = GetSerializableFields(type).ToDictionary(GetFieldKey);
-                    object obj = FormatterServices.GetUninitializedObject(type);
-                    foreach (PyObject entry in new PyIterable(state))
-                    {
-                        using var key = entry[0];
-                        using var value = entry[1];
-                        // fields missing from this version of the type are dropped
-                        if (fields.TryGetValue(key.As<string>(), out FieldInfo? field))
-                        {
-                            field.SetValue(obj, DecodeValue(value));
-                        }
-                        entry.Dispose();
-                    }
-                    return Complete(obj);
-                }
+                case KIND_FIELDS:
+                    return FieldsFromState(type, state);
 
                 default:
                     throw TypeError($"cannot unpickle '{typeName}': unknown state kind '{kind}'");
             }
         }
 
+        /// <summary>Type name with assembly but no version, e.g. <c>Rhino.Geometry.Point3d, RhinoCommon</c>.</summary>
+        internal static string GetTypeName(Type type)
+        {
+            string name = GetNameWithoutAssembly(type);
+
+            Assembly assembly = GetRootElementType(type).Assembly;
+            if (assembly == s_coreLibrary)
+            {
+                return name;
+            }
+
+            return name + ", " + assembly.GetName().Name;
+        }
+
+        /// <summary>Finds a type saved by <see cref="GetTypeName"/> in the assemblies that are already loaded.</summary>
+        internal static Type ResolveType(string name)
+        {
+            var lookup = new TypeLookup();
+            Type? type = Type.GetType(name, lookup.FindAssembly, lookup.FindType, throwOnError: false);
+            if (type is not null)
+            {
+                return type;
+            }
+
+            if (lookup.MissingAssembly is not null)
+            {
+                string message = string.Format(
+                    "cannot unpickle .NET type '{0}': assembly '{1}' is not loaded. Load it first with clr.AddReference(\"{1}\")",
+                    name,
+                    lookup.MissingAssembly);
+                throw TypeError(message);
+            }
+
+            throw TypeError($"cannot unpickle: .NET type '{name}' was not found");
+        }
+
+        #endregion
+
+        #region Private
+
+        static PyObject MakeState(Type type, string kind, PyObject state)
+        {
+            return new PyTuple(new[] { GetTypeName(type).ToPython(), kind.ToPython(), state });
+        }
+
+        // Enums are saved as their number
+        static PyObject EnumToState(object value)
+        {
+            if (IsUnsigned(Enum.GetUnderlyingType(value.GetType())))
+            {
+                return Convert.ToUInt64(value).ToPython();
+            }
+
+            return Convert.ToInt64(value).ToPython();
+        }
+
+        static object EnumFromState(Type type, PyObject state)
+        {
+            if (IsUnsigned(Enum.GetUnderlyingType(type)))
+            {
+                return Enum.ToObject(type, state.As<ulong>());
+            }
+
+            return Enum.ToObject(type, state.As<long>());
+        }
+
+        // Arrays are saved as a list of their items
+        static PyObject ArrayToState(Array array)
+        {
+            var items = new PyList();
+            foreach (object? item in array)
+            {
+                using PyObject encoded = EncodeValue(item);
+                items.Append(encoded);
+            }
+            return items;
+        }
+
+        static Array ArrayFromState(Type elementType, PyObject state)
+        {
+            using var items = new PyList(state);
+            var array = Array.CreateInstance(elementType, (int)items.Length());
+            for (int i = 0; i < array.Length; i++)
+            {
+                using PyObject item = items[i];
+                array.SetValue(DecodeValue(item), i);
+            }
+            return array;
+        }
+
+        // ISerializable types are saved as the (name, declared type, value) entries they wrote in GetObjectData
+        static PyObject SerializationInfoToState(SerializationInfo info)
+        {
+            var entries = new List<PyObject>();
+            foreach (SerializationEntry entry in info)
+            {
+                PyObject name = entry.Name.ToPython();
+                PyObject declaredType = GetTypeName(entry.ObjectType).ToPython();
+                PyObject value = EncodeValue(entry.Value);
+                entries.Add(new PyTuple(new[] { name, declaredType, value }));
+            }
+            return new PyTuple(entries.ToArray());
+        }
+
+        static object SerializableFromState(Type type, string typeName, PyObject state)
+        {
+            var info = new SerializationInfo(type, new FormatterConverter());
+            var values = new Dictionary<string, object?>();
+            foreach (PyObject item in new PyIterable(state))
+            {
+                using PyObject entry = item;
+                using PyObject name = entry[0];
+                using PyObject declaredType = entry[1];
+                using PyObject value = entry[2];
+
+                string entryName = name.As<string>();
+                object? decoded = DecodeValue(value);
+                info.AddValue(entryName, decoded, ResolveType(declaredType.As<string>()));
+                values[entryName] = decoded;
+            }
+
+            ConstructorInfo? constructor = type.GetConstructor(
+                ANY_INSTANCE_CONSTRUCTOR,
+                binder: null,
+                s_serializationConstructorArguments,
+                modifiers: null);
+            if (constructor is not null)
+            {
+                object rebuilt = constructor.Invoke(new object[] { info, s_context });
+                return Complete(rebuilt);
+            }
+
+            // The type we were asked to rebuild has no special constructor.
+            // That's fine for plain [Serializable] types: fill their fields by name, as .NET's old serializer did.
+            bool isPlainSerializable = type.IsSerializable && !typeof(ISerializable).IsAssignableFrom(type);
+            if (!isPlainSerializable)
+            {
+                throw TypeError($"cannot unpickle '{typeName}': missing (SerializationInfo, StreamingContext) constructor");
+            }
+
+            object obj = FormatterServices.GetUninitializedObject(type);
+            foreach (FieldInfo field in GetSerializableFields(type))
+            {
+                if (values.TryGetValue(field.Name, out object? fieldValue))
+                {
+                    field.SetValue(obj, fieldValue);
+                }
+            }
+            return Complete(obj);
+        }
+
+        // Plain [Serializable] types are saved as (field key, value) pairs
+        static PyObject FieldsToState(object obj, Type type)
+        {
+            var entries = new List<PyObject>();
+            foreach (FieldInfo field in GetSerializableFields(type))
+            {
+                PyObject key = GetFieldKey(field).ToPython();
+                PyObject value = EncodeValue(field.GetValue(obj));
+                entries.Add(new PyTuple(new[] { key, value }));
+            }
+            return new PyTuple(entries.ToArray());
+        }
+
+        static object FieldsFromState(Type type, PyObject state)
+        {
+            var fields = new Dictionary<string, FieldInfo>();
+            foreach (FieldInfo field in GetSerializableFields(type))
+            {
+                fields[GetFieldKey(field)] = field;
+            }
+
+            object obj = FormatterServices.GetUninitializedObject(type);
+            foreach (PyObject item in new PyIterable(state))
+            {
+                using PyObject entry = item;
+                using PyObject key = entry[0];
+                using PyObject value = entry[1];
+
+                // A field that no longer exists in this version of the type is skipped
+                if (fields.TryGetValue(key.As<string>(), out FieldInfo? field))
+                {
+                    field.SetValue(obj, DecodeValue(value));
+                }
+            }
+            return Complete(obj);
+        }
+
+        // Runs the "finished loading" hooks some types have, the same ones .NET's own serializer runs
         static object Complete(object obj)
         {
             if (obj is IDeserializationCallback callback)
@@ -208,28 +318,39 @@ namespace Python.Runtime
                 callback.OnDeserialization(null);
             }
 
-            return obj is IObjectReference reference ? reference.GetRealObject(Context) : obj;
+            if (obj is IObjectReference reference)
+            {
+                return reference.GetRealObject(s_context);
+            }
+
+            return obj;
         }
 
         static IEnumerable<FieldInfo> GetSerializableFields(Type type)
         {
-            // stop at the first base that is not itself serializable, like BinaryFormatter
-            for (Type? t = type; t is not null && t.IsSerializable; t = t.BaseType)
+            // Walk up through parent classes, but stop at the first one that isn't serializable
+            Type? current = type;
+            while (current is not null && current.IsSerializable)
             {
-                foreach (FieldInfo field in t.GetFields(DeclaredInstanceFields))
+                foreach (FieldInfo field in current.GetFields(DECLARED_INSTANCE_FIELDS))
                 {
                     if (!field.IsNotSerialized)
                     {
                         yield return field;
                     }
                 }
+
+                current = current.BaseType;
             }
         }
 
-        // qualified by declaring type so same-named private fields in base classes do not collide
-        static string GetFieldKey(FieldInfo field) => field.DeclaringType!.Name + "." + field.Name;
+        // Includes the class name, because a parent and child class can each have a private field with the same name
+        static string GetFieldKey(FieldInfo field)
+        {
+            return field.DeclaringType!.Name + "." + field.Name;
+        }
 
-        // value is (type_name, python_value) so primitives come back as their original .NET type
+        // Saves each value with its type name, so a number saved as Int64 comes back as Int64 and not just "a number"
         static PyObject EncodeValue(object? value)
         {
             if (value is null)
@@ -237,14 +358,21 @@ namespace Python.Runtime
                 return new PyTuple(new[] { string.Empty.ToPython(), PyObject.None });
             }
 
-            PyObject encoded = value is byte[] bytes ? ToByteArray(bytes) : value.ToPython();
-            return new PyTuple(new[] { GetTypeName(value.GetType()).ToPython(), encoded });
+            PyObject typeName = GetTypeName(value.GetType()).ToPython();
+
+            // Byte arrays (e.g. Rhino geometry data) become Python bytes, which is much faster than item by item
+            if (value is byte[] bytes)
+            {
+                return new PyTuple(new[] { typeName, ToByteArray(bytes) });
+            }
+
+            return new PyTuple(new[] { typeName, value.ToPython() });
         }
 
         static object? DecodeValue(PyObject pair)
         {
-            using var typeName = pair[0];
-            using var value = pair[1];
+            using PyObject typeName = pair[0];
+            using PyObject value = pair[1];
 
             string name = typeName.As<string>();
             if (name.Length == 0)
@@ -252,22 +380,30 @@ namespace Python.Runtime
                 return null;
             }
 
-            // .NET objects were rebuilt by their own reducer, possibly as a redirected type, so keep them as is
+            // Pickle has already rebuilt nested .NET objects, maybe as a different type than they were saved as,
+            // so use them as they are instead of converting again
             if (ManagedType.GetManagedObject(value) is CLRObject clrObject)
             {
                 return clrObject.inst;
             }
 
             Type type = ResolveType(name);
-            return type == typeof(byte[]) ? FromBuffer(value) : value.AsManagedObject(type);
+            if (type == typeof(byte[]))
+            {
+                return FromBuffer(value);
+            }
+
+            return value.AsManagedObject(type);
         }
 
         static PyObject ToByteArray(byte[] bytes)
         {
-            var handle = GCHandle.Alloc(bytes, GCHandleType.Pinned);
+            // Hold the array still in memory while Python copies it
+            GCHandle handle = GCHandle.Alloc(bytes, GCHandleType.Pinned);
             try
             {
-                return Runtime.PyByteArray_FromStringAndSize(handle.AddrOfPinnedObject(), bytes.Length).MoveToPyObject();
+                IntPtr start = handle.AddrOfPinnedObject();
+                return Runtime.PyByteArray_FromStringAndSize(start, bytes.Length).MoveToPyObject();
             }
             finally
             {
@@ -284,35 +420,55 @@ namespace Python.Runtime
         }
 
         static bool IsUnsigned(Type type)
-            => type == typeof(byte) || type == typeof(ushort) || type == typeof(uint) || type == typeof(ulong);
-
-        /// <summary>Type name with assembly but no version, e.g. <c>Rhino.Geometry.Point3d, RhinoCommon</c>.</summary>
-        internal static string GetTypeName(Type type)
         {
-            string name = GetNameWithoutAssembly(type);
-            Assembly assembly = GetRootElementType(type).Assembly;
-            return assembly == CoreLibrary ? name : name + ", " + assembly.GetName().Name;
+            return type == typeof(byte)
+                || type == typeof(ushort)
+                || type == typeof(uint)
+                || type == typeof(ulong);
         }
 
+        // True for normal arrays like int[], false for grids like int[,] or arrays that don't start at index 0
+        static bool IsSimpleArray(Type type)
+        {
+            Type simpleArrayType = type.GetElementType()!.MakeArrayType();
+            return type == simpleArrayType;
+        }
+
+        // Built by hand because .NET's own full names put assembly versions inside generic types like List<Point3d>
         static string GetNameWithoutAssembly(Type type)
         {
             if (type.IsArray)
             {
-                Type element = type.GetElementType()!;
-                int rank = type.GetArrayRank();
-                string suffix = type == element.MakeArrayType() ? "[]" : "[" + new string(',', rank - 1) + "]";
-                return GetNameWithoutAssembly(element) + suffix;
+                string elementName = GetNameWithoutAssembly(type.GetElementType()!);
+                if (IsSimpleArray(type))
+                {
+                    return elementName + "[]";
+                }
+
+                string commas = new string(',', type.GetArrayRank() - 1);
+                return elementName + "[" + commas + "]";
             }
 
             if (type.IsGenericType && !type.IsGenericTypeDefinition)
             {
-                string arguments = string.Join(",", type.GetGenericArguments().Select(a => "[" + GetTypeName(a) + "]"));
-                return type.GetGenericTypeDefinition().FullName + "[" + arguments + "]";
+                var arguments = new List<string>();
+                foreach (Type argument in type.GetGenericArguments())
+                {
+                    arguments.Add("[" + GetTypeName(argument) + "]");
+                }
+
+                return type.GetGenericTypeDefinition().FullName + "[" + string.Join(",", arguments) + "]";
             }
 
-            return type.FullName ?? type.Name;
+            if (type.FullName is not null)
+            {
+                return type.FullName;
+            }
+
+            return type.Name;
         }
 
+        // Point3d[][] lives in the same assembly as Point3d
         static Type GetRootElementType(Type type)
         {
             while (type.HasElementType)
@@ -322,28 +478,63 @@ namespace Python.Runtime
             return type;
         }
 
-        internal static Type ResolveType(string name)
-        {
-            Type? type = Type.GetType(
-                name,
-                assemblyName => AssemblyManager.FindLoadedAssembly(assemblyName.Name)
-                                ?? FindInAppDomain(assemblyName.Name)
-                                ?? Assembly.Load(new AssemblyName(assemblyName.Name)),
-                (assembly, typeName, ignoreCase) => assembly is null
-                    ? Type.GetType(typeName, throwOnError: false, ignoreCase)
-                    : assembly.GetType(typeName, throwOnError: false, ignoreCase),
-                throwOnError: false);
-
-            return type ?? throw TypeError($"cannot unpickle: .NET type '{name}' was not found");
-        }
-
-        static Assembly? FindInAppDomain(string? name)
-            => AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == name);
-
+        // Raises a Python TypeError, which is what pickle and copy users expect to catch
         static Exception TypeError(string message)
         {
             Exceptions.SetError(Exceptions.TypeError, message);
             return PythonException.ThrowLastAsClrException();
         }
+
+        /// <summary>
+        /// Lookup callbacks for <see cref="Type.GetType(string, Func{AssemblyName, Assembly}, Func{Assembly, string, bool, Type}, bool)"/>.
+        /// Remembers the first assembly that wasn't loaded, so the error can name it.
+        /// </summary>
+        sealed class TypeLookup
+        {
+            public string? MissingAssembly { get; private set; }
+
+            // Never loads an assembly just because a pickle names it; the user loads it with clr.AddReference
+            public Assembly? FindAssembly(AssemblyName assemblyName)
+            {
+                Assembly? assembly = AssemblyManager.FindLoadedAssembly(assemblyName.Name);
+                if (assembly is null)
+                {
+                    assembly = FindInAppDomain(assemblyName.Name);
+                }
+
+                if (assembly is null && MissingAssembly is null)
+                {
+                    MissingAssembly = assemblyName.Name;
+                }
+
+                return assembly;
+            }
+
+            // A type name without an assembly is a built-in .NET type
+            public Type? FindType(Assembly? assembly, string typeName, bool ignoreCase)
+            {
+                if (assembly is null)
+                {
+                    return Type.GetType(typeName, throwOnError: false, ignoreCase);
+                }
+
+                return assembly.GetType(typeName, throwOnError: false, ignoreCase);
+            }
+
+            static Assembly? FindInAppDomain(string? name)
+            {
+                foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    if (assembly.GetName().Name == name)
+                    {
+                        return assembly;
+                    }
+                }
+
+                return null;
+            }
+        }
+
+        #endregion
     }
 }
