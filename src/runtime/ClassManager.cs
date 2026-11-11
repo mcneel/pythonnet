@@ -555,7 +555,7 @@ namespace Python.Runtime
                 ci.members[name] = ob.AllocObject();
                 if (name == nameof(IDictionary<int, int>.Remove)
                     && mlist.Any(m => m.DeclaringType?.GetInterfaces()
-                        .Any(i => i.TryGetGenericDefinition() == typeof(IDictionary<,>)) is true))
+                                                      .Any(i => i.TryGetGenericDefinition() == typeof(IDictionary<,>)) is true))
                 {
                     ci.del = new();
                     ci.del.AddRange(mlist.Where(m => !m.IsStatic));
@@ -573,15 +573,23 @@ namespace Python.Runtime
                     string pyName = OperatorMethod.GetPyMethodName(name);
                     string pyNameReverse = OperatorMethod.ReversePyMethodName(pyName);
                     OperatorMethod.FilterMethods(mlist, out var forwardMethods, out var reverseMethods);
+                    // NOTE:
+                    // python always sets up both `a + b` and `b + a` on
+                    // the type. if dotnet only has one of them, python's
+                    // own stand-in for the other calls itself forever.
+                    // so we provide one that answers "not supported".
+                    bool isBinaryOp = OperatorMethod.OpMethodMap.ContainsKey(name)
+                                   && mlist.Any(m => m.GetParameters().Length == 2);
+
                     // Only methods where the left operand is the declaring type.
-                    if (forwardMethods.Length > 0)
+                    if (forwardMethods.Length > 0 || isBinaryOp)
                     {
                         var fmo = new MethodObject(type, name, forwardMethods) { SkipTypeErrors = true };
                         ci.members[pyName] = fmo.AllocObject();
-
                     }
+
                     // Only methods where only the right operand is the declaring type.
-                    if (reverseMethods.Length > 0)
+                    if (reverseMethods.Length > 0 || isBinaryOp)
                     {
                         var rmo = new MethodObject(type, name, reverseMethods) { SkipTypeErrors = true };
                         ci.members[pyNameReverse] = rmo.AllocObject();

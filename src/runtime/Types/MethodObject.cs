@@ -71,7 +71,13 @@ namespace Python.Runtime
             if (Exceptions.ExceptionMatches(Exceptions.TypeError))
             {
                 Exceptions.Clear();
-                result = new NewReference(Runtime.PyFalse);
+                // for operators like + or *, tell python "not supported"
+                // so it tries the other operand or raises its usual error
+                result = new NewReference(
+                    OperatorMethod.OpMethodMap.ContainsKey(name) ?
+                        Runtime.PyNotImplemented
+                      : Runtime.PyFalse
+                    );
                 return false;
             }
             else

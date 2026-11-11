@@ -401,6 +401,13 @@ namespace Python.Runtime
                 return Exceptions.RaiseTypeError(msg.ToString());
             }
 
+            // called on the class itself, not on an object, so only
+            // static methods can run. do not let the others compete.
+            if (inst == null)
+            {
+                methods = GetStaticallyCallableMethods(methods);
+            }
+
             if (TryBind(methods, args, kwargs, AllowRedirected, out BindSpec? spec, out BindError? error))
             {
                 MethodBase match = spec!.Method;
@@ -602,6 +609,43 @@ namespace Python.Runtime
                 Runtime.PyErr_Restore(errType.StealNullable(), errVal.StealNullable(), errTrace.StealNullable());
                 return Exceptions.RaiseTypeError(msg.ToString());
             }
+        }
+
+        /// <summary>
+        /// Use when a method is called on the class itself, e.g. `Foo.Bar()`.
+        /// Gives back only the static methods and constructors, or the same
+        /// array when all of them, or none of them, are.
+        /// </summary>
+        /// <param name="methods">All overloads sharing the called name.</param>
+        /// <returns>The overloads that can run without an object.</returns>
+        static MethodBase[] GetStaticallyCallableMethods(MethodBase[] methods)
+        {
+            int callable = 0;
+            foreach (MethodBase m in methods)
+            {
+                if (m.IsStatic || m.IsConstructor)
+                {
+                    callable++;
+                }
+            }
+
+            // only copy when there is a mix. the usual case is all static.
+            if (callable == 0 || callable == methods.Length)
+            {
+                return methods;
+            }
+
+            var statics = new MethodBase[callable];
+            int index = 0;
+            foreach (MethodBase m in methods)
+            {
+                if (m.IsStatic || m.IsConstructor)
+                {
+                    statics[index++] = m;
+                }
+            }
+
+            return statics;
         }
 
         static bool TryGetManagedValue(BorrowedReference op, out object? value, bool setError = true)
