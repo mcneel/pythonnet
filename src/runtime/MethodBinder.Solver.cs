@@ -65,7 +65,7 @@ namespace Python.Runtime
 
             // with one method there is nothing to compare; conversion reports
             // what is wrong, which reads better than "no overload"
-            bool grade = shaped.Count > 1;
+            bool grade = shaped.Count > 1 || (shaped.Count == 1 && shaped[0].IsOperator);
 
             var candidates = new List<Candidate>(shaped.Count);
             foreach (BindSpec shape in shaped)
@@ -162,11 +162,12 @@ namespace Python.Runtime
         private sealed class ArgInfo
         {
             public ArgKind Kind;
-            public Type? ClrType;       // for Clr
-            public int Length;          // for Str and Bytes
-            public long Signed;         // for Int, when it fits a long
-            public ulong Unsigned;      // for Int, when it only fits a ulong
-            public IntRange Range;      // for Int
+            public Type From = typeof(object); // .NET type it counts as; for Python values, its stand-in
+            public object? Value;              // for Clr: the .NET object
+            public int StringLength;           // for Str, Bytes, and .NET strings
+            public long Signed;                // for Int, when it fits a long
+            public ulong Unsigned;             // for Int, when it only fits a ulong
+            public IntRange Range;             // for Int
 
             public static ArgInfo Of(BorrowedReference arg)
             {
@@ -182,12 +183,15 @@ namespace Python.Runtime
                 {
                     case CLRObject co:
                         info.Kind = ArgKind.Clr;
-                        info.ClrType = co.inst?.GetType() ?? typeof(object);
+                        info.Value = co.inst;
+                        info.From = co.inst?.GetType() ?? typeof(object);
+                        info.StringLength = co.inst is string text ? text.Length : 0;
                         return info;
 
                     case ClassBase cb when cb.type.Valid:
                         info.Kind = ArgKind.Clr;
-                        info.ClrType = cb.type.Value.GetType();
+                        info.Value = cb.type.Value;
+                        info.From = cb.type.Value.GetType();
                         return info;
                 }
 
@@ -195,6 +199,7 @@ namespace Python.Runtime
                 if (Runtime.PyBool_Check(arg))
                 {
                     info.Kind = ArgKind.Bool;
+                    info.From = typeof(bool);
                 }
                 else if (Runtime.PyInt_Check(arg))
                 {
@@ -204,16 +209,18 @@ namespace Python.Runtime
                 else if (Runtime.PyFloat_Check(arg))
                 {
                     info.Kind = ArgKind.Float;
+                    info.From = typeof(double);
                 }
                 else if (Runtime.PyString_Check(arg))
                 {
                     info.Kind = ArgKind.Str;
-                    info.Length = (int)Runtime.PyUnicode_GetLength(arg);
+                    info.From = typeof(string);
+                    info.StringLength = (int)Runtime.PyUnicode_GetLength(arg);
                 }
                 else if (Runtime.PyObject_TypeCheck(arg, Runtime.PyBytesType))
                 {
                     info.Kind = ArgKind.Bytes;
-                    info.Length = (int)Runtime.PyBytes_Size(arg);
+                    info.StringLength = (int)Runtime.PyBytes_Size(arg);
                 }
                 else if (Runtime.PySequence_Check(arg))
                 {
@@ -229,10 +236,12 @@ namespace Python.Runtime
 
             static void ReadInt(BorrowedReference arg, ArgInfo info)
             {
+                // stands in as the smallest of Int32, Int64, UInt64 or BigInteger that holds it
                 if (Runtime.PyLong_AsLongLong(arg) is long signed)
                 {
                     info.Signed = signed;
                     info.Range = IntRange.Signed;
+                    info.From = signed >= int.MinValue && signed <= int.MaxValue ? typeof(int) : typeof(long);
                     return;
                 }
                 Exceptions.Clear();
@@ -241,11 +250,13 @@ namespace Python.Runtime
                 {
                     info.Unsigned = unsigned;
                     info.Range = IntRange.Unsigned;
+                    info.From = typeof(ulong);
                     return;
                 }
                 Exceptions.Clear();
 
                 info.Range = IntRange.Big;
+                info.From = typeof(System.Numerics.BigInteger);
             }
 
             // whether a Python int fits an integer type
@@ -415,76 +426,46 @@ namespace Python.Runtime
 
         #region Match (step 2)
 
-        // How well one argument fits one parameter. Lower is stricter.
-        private enum MatchLevel : byte
+        // How much an argument must be narrowed to fit a parameter. Lower is stricter.
+        // Same levels as IronPython's PythonNarrowing, and the same conversions on each.
+        private enum Narrowing : byte
         {
-            Exact,      // same .NET type
-            Widening,   // no data loss: subclass to base, Int16 to int, T to T?, None to a class
-            Python,     // Python value to a .NET type that holds it: int to Int32, str to String
-            Converted,  // needs a converter: float to int, callable to delegate, list to array
-            None,       // cannot fit
+            None,           // same type, subclass to base, implicit numeric (int to long), None to a class
+            Minimal,        // number to double or decimal
+            BinaryOperator, // number to float, T to T?, sequence to array or IList<T>
+            IndexOperator,  // narrowing numbers, str to char, callable to delegate,
+                            // iterable to IEnumerable, user implicit operators
+            All,            // any number to any number, except floating point to integer;
+                            // also pythonnet's own: float to int, PyObject, codecs
+            Never,          // cannot fit
         }
-
-        // Ranks order matches within one level. Lower is closer.
-        const ushort RankNatural = 0;       // a Python value's own .NET type
-        const ushort RankNumeric = 1;       // another number type that holds the value
-        const ushort RankBoolNumber = 2;    // a Python bool used as a number
-        const ushort RankBoxed = 50;        // a Python value boxed as `object`
-        const ushort RankIterator = 1500;   // a one-shot iterator; its items are not checked
-        const ushort RankConverter = 2000;  // only the converter (or a codec) knows how
-        const ushort RankPyObject = 2500;   // passed through as a PyObject
-        const ushort RankObject = 3000;     // a Python object wrapped as `object`
 
         // Items of a Python sequence checked when grading it against a collection.
         // A later item that does not fit is reported when the argument is converted.
         const int SequenceSample = 16;
 
-        // Grade of one argument, plus a rank within that grade.
-        private readonly struct Match
-        {
-            public readonly MatchLevel Level;
-            public readonly ushort Rank;
-
-            public Match(MatchLevel level, ushort rank = 0)
-            {
-                Level = level;
-                Rank = rank;
-            }
-
-            public static readonly Match None = new(MatchLevel.None);
-            public static readonly Match Exact = new(MatchLevel.Exact);
-
-            public bool IsWorseThan(Match other)
-                => Level != other.Level ? Level > other.Level : Rank > other.Rank;
-        }
-
         // A method that passed SHAPE, with its arguments assigned and graded.
         private sealed class Candidate
         {
             public readonly BindSpec Spec;
-            public readonly Match[] Matches;    // per argument number
+            public readonly Narrowing[] Levels; // per argument number
             public readonly Type[] Targets;     // parameter type each argument went to
-            public MatchLevel Level;            // worst of Matches
-            public bool Expanded;               // params[] taken as separate arguments
-            public int Unfilled;                // optional and out slots left to defaults
+            public Narrowing Level;             // worst of Levels
 
             public Candidate(BindSpec spec, int argCount)
             {
                 Spec = spec;
-                Matches = new Match[argCount];
+                Levels = new Narrowing[argCount];
                 Targets = new Type[argCount];
             }
 
-            public bool IsGenericDefinition
-                => Spec.Method.IsGenericMethod && Spec.Method.ContainsGenericParameters;
-
-            public void Grade(int argIndex, Match match, Type target)
+            public void Grade(int argIndex, Narrowing level, Type target)
             {
-                Matches[argIndex] = match;
+                Levels[argIndex] = level;
                 Targets[argIndex] = target;
-                if (match.Level > Level)
+                if (level > Level)
                 {
-                    Level = match.Level;
+                    Level = level;
                 }
             }
         }
@@ -550,30 +531,9 @@ namespace Python.Runtime
             var result = new Candidate(spec, call.Total);
             foreach (BindParam slot in slots)
             {
-                switch (slot.Kind)
+                if (!slot.IsAssigned && (slot.Kind == BindParamKind.Default || slot.Kind == BindParamKind.Return))
                 {
-                    case BindParamKind.Default:
-                    case BindParamKind.Return:
-                        if (!slot.IsAssigned)
-                        {
-                            return false;
-                        }
-                        break;
-
-                    case BindParamKind.Option:
-                    case BindParamKind.BoxedReturn:
-                        if (!slot.IsAssigned)
-                        {
-                            result.Unfilled++;
-                        }
-                        break;
-
-                    case BindParamKind.Params:
-                        if (!slot.AsArray)
-                        {
-                            result.Expanded = true;
-                        }
-                        break;
+                    return false;
                 }
 
                 if (grade && !TryGrade(slot, ref call, result))
@@ -582,8 +542,89 @@ namespace Python.Runtime
                 }
             }
 
+            if (grade && spec.IsOperator && !IsSafeOperand(result, ref call))
+            {
+                return false;
+            }
+
+            if (grade && !SatisfiesGenericRules(spec, ref call))
+            {
+                return false;
+            }
+
             candidate = result;
             return true;
+        }
+
+        // As IronPython, an operator's operand is converted only in small, safe ways.
+        // Codecs and PyObject parameters are pythonnet's own and still allowed.
+        static bool IsSafeOperand(Candidate candidate, ref CallArgs call)
+        {
+            for (int i = 0; i < candidate.Levels.Length; i++)
+            {
+                if (candidate.Levels[i] <= Narrowing.BinaryOperator)
+                {
+                    continue;
+                }
+
+                ArgInfo info = call.Info(i);
+                Type target = candidate.Targets[i];
+                bool lenientFloat = info.Kind == ArgKind.Float && IsInteger(Nullable.GetUnderlyingType(target) ?? target);
+                if (lenientFloat || GetTypeNarrowing(info, target) != Narrowing.Never)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // As IronPython, a generic method whose T would break its rules
+        // (e.g. `where T : class`) loses, so another overload can win.
+        static bool SatisfiesGenericRules(BindSpec spec, ref CallArgs call)
+        {
+            if (spec.Method is not MethodInfo { IsGenericMethodDefinition: true } method)
+            {
+                return true;
+            }
+
+            var inferred = new Type?[method.GetGenericArguments().Length];
+            foreach (BindParam slot in spec.Parameters)
+            {
+                if (!slot.IsAssigned || slot.Kind is BindParamKind.Self or BindParamKind.BoxedReturn)
+                {
+                    continue;
+                }
+
+                Type type = slot.Kind == BindParamKind.Params && !slot.AsArray ? slot.Type : slot.ParameterType;
+                if (type.IsByRef)
+                {
+                    type = type.GetElementType();
+                }
+
+                // only arguments whose own .NET type is known for sure
+                ArgInfo info = call.Info(slot.ArgIndex);
+                if (type.ContainsGenericParameters
+                        && info.Kind is ArgKind.Clr or ArgKind.Bool or ArgKind.Int or ArgKind.Float or ArgKind.Str)
+                {
+                    Unify(type, info.From, inferred);
+                }
+            }
+
+            if (Array.IndexOf(inferred, null) >= 0)
+            {
+                // not every T is known yet; checked when the call is made
+                return true;
+            }
+
+            try
+            {
+                method.MakeGenericMethod(inferred!);
+                return true;
+            }
+            catch (ArgumentException)
+            {
+                return false;
+            }
         }
 
         // Grades the arguments in one slot. False when one of them cannot fit.
@@ -596,44 +637,48 @@ namespace Python.Runtime
 
             int index = slot.ArgIndex;
 
-            if (slot.Kind == BindParamKind.BoxedReturn)
+            if (slot.Kind == BindParamKind.BoxedReturn || slot.HasBox)
             {
                 // assignment already checked that it is a fitting StrongBox
-                candidate.Grade(index, Match.Exact, slot.ParameterType);
+                candidate.Grade(index, Narrowing.None, slot.ParameterType);
                 return true;
             }
 
             if (slot.Kind != BindParamKind.Params)
             {
-                Match match = GetMatch(call.Info(index), call[index], slot.ParameterType);
-                candidate.Grade(index, match, slot.ParameterType);
-                return match.Level != MatchLevel.None;
+                ArgInfo info = call.Info(index);
+                Narrowing level = GetNarrowing(info, call[index], slot.ParameterType);
+
+                // a bare T becomes the argument's own type, so Echo<T>(Int16) beats Echo(int)
+                Type target = slot.ParameterType.IsGenericParameter && info.Kind != ArgKind.None
+                    ? info.From
+                    : slot.ParameterType;
+                candidate.Grade(index, level, target);
+                return level != Narrowing.Never;
             }
 
-            // params[] given one sequence: prefer reading it as the whole array
+            // params[] given one sequence or array: prefer reading it as the whole array
             if (slot.ItemCount == 1)
             {
                 ArgInfo info = call.Info(index);
                 if (slot.ByKeyword || info.Kind is ArgKind.Sequence or ArgKind.Clr)
                 {
-                    Match asArray = GetMatch(info, call[index], slot.ParameterType);
-                    if (asArray.Level != MatchLevel.None || slot.ByKeyword)
+                    Narrowing asArray = GetNarrowing(info, call[index], slot.ParameterType);
+                    if (asArray != Narrowing.Never || slot.ByKeyword)
                     {
                         slot.AsArray = true;
-                        candidate.Expanded = false;
                         candidate.Grade(index, asArray, slot.ParameterType);
-                        return asArray.Level != MatchLevel.None;
+                        return asArray != Narrowing.Never;
                     }
                 }
             }
 
             slot.AsArray = false;
-            candidate.Expanded = true;
             for (int i = 0; i < slot.ItemCount; i++)
             {
-                Match match = GetMatch(call.Info(index + i), call[index + i], slot.Type);
-                candidate.Grade(index + i, match, slot.Type);
-                if (match.Level == MatchLevel.None)
+                Narrowing level = GetNarrowing(call.Info(index + i), call[index + i], slot.Type);
+                candidate.Grade(index + i, level, slot.Type);
+                if (level == Narrowing.Never)
                 {
                     return false;
                 }
@@ -642,254 +687,212 @@ namespace Python.Runtime
             return true;
         }
 
-        // Grades one argument against one parameter type.
-        static Match GetMatch(ArgInfo arg, BorrowedReference value, Type to)
+        // Least narrowing at which one argument fits one parameter type.
+        static Narrowing GetNarrowing(ArgInfo arg, BorrowedReference value, Type to)
         {
             if (to.IsByRef)
             {
                 to = to.GetElementType();
             }
 
-            return arg.Kind == ArgKind.Clr
-                ? MatchClr(arg.ClrType!, to)
-                : MatchPython(arg, value, to);
-        }
-
-        static Match MatchClr(Type from, Type to)
-        {
-            if (from == to)
+            if (arg.Kind == ArgKind.None)
             {
-                return Match.Exact;
+                bool takesNull = !to.IsValueType || Nullable.GetUnderlyingType(to) is not null || to.IsGenericParameter;
+                return takesNull ? Narrowing.None : Narrowing.Never;
+            }
+
+            // T is inferred from the argument's own type
+            if (to.IsGenericParameter)
+            {
+                return Narrowing.None;
             }
 
             if (to.ContainsGenericParameters)
             {
-                if (to.IsGenericParameter)
-                {
-                    return Match.Exact;
-                }
-                return Unify(to, from, new Type?[GenericArity(to)]) ? new Match(MatchLevel.Widening) : Match.None;
+                return arg.Kind == ArgKind.Clr && Unify(to, arg.From, new Type?[GenericArity(to)])
+                    ? Narrowing.None
+                    : Narrowing.Never;
+            }
+
+            Narrowing level = GetTypeNarrowing(arg, to);
+            if (level == Narrowing.Never && arg.Kind != ArgKind.Clr)
+            {
+                level = GetPythonNarrowing(arg, value, to);
+            }
+
+            // pythonnet passes anything as a PyObject
+            if (level == Narrowing.Never && typeof(PyObject).IsAssignableFrom(to))
+            {
+                level = Narrowing.All;
+            }
+
+            return level;
+        }
+
+        // Narrowing between .NET types, as IronPython's Converter.CanConvertFrom.
+        // A Python value takes part as its own .NET type (int as Int32, float as Double),
+        // limited to what pythonnet's converter can do with it.
+        static Narrowing GetTypeNarrowing(ArgInfo arg, Type to)
+        {
+            Type from = arg.From;
+            bool python = arg.Kind != ArgKind.Clr;
+
+            if (from == to)
+            {
+                return Narrowing.None;
             }
 
             if (to.IsAssignableFrom(from))
             {
-                return new Match(MatchLevel.Widening);
+                // the converter boxes Python values only as `object`
+                if (!python || to == typeof(object))
+                {
+                    return Narrowing.None;
+                }
             }
 
-            Type target = Nullable.GetUnderlyingType(to) ?? to;
-            if (target == from)
+            // the converter turns Python numbers into decimal never
+            if (python && to == typeof(decimal))
             {
-                return new Match(MatchLevel.Widening);
+                return Narrowing.Never;
             }
 
-            if (IsImplicitNumeric(from, target))
+            if (Nullable.GetUnderlyingType(to) is Type underlying)
             {
-                return new Match(MatchLevel.Widening, RankNumeric);
+                Narrowing inner = GetTypeNarrowing(arg, underlying);
+                return inner == Narrowing.Never ? Narrowing.Never : Max(inner, Narrowing.BinaryOperator);
             }
 
-            if (typeof(PyObject).IsAssignableFrom(to))
+            if (IsImplicitNumeric(from, to))
             {
-                return new Match(MatchLevel.Converted, RankPyObject);
+                return Narrowing.None;
             }
 
-            if (HasCastOperator(from, to))
+            bool fromNumeric = IsNumeric(from) || from == typeof(bool);
+
+            if (IsNumeric(from) && IsFloatingPoint(to) && to != typeof(float))
             {
-                return new Match(MatchLevel.Converted);
+                return Narrowing.Minimal;
             }
 
-            return Match.None;
+            if (IsNumeric(from) && to == typeof(float))
+            {
+                return Narrowing.BinaryOperator;
+            }
+
+            if (fromNumeric && IsInteger(from) || from == typeof(bool))
+            {
+                if (IsNumeric(to))
+                {
+                    return ValueFits(arg, to) ? Narrowing.IndexOperator : Narrowing.Never;
+                }
+            }
+
+            if (to == typeof(char) && from == typeof(string))
+            {
+                return arg.StringLength == 1 ? Narrowing.IndexOperator : Narrowing.Never;
+            }
+
+            if (to == typeof(string) && from == typeof(char))
+            {
+                return Narrowing.IndexOperator;
+            }
+
+            if (!python && HasImplicitOperator(from, to))
+            {
+                return Narrowing.IndexOperator;
+            }
+
+            if (IsNumeric(from) && IsNumeric(to) && !(IsFloatingPoint(from) && !IsFloatingPoint(to)))
+            {
+                return ValueFits(arg, to) ? Narrowing.All : Narrowing.Never;
+            }
+
+            return Narrowing.Never;
         }
 
-        static Match MatchPython(ArgInfo arg, BorrowedReference value, Type to)
+        // Conversions only Python values have: collections, delegates, and pythonnet's own.
+        static Narrowing GetPythonNarrowing(ArgInfo arg, BorrowedReference value, Type to)
         {
-            if (arg.Kind == ArgKind.None)
+            switch (arg.Kind)
             {
-                bool takesNull = !to.IsValueType || Nullable.GetUnderlyingType(to) is not null || to.IsGenericParameter;
-                return takesNull ? new Match(MatchLevel.Widening) : Match.None;
-            }
+                case ArgKind.Float:
+                    // truncated; kept so older scripts work, but never preferred
+                    return to == typeof(int) || to == typeof(int?) ? Narrowing.All : Narrowing.Never;
 
-            // T is inferred from the value's own .NET type
-            if (to.IsGenericParameter)
-            {
-                return new Match(MatchLevel.Python);
-            }
+                case ArgKind.Str:
+                    // a str is a sequence of chars: IEnumerable<char> and the like
+                    return to.IsAssignableFrom(typeof(string)) && TryGetElementType(to, out _)
+                        ? Narrowing.None
+                        : Narrowing.Never;
 
-            if (to.ContainsGenericParameters)
-            {
-                return Match.None;
-            }
+                case ArgKind.Bool:
+                case ArgKind.Int:
+                    // only a codec can take an int the type rules refused
+                    return PyObjectConversions.TryDecode(value, Runtime.PyObject_TYPE(value), to, out _)
+                        ? Narrowing.All
+                        : Narrowing.Never;
 
-            if (typeof(PyObject).IsAssignableFrom(to))
-            {
-                return new Match(MatchLevel.Converted, RankPyObject);
+                case ArgKind.Bytes:
+                    if (arg.StringLength == 1 && (to == typeof(byte) || to == typeof(sbyte) || to == typeof(char)))
+                    {
+                        return Narrowing.IndexOperator;
+                    }
+                    goto case ArgKind.Sequence;
+
+                case ArgKind.Sequence:
+                    if (TryGetElementType(to, out _))
+                    {
+                        return GetCollectionNarrowing(value, to, readItems: true);
+                    }
+                    // not a collection type: a codec may still take it, e.g. tuple to ValueTuple
+                    break;
+
+                case ArgKind.Iterator:
+                    // never handed to the converter here: that could read it
+                    return GetCollectionNarrowing(value, to, readItems: false);
             }
 
             if (typeof(Delegate).IsAssignableFrom(to))
             {
-                return Runtime.PyCallable_Check(value) == 1 ? new Match(MatchLevel.Converted) : Match.None;
+                return Runtime.PyCallable_Check(value) == 1 ? Narrowing.IndexOperator : Narrowing.Never;
             }
 
-            Type target = Nullable.GetUnderlyingType(to) ?? to;
-
-            switch (arg.Kind)
+            // only the converter (or a codec) knows how
+            bool converts = Converter.ToManaged(value, to, out _, setError: false);
+            if (Exceptions.ErrorOccurred())
             {
-                case ArgKind.Bool:
-                    return MatchBool(target);
-
-                case ArgKind.Int:
-                    return MatchInt(arg, target);
-
-                case ArgKind.Float:
-                    return MatchFloat(target);
-
-                case ArgKind.Str:
-                    if (target == typeof(string))
-                    {
-                        return new Match(MatchLevel.Python);
-                    }
-                    if (target == typeof(char))
-                    {
-                        return arg.Length == 1 ? new Match(MatchLevel.Converted) : Match.None;
-                    }
-                    if (target == typeof(object))
-                    {
-                        return new Match(MatchLevel.Python, RankBoxed);
-                    }
-                    return MatchSequence(value, to);
-
-                case ArgKind.Bytes:
-                    if (arg.Length == 1 && (target == typeof(byte) || target == typeof(sbyte) || target == typeof(char)))
-                    {
-                        return new Match(MatchLevel.Converted);
-                    }
-                    break;
-
-                case ArgKind.Iterator:
-                    if (TryGetElementType(to, out _))
-                    {
-                        return new Match(MatchLevel.Converted, RankIterator);
-                    }
-                    return to == typeof(object) ? new Match(MatchLevel.Converted, RankObject) : Match.None;
+                Exceptions.Clear();
             }
-
-            if (arg.Kind is ArgKind.Bool or ArgKind.Int or ArgKind.Float)
-            {
-                return Match.None;
-            }
-
-            if (arg.Kind is ArgKind.Sequence or ArgKind.Bytes)
-            {
-                Match asCollection = MatchSequence(value, to);
-                if (asCollection.Level != MatchLevel.None)
-                {
-                    return asCollection;
-                }
-            }
-
-            if (to == typeof(object))
-            {
-                return new Match(MatchLevel.Converted, RankObject);
-            }
-
-            return MatchByConverter(value, to);
+            return converts ? Narrowing.All : Narrowing.Never;
         }
 
-        static Match MatchBool(Type target)
-        {
-            if (target == typeof(bool))
-            {
-                return new Match(MatchLevel.Python);
-            }
-
-            if (Converter.IsInteger(target) || Converter.IsFloatingNumber(target))
-            {
-                return new Match(MatchLevel.Converted, RankBoolNumber);
-            }
-
-            return target == typeof(object) ? new Match(MatchLevel.Python, RankBoxed) : Match.None;
-        }
-
-        static Match MatchInt(ArgInfo arg, Type target)
-        {
-            TypeCode code = Type.GetTypeCode(target);
-            if (target.IsEnum)
-            {
-                return Match.None;
-            }
-
-            switch (code)
-            {
-                case TypeCode.Int32:
-                    return arg.IntFits(code) ? new Match(MatchLevel.Python, RankNatural) : Match.None;
-
-                case TypeCode.SByte:
-                case TypeCode.Byte:
-                case TypeCode.Int16:
-                case TypeCode.UInt16:
-                case TypeCode.UInt32:
-                case TypeCode.Int64:
-                case TypeCode.UInt64:
-                    return arg.IntFits(code) ? new Match(MatchLevel.Python, RankNumeric) : Match.None;
-
-                case TypeCode.Single:
-                case TypeCode.Double:
-                    return new Match(MatchLevel.Python, RankNumeric);
-
-                case TypeCode.Char:
-                    return arg.IntFits(code) ? new Match(MatchLevel.Converted) : Match.None;
-            }
-
-            if (target == typeof(System.Numerics.BigInteger))
-            {
-                return new Match(MatchLevel.Converted);
-            }
-
-            // boxed as Int32, so only when it fits one
-            if (target == typeof(object))
-            {
-                return arg.IntFits(TypeCode.Int32) ? new Match(MatchLevel.Python, RankBoxed) : Match.None;
-            }
-
-            return Match.None;
-        }
-
-        static Match MatchFloat(Type target)
-        {
-            if (target == typeof(double))
-            {
-                return new Match(MatchLevel.Python, RankNatural);
-            }
-
-            if (target == typeof(float))
-            {
-                return new Match(MatchLevel.Python, RankNumeric);
-            }
-
-            // truncated; kept so older scripts work, but never preferred
-            if (target == typeof(int))
-            {
-                return new Match(MatchLevel.Converted);
-            }
-
-            return target == typeof(object) ? new Match(MatchLevel.Python, RankBoxed) : Match.None;
-        }
-
-        // Grades a Python sequence against an array or collection type, by its items.
-        static Match MatchSequence(BorrowedReference value, Type to)
+        // A Python iterable to an array (pythonnet's own; IronPython takes only tuples),
+        // IList<T>, or IEnumerable. Items are graded too, so [1.0] fits double[] but not int[].
+        static Narrowing GetCollectionNarrowing(BorrowedReference value, Type to, bool readItems)
         {
             if (!TryGetElementType(to, out Type? element))
             {
-                return Match.None;
+                return Narrowing.Never;
             }
+
+            bool listLike = to.IsArray || IsGenericList(to);
+
+            // a one-shot iterator is never read ahead, and fits a list only after being read in full
+            if (!readItems)
+            {
+                return listLike ? Narrowing.All : Narrowing.IndexOperator;
+            }
+
+            Narrowing level = listLike ? Narrowing.BinaryOperator : Narrowing.IndexOperator;
 
             nint size = Runtime.PySequence_Size(value);
             if (size < 0)
             {
                 Exceptions.Clear();
-                return new Match(MatchLevel.Converted, RankIterator);
+                return level;
             }
 
-            Match worst = Match.Exact;
             int sample = (int)Math.Min(size, SequenceSample);
             for (int i = 0; i < sample; i++)
             {
@@ -897,25 +900,24 @@ namespace Python.Runtime
                 if (item.IsNull())
                 {
                     Exceptions.Clear();
-                    return Match.None;
+                    return Narrowing.Never;
                 }
 
-                Match match = GetMatch(ArgInfo.Of(item.Borrow()), item.Borrow(), element!);
-                if (match.Level == MatchLevel.None)
+                Narrowing itemLevel = GetNarrowing(ArgInfo.Of(item.Borrow()), item.Borrow(), element!);
+                if (itemLevel == Narrowing.Never)
                 {
-                    return Match.None;
+                    return Narrowing.Never;
                 }
-
-                if (match.IsWorseThan(worst))
-                {
-                    worst = match;
-                }
+                level = Max(level, itemLevel);
             }
 
-            // closer items make a closer collection: [1] picks int[] over double[]
-            int rank = 1 + (int)worst.Level * 256 + Math.Min((int)worst.Rank, 255);
-            return new Match(MatchLevel.Converted, (ushort)rank);
+            return level;
         }
+
+        static bool IsGenericList(Type to)
+            => to.IsGenericType && to.GetGenericTypeDefinition() == typeof(IList<>);
+
+        static Narrowing Max(Narrowing a, Narrowing b) => a > b ? a : b;
 
         // Element type of a collection the converter can build from a Python iterable.
         static bool TryGetElementType(Type to, out Type? element)
@@ -945,41 +947,107 @@ namespace Python.Runtime
             return element is not null;
         }
 
-        // Last resort for Python objects: ask the converter, which also runs codecs.
-        static Match MatchByConverter(BorrowedReference value, Type to)
+        // Whether a value can be narrowed to a number type without overflow.
+        static bool ValueFits(ArgInfo arg, Type to)
         {
-            bool converts = Converter.ToManaged(value, to, out _, setError: false);
-            if (Exceptions.ErrorOccurred())
+            TypeCode code = Type.GetTypeCode(to);
+            if (code is TypeCode.Single or TypeCode.Double or TypeCode.Decimal)
             {
-                Exceptions.Clear();
+                return true;
             }
-            return converts ? new Match(MatchLevel.Converted, RankConverter) : Match.None;
+
+            if (arg.Kind == ArgKind.Int)
+            {
+                return arg.IntFits(code);
+            }
+
+            if (arg.Kind == ArgKind.Bool || arg.Value is bool)
+            {
+                return true;
+            }
+
+            // a .NET number: check its value
+            try
+            {
+                Convert.ChangeType(arg.Value, to, CultureInfo.InvariantCulture);
+                return true;
+            }
+            catch (Exception ex) when (ex is OverflowException or InvalidCastException or FormatException)
+            {
+                return false;
+            }
         }
 
-        static bool HasCastOperator(Type from, Type to)
-            => FindCastOperator(from, from, to) || FindCastOperator(to, from, to);
+        // User-defined implicit operator from `from` to `to`, on either type or their bases.
+        static bool HasImplicitOperator(Type from, Type to)
+            => HasImplicitOperatorOn(from, from, to) || HasImplicitOperatorOn(to, from, to);
 
-        static bool FindCastOperator(Type owner, Type from, Type to)
+        static bool HasImplicitOperatorOn(Type? owner, Type from, Type to)
         {
-            foreach (MethodInfo m in owner.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
+            // primitives, strings and enums declare no operators
+            for (; owner is not null && !owner.IsPrimitive && owner != typeof(string) && owner != typeof(object) && !owner.IsEnum; owner = owner.BaseType)
             {
-                if ((m.Name == "op_Implicit" || m.Name == "op_Explicit")
-                        && m.ReturnType == to
-                        && m.GetParameters() is { Length: 1 } ps
-                        && ps[0].ParameterType == from)
+                foreach (MethodInfo m in owner.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.DeclaredOnly))
                 {
-                    return true;
+                    if (m.Name == "op_Implicit"
+                            && to.IsAssignableFrom(m.ReturnType)
+                            && m.GetParameters() is { Length: 1 } ps
+                            && ps[0].ParameterType.IsAssignableFrom(from))
+                    {
+                        return true;
+                    }
                 }
             }
             return false;
         }
 
-        // C# implicit numeric conversions.
-        static bool IsImplicitNumeric(Type from, Type to)
+        static bool IsNumeric(Type t)
         {
-            if (!from.IsPrimitive || !(to.IsPrimitive || to == typeof(decimal)) || from == typeof(bool) || to == typeof(bool))
+            if (t.IsEnum)
             {
                 return false;
+            }
+
+            return Type.GetTypeCode(t) switch
+            {
+                TypeCode.SByte or TypeCode.Byte or TypeCode.Int16 or TypeCode.UInt16
+                    or TypeCode.Int32 or TypeCode.UInt32 or TypeCode.Int64 or TypeCode.UInt64
+                    or TypeCode.Single or TypeCode.Double or TypeCode.Decimal => true,
+                TypeCode.Object => t == typeof(System.Numerics.BigInteger),
+                _ => false,
+            };
+        }
+
+        static bool IsInteger(Type t)
+            => !t.IsEnum && (Type.GetTypeCode(t) is TypeCode.SByte or TypeCode.Byte or TypeCode.Int16 or TypeCode.UInt16
+                    or TypeCode.Int32 or TypeCode.UInt32 or TypeCode.Int64 or TypeCode.UInt64
+               || t == typeof(System.Numerics.BigInteger));
+
+        static bool IsFloatingPoint(Type t)
+            => Type.GetTypeCode(t) is TypeCode.Single or TypeCode.Double or TypeCode.Decimal;
+
+        // Implicit numeric conversions, as IronPython: C#'s, plus bool as Int32,
+        // integers to BigInteger, and BigInteger to double.
+        static bool IsImplicitNumeric(Type from, Type to)
+        {
+            if (from.IsEnum || to.IsEnum)
+            {
+                return false;
+            }
+
+            if (from == typeof(System.Numerics.BigInteger))
+            {
+                return to == typeof(double);
+            }
+
+            if (from == typeof(bool))
+            {
+                return to == typeof(int) || IsImplicitNumeric(typeof(int), to);
+            }
+
+            if (to == typeof(System.Numerics.BigInteger))
+            {
+                return IsInteger(from) || from == typeof(char);
             }
 
             TypeCode f = Type.GetTypeCode(from);
@@ -998,22 +1066,6 @@ namespace Python.Runtime
                 TypeCode.Single => t is TypeCode.Double,
                 _ => false,
             };
-        }
-
-        // Whether a value of `from` can go where `to` is expected without a cast, as in C#.
-        static bool IsImplicit(Type from, Type to)
-        {
-            if (from == to || to.IsAssignableFrom(from))
-            {
-                return true;
-            }
-
-            if (Nullable.GetUnderlyingType(to) is Type underlying)
-            {
-                return IsImplicit(from, underlying);
-            }
-
-            return IsImplicitNumeric(from, to);
         }
 
         // Fills `inferred` with the generic arguments that make `parameter` take `argument`.
@@ -1111,8 +1163,17 @@ namespace Python.Runtime
 
         #region Select (step 3)
 
-        // Keeps the strictest level, then picks the one candidate that beats
-        // all others; otherwise reports the tied ones as ambiguous.
+        // Outcome of comparing two candidates, as IronPython's Candidate enum.
+        private enum Preference
+        {
+            Equivalent,
+            First,
+            Second,
+            Ambiguous,
+        }
+
+        // Keeps the candidates at the strictest level, then picks the one that
+        // beats every other; otherwise reports them as ambiguous.
         static bool TrySelect(List<Candidate> candidates, out BindSpec? spec, out BindError? error)
         {
             spec = null;
@@ -1130,7 +1191,7 @@ namespace Python.Runtime
                 return true;
             }
 
-            MatchLevel strictest = MatchLevel.None;
+            Narrowing strictest = Narrowing.Never;
             foreach (Candidate c in candidates)
             {
                 if (c.Level < strictest)
@@ -1139,96 +1200,80 @@ namespace Python.Runtime
                 }
             }
 
-            Candidate? best = null;
+            var applicable = new List<Candidate>(candidates.Count);
             foreach (Candidate c in candidates)
             {
-                if (c.Level == strictest && (best is null || Compare(c, best) > 0))
+                if (c.Level == strictest)
                 {
-                    best = c;
+                    applicable.Add(c);
                 }
             }
 
-            List<MethodBase>? tied = null;
-            foreach (Candidate c in candidates)
+            foreach (Candidate c in applicable)
             {
-                if (c != best && c.Level == strictest && Compare(best!, c) <= 0)
+                if (IsBest(c, applicable))
                 {
-                    tied ??= new List<MethodBase> { best!.Spec.Method };
-                    tied.Add(c.Spec.Method);
+                    spec = c.Spec;
+                    return true;
                 }
             }
 
-            if (tied is not null)
+            var tied = new MethodBase[applicable.Count];
+            for (int i = 0; i < tied.Length; i++)
             {
-                error = new AmbiguousBindError(tied.ToArray());
-                return false;
+                tied[i] = applicable[i].Spec.Method;
             }
+            error = new AmbiguousBindError(tied);
+            return false;
+        }
 
-            spec = best!.Spec;
+        static bool IsBest(Candidate candidate, List<Candidate> others)
+        {
+            foreach (Candidate other in others)
+            {
+                if (other != candidate && Compare(candidate, other) != Preference.First)
+                {
+                    return false;
+                }
+            }
             return true;
         }
 
-        // >0 when `a` is the better call, <0 when `b` is, 0 when neither.
-        static int Compare(Candidate a, Candidate b)
+        // As IronPython's GetPreferredCandidate: argument by argument first,
+        // then whole-method tie-breaks when that settles nothing.
+        static Preference Compare(Candidate a, Candidate b)
         {
-            bool aBetter = false;
-            bool bBetter = false;
-            int firstDifference = 0;
-
-            for (int i = 0; i < a.Matches.Length; i++)
+            Preference result = Preference.Equivalent;
+            for (int i = 0; i < a.Levels.Length; i++)
             {
-                int r = CompareArgument(a.Matches[i], a.Targets[i], b.Matches[i], b.Targets[i]);
-                if (r == 0)
+                Preference p = CompareArgument(a.Levels[i], a.Targets[i], b.Levels[i], b.Targets[i]);
+                switch (result)
                 {
-                    continue;
-                }
+                    case Preference.Equivalent:
+                        result = p;
+                        break;
 
-                if (firstDifference == 0)
-                {
-                    firstDifference = r;
-                }
+                    case Preference.First when p == Preference.Second:
+                    case Preference.Second when p == Preference.First:
+                        result = Preference.Ambiguous;
+                        i = a.Levels.Length;
+                        break;
 
-                if (r > 0)
-                {
-                    aBetter = true;
-                }
-                else
-                {
-                    bBetter = true;
+                    case Preference.Ambiguous when p != Preference.Equivalent:
+                        result = p;
+                        break;
                 }
             }
 
-            if (aBetter != bBetter)
-            {
-                return aBetter ? 1 : -1;
-            }
-
-            // each is better somewhere; C# calls this ambiguous,
-            // here the first argument that differs decides
-            if (aBetter)
-            {
-                return firstDifference;
-            }
-
-            return TieBreak(a, b);
+            return result is Preference.First or Preference.Second ? result : TieBreak(a, b);
         }
 
-        // Compares where one argument went in two candidates.
-        static int CompareArgument(Match ma, Type? ta, Match mb, Type? tb)
+        // Where one argument went in two candidates, as IronPython's GetPreferredParameter.
+        static Preference CompareArgument(Narrowing la, Type? ta, Narrowing lb, Type? tb)
         {
-            if (ma.Level != mb.Level)
-            {
-                return ma.Level < mb.Level ? 1 : -1;
-            }
-
-            if (ma.Rank != mb.Rank)
-            {
-                return ma.Rank < mb.Rank ? 1 : -1;
-            }
-
             if (ta is null || tb is null)
             {
-                return 0;
+                return Preference.Equivalent;
             }
 
             if (ta.IsByRef)
@@ -1242,85 +1287,185 @@ namespace Python.Runtime
 
             if (ta == tb)
             {
-                return 0;
+                return Preference.Equivalent;
             }
 
-            // the more specific type wins: one that converts to the other, not back
-            bool aToB = IsImplicit(ta, tb);
-            bool bToA = IsImplicit(tb, ta);
-            if (aToB != bToA)
+            Preference byType = CompareTypes(ta, tb);
+            if (byType is Preference.First or Preference.Second)
             {
-                return aToB ? 1 : -1;
+                return byType;
             }
 
-            // signed beats unsigned, as in C#
-            bool aSigned = IsSignedInteger(ta), bSigned = IsSignedInteger(tb);
-            bool aUnsigned = IsUnsignedInteger(ta), bUnsigned = IsUnsignedInteger(tb);
-            if (aSigned && bUnsigned)
+            // the argument itself needs less narrowing for one of them
+            if (la != lb)
             {
-                return 1;
-            }
-            if (bSigned && aUnsigned)
-            {
-                return -1;
+                return la < lb ? Preference.First : Preference.Second;
             }
 
-            return 0;
+            return Preference.Ambiguous;
         }
 
-        static bool IsSignedInteger(Type t)
-            => t == typeof(sbyte) || t == typeof(short) || t == typeof(int) || t == typeof(long);
-
-        static bool IsUnsignedInteger(Type t)
-            => t == typeof(byte) || t == typeof(ushort) || t == typeof(uint) || t == typeof(ulong);
-
-        // Whole-method preferences, used when every argument fits equally well.
-        static int TieBreak(Candidate a, Candidate b)
+        // The more specific of two parameter types: the one that converts to the
+        // other but not back; else IronPython's PreferConvert order.
+        static Preference CompareTypes(Type ta, Type tb)
         {
-            // params[] taken as written beats params[] expanded
-            if (a.Expanded != b.Expanded)
+            bool bToA = IsImplicitType(tb, ta);
+            bool aToB = IsImplicitType(ta, tb);
+            if (aToB && bToA)
             {
-                return a.Expanded ? -1 : 1;
+                return Preference.Ambiguous;
+            }
+            if (bToA)
+            {
+                return Preference.Second;
+            }
+            if (aToB)
+            {
+                return Preference.First;
             }
 
-            // a plain method beats a generic one
-            bool aGeneric = a.IsGenericDefinition;
-            bool bGeneric = b.IsGenericDefinition;
-            if (aGeneric != bGeneric)
+            // pythonnet's own: collections compare by their items, so [1] picks int[] over double[]
+            if (TryGetElementType(ta, out Type? ea) && TryGetElementType(tb, out Type? eb) && ea != eb)
             {
-                return aGeneric ? -1 : 1;
+                Preference byItems = CompareTypes(ea!, eb!);
+                if (byItems is Preference.First or Preference.Second)
+                {
+                    return byItems;
+                }
             }
 
-            // every argument given explicitly beats leaning on defaults
-            if (a.Unfilled != b.Unfilled)
+            Preference preferred = PreferConvert(ta, tb);
+            if (preferred != Preference.Equivalent)
             {
-                return a.Unfilled < b.Unfilled ? 1 : -1;
+                return preferred;
             }
 
-            // a Python override beats the .NET method it redirects
-            bool aRedirected = BindSpec.IsRedirected(a.Spec.Method);
-            bool bRedirected = BindSpec.IsRedirected(b.Spec.Method);
-            if (aRedirected != bRedirected)
+            return PreferConvert(tb, ta) switch
             {
-                return aRedirected ? 1 : -1;
+                Preference.First => Preference.Second,
+                Preference.Second => Preference.First,
+                _ => Preference.Equivalent,
+            };
+        }
+
+        // Whether `from` goes where `to` is expected with no narrowing.
+        static bool IsImplicitType(Type from, Type to)
+            => from == to || to.IsAssignableFrom(from) || IsImplicitNumeric(from, to);
+
+        // IronPython's Converter.PreferConvert: int over bool, BigInteger over
+        // decimal, signed over unsigned.
+        static Preference PreferConvert(Type t1, Type t2)
+        {
+            if (t1 == typeof(bool) && t2 == typeof(int))
+            {
+                return Preference.Second;
+            }
+            if (t1 == typeof(decimal) && t2 == typeof(System.Numerics.BigInteger))
+            {
+                return Preference.Second;
             }
 
-            // a method hidden with `new` loses to the one hiding it
-            Type? da = a.Spec.Method.DeclaringType;
-            Type? db = b.Spec.Method.DeclaringType;
+            TypeCode c2 = Type.GetTypeCode(t2);
+            bool unsignedSecond = Type.GetTypeCode(t1) switch
+            {
+                TypeCode.SByte => c2 is TypeCode.Byte or TypeCode.UInt16 or TypeCode.UInt32 or TypeCode.UInt64,
+                TypeCode.Int16 => c2 is TypeCode.UInt16 or TypeCode.UInt32 or TypeCode.UInt64,
+                TypeCode.Int32 => c2 is TypeCode.UInt32 or TypeCode.UInt64,
+                TypeCode.Int64 => c2 is TypeCode.UInt64,
+                _ => false,
+            };
+            return unsignedSecond && !t1.IsEnum && !t2.IsEnum ? Preference.First : Preference.Equivalent;
+        }
+
+        // Whole-method preferences, in IronPython's order (CompareEquivalentParameters),
+        // then pythonnet's own.
+        static Preference TieBreak(Candidate a, Candidate b)
+        {
+            MethodBase ma = a.Spec.Method;
+            MethodBase mb = b.Spec.Method;
+
+            // a non-generic method beats a generic one
+            if (ma.IsGenericMethod != mb.IsGenericMethod)
+            {
+                return ma.IsGenericMethod ? Preference.Second : Preference.First;
+            }
+            if (ma.IsGenericMethod)
+            {
+                return Preference.Equivalent;
+            }
+
+            // fewer out values returned
+            int outA = a.Spec.CountReturnedOuts();
+            int outB = b.Spec.CountReturnedOuts();
+            if (outA != outB)
+            {
+                return outA < outB ? Preference.First : Preference.Second;
+            }
+
+            // arguments taken plainly beat defaults, which beat params[] expansion
+            Preference byPriority = ComparePriorities(a.Spec, b.Spec);
+            if (byPriority != Preference.Equivalent)
+            {
+                return byPriority;
+            }
+
+            // pythonnet's own: fewer parameters left to their defaults
+            int defaultsA = a.Spec.CountDefaultsUsed();
+            int defaultsB = b.Spec.CountDefaultsUsed();
+            if (defaultsA != defaultsB)
+            {
+                return defaultsA < defaultsB ? Preference.First : Preference.Second;
+            }
+
+            // a regular method beats an extension method
+            bool extA = ma.IsDefined(typeof(System.Runtime.CompilerServices.ExtensionAttribute), false);
+            bool extB = mb.IsDefined(typeof(System.Runtime.CompilerServices.ExtensionAttribute), false);
+            if (extA != extB)
+            {
+                return extA ? Preference.Second : Preference.First;
+            }
+
+            // pythonnet's own: a Python override beats the .NET method it redirects
+            bool redirA = BindSpec.IsRedirected(ma);
+            bool redirB = BindSpec.IsRedirected(mb);
+            if (redirA != redirB)
+            {
+                return redirA ? Preference.First : Preference.Second;
+            }
+
+            // pythonnet's own: a method hidden with `new` loses to the one hiding it
+            Type? da = ma.DeclaringType;
+            Type? db = mb.DeclaringType;
             if (da is not null && db is not null && da != db)
             {
                 if (da.IsSubclassOf(db))
                 {
-                    return 1;
+                    return Preference.First;
                 }
                 if (db.IsSubclassOf(da))
                 {
-                    return -1;
+                    return Preference.Second;
                 }
             }
 
-            return 0;
+            return Preference.Equivalent;
+        }
+
+        // IronPython's "earlier conversion rules" check: compare the highest
+        // slot priority each method needs, then the next highest, and so on.
+        static Preference ComparePriorities(BindSpec a, BindSpec b)
+        {
+            for (int ceiling = int.MaxValue; ceiling >= 0;)
+            {
+                int pa = a.MaxPriority(ceiling);
+                int pb = b.MaxPriority(ceiling);
+                if (pa != pb)
+                {
+                    return pa < pb ? Preference.First : Preference.Second;
+                }
+                ceiling = pa - 1;
+            }
+            return Preference.Equivalent;
         }
 
         #endregion
@@ -1367,6 +1512,14 @@ namespace Python.Runtime
 
             public bool IsAssigned => ArgIndex >= 0;
 
+            public int Priority => Kind switch
+            {
+                BindParamKind.Return or BindParamKind.BoxedReturn => 5,
+                BindParamKind.Params => AsArray ? 0 : 4,
+                BindParamKind.Option => IsAssigned ? 0 : 2,
+                _ => 0,
+            };
+
             public int ItemCount => _items?.Length ?? 0;
 
             // the StrongBox given for an `out` slot
@@ -1381,6 +1534,10 @@ namespace Python.Runtime
                     {
                         return false;
                     }
+                    HasBox = true;
+                }
+                else if (Kind == BindParamKind.Return && IsFittingBox(arg))
+                {
                     HasBox = true;
                 }
 
@@ -1403,7 +1560,7 @@ namespace Python.Runtime
                 {
                     ArgInfo info = call.Info(first);
                     AsArray = info.Kind == ArgKind.Sequence
-                           || (info.Kind == ArgKind.Clr && ParameterType.IsAssignableFrom(info.ClrType));
+                           || (info.Kind == ArgKind.Clr && ParameterType.IsAssignableFrom(info.From));
                 }
             }
 
@@ -1483,17 +1640,55 @@ namespace Python.Runtime
 
             static bool TryConvertArg(BorrowedReference arg, Type type, out object? value)
             {
-                // .NET numbers widen as in C#: an Int16 goes where an int is expected
-                if (ManagedType.GetManagedObject(arg) is CLRObject { inst: IConvertible number }
-                        && !type.IsInstanceOfType(number)
-                        && IsImplicitNumeric(number.GetType(), Nullable.GetUnderlyingType(type) ?? type))
+                // None for a delegate is no delegate, not a callable to wrap
+                if (arg == Runtime.PyNone && typeof(Delegate).IsAssignableFrom(type))
                 {
-                    value = Convert.ChangeType(number, Nullable.GetUnderlyingType(type) ?? type, CultureInfo.InvariantCulture);
+                    value = null;
                     return true;
+                }
+
+                // the converter cannot change one .NET number or char into another
+                if (ManagedType.GetManagedObject(arg) is CLRObject { inst: IConvertible clr }
+                        && !type.IsInstanceOfType(clr))
+                {
+                    Type target = Nullable.GetUnderlyingType(type) ?? type;
+                    Type source = clr.GetType();
+                    bool numbers = (IsNumeric(source) || source == typeof(bool)) && IsNumeric(target) && !target.IsEnum && !source.IsEnum;
+                    bool chars = (source == typeof(char) && target == typeof(string))
+                              || (source == typeof(string) && target == typeof(char) && ((string)clr).Length == 1);
+                    if (numbers || chars)
+                    {
+                        try
+                        {
+                            // whole numbers drop the fraction, as Python's int() does
+                            object number = IsFloatingPoint(source) && !IsFloatingPoint(target)
+                                ? Math.Truncate(Convert.ToDecimal(clr, CultureInfo.InvariantCulture))
+                                : clr;
+
+                            value = target == typeof(System.Numerics.BigInteger)
+                                ? ToBigInteger(number)
+                                : Convert.ChangeType(number, target, CultureInfo.InvariantCulture);
+                            return true;
+                        }
+                        catch (OverflowException ex)
+                        {
+                            Exceptions.SetError(Exceptions.OverflowError, ex.Message);
+                            value = null;
+                            return false;
+                        }
+                    }
                 }
 
                 return Converter.ToManaged(arg, type, out value, setError: true);
             }
+
+            static System.Numerics.BigInteger ToBigInteger(object number) => number switch
+            {
+                decimal d => new System.Numerics.BigInteger(d),
+                bool b => b ? System.Numerics.BigInteger.One : System.Numerics.BigInteger.Zero,
+                ulong u => new System.Numerics.BigInteger(u),
+                _ => new System.Numerics.BigInteger(Convert.ToInt64(number, CultureInfo.InvariantCulture)),
+            };
 
             bool IsFittingBox(BorrowedReference arg)
             {
@@ -1547,6 +1742,53 @@ namespace Python.Runtime
                 Optional = optional;
                 Returns = returns;
                 Expands = expands;
+            }
+
+            // an operator method, with the instance as one operand
+            public bool IsOperator => Array.Exists(Parameters, p => p.Kind == BindParamKind.Self);
+
+            // `out` and `ref` values handed back to Python
+            public int CountReturnedOuts()
+            {
+                int count = 0;
+                foreach (BindParam p in Parameters)
+                {
+                    if (p.Kind == BindParamKind.Return || (p.Kind == BindParamKind.BoxedReturn && !p.HasBox))
+                    {
+                        count++;
+                    }
+                }
+                return count;
+            }
+
+            // optional parameters left to their default value
+            public int CountDefaultsUsed()
+            {
+                int count = 0;
+                foreach (BindParam p in Parameters)
+                {
+                    if (p.Kind == BindParamKind.Option && !p.IsAssigned)
+                    {
+                        count++;
+                    }
+                }
+                return count;
+            }
+
+            // Highest slot priority at or below `ceiling`, as IronPython's ArgBuilder
+            // priorities: plain argument 0, default value 2, params[] items 4, out/ref 5.
+            public int MaxPriority(int ceiling)
+            {
+                int max = 0;
+                foreach (BindParam p in Parameters)
+                {
+                    int priority = p.Priority;
+                    if (priority <= ceiling && priority > max)
+                    {
+                        max = priority;
+                    }
+                }
+                return max;
             }
 
             // Converts every slot to its .NET value. Closes a generic method over
@@ -1682,6 +1924,12 @@ namespace Python.Runtime
             // A Python value as its own .NET type; anything without one stays a PyObject.
             static bool TryGetNaturalValue(BorrowedReference arg, out object? value)
             {
+                // an int's own type depends on its size
+                if (Runtime.PyInt_Check(arg) && !Runtime.PyBool_Check(arg))
+                {
+                    return Converter.ToManaged(arg, typeof(object), out value, setError: true);
+                }
+
                 if (GetCLRType(arg) is null)
                 {
                     Exceptions.Clear();
