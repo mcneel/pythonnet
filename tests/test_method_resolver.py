@@ -5,8 +5,8 @@
 Every overload on the `Resolver*` test types returns a tag naming its own
 signature, so each test asserts the tag of the overload it expects.
 
-Most tests follow C# overload rules. `test_lenient_*` tests pin where the
-resolver is deliberately more forgiving than C#.
+Most tests follow IronPython's overload rules. `test_lenient_*` tests pin
+where the resolver is deliberately more forgiving than IronPython.
 """
 
 import operator
@@ -210,7 +210,8 @@ def test_primitives_unknown_python_object_picks_object():
         ("FloatOrDouble", 1.5, "double"),
         ("FloatOrDouble", 1, "float"),
         ("FloatOrDouble", Single(1), "float"),
-        ("ShortOrLong", 1, "short"),
+        # an int is an Int32: long takes it as is, short only by narrowing
+        ("ShortOrLong", 1, "long"),
         ("ShortOrLong", 2**40, "long"),
         ("ShortOrLong", Int16(1), "short"),
         ("ShortOrLong", Int64(1), "long"),
@@ -264,8 +265,8 @@ def test_primitives_single_overload_converts_python_values():
     ((Int16(1), Int16(1)), "short,short"),
     ((Int64(1), Int64(1)), "long,long"),
     ((2**40, 1), "long,long"),
-    # the first argument decides between otherwise equal candidates
-    ((Int16(1), 1), "short,short"),
+    # Int16 widens to int without narrowing; 1 would need narrowing to short
+    ((Int16(1), 1), "int,int"),
     ((Int64(1), 1), "long,long"),
 )
 def test_primitives_two_parameters(args, expected):
@@ -290,9 +291,10 @@ def test_value_out_of_range_does_not_poison_later_calls():
         PRIM.OnlyByte(-1)
     assert PRIM.OnlyByte(5) == "byte:5"
 
-    assert PRIM.ShortOrLong(1) == "short"
-    assert PRIM.ShortOrLong(2**40) == "long"
-    assert PRIM.ShortOrLong(1) == "short"
+    assert PRIM.IntOrString(Int64(5)) == "int"
+    with pytest.raises(TypeError):
+        PRIM.IntOrString(Int64(2**40))
+    assert PRIM.IntOrString(Int64(5)) == "int"
 
 
 def test_explicit_overload_selection():
@@ -834,7 +836,7 @@ def test_concurrent_calls_resolve_correctly():
 
 
 # --------------------------------------------------------------------------
-# Lenient rules: accepted where C# would refuse or call it ambiguous
+# Lenient rules: accepted where IronPython would refuse
 # --------------------------------------------------------------------------
 
 
@@ -842,17 +844,12 @@ def test_lenient_python_float_is_accepted_for_int_parameter():
     # truncated for `int` only, and only when no overload takes a float
     assert ARITY.SingleInt(1.5) == "single:int"
     assert PRIM.Pair(1.5, 1) == "int,int"
-    assert PRIM.Mixed(1.5, 1.5) == "double,int"
+    with pytest.raises(TypeError, match="The call is ambiguous"):
+        PRIM.Mixed(1.5, 1.5)
     assert ResolverInheritBase().Pick(1.5) == "base:int"
     assert ResolverCtor(1.5, 1.5).Tag == "int,int,int=3"
     with pytest.raises(TypeError):
         PRIM.OnlyLong(1.5)
-
-
-def test_lenient_first_differing_argument_decides():
-    # C# reports these as ambiguous
-    assert PRIM.Mixed(1, 1) == "int,double"
-    assert PRIM.Pair(1, Int16(1)) == "int,int"
 
 
 def test_lenient_keyword_takes_its_slot_before_positionals():
@@ -867,26 +864,54 @@ def test_lenient_python_bool_is_an_integer_number():
     assert PRIM.FloatOrDouble(True) == "float"
     assert ResolverCtor(True).Tag == "int"
     assert PRIM.LongOrString(True) == "long"
-    assert PRIM.ShortOrLong(True) == "short"
+    assert PRIM.ShortOrLong(True) == "long"
 
 
 # --------------------------------------------------------------------------
-# Rules that follow C#
+# Rules that follow IronPython
 # --------------------------------------------------------------------------
+
+
+def test_overloads_better_on_different_arguments_are_ambiguous():
+    # each overload is better on one argument
+    with pytest.raises(TypeError, match="The call is ambiguous"):
+        PRIM.Mixed(1, 1)
+    # Int16 and 1 both widen to int; short would narrow 1
+    assert PRIM.Pair(1, Int16(1)) == "int,int"
+
+
+def test_least_narrowing_wins():
+    # a Python float is a Double: float needs narrowing
+    assert PRIM.FloatOrDouble(1.5) == "double"
+    # a Python int is an Int32: float takes it without narrowing
+    assert PRIM.FloatOrInt(1) == "int"
+    assert PRIM.FloatOrInt(1.5) == "float"
+
+
+def test_signed_beats_unsigned():
+    assert PRIM.SignedOrUnsigned(1) == "sbyte"
+    assert PRIM.SignedOrUnsigned(200) == "byte"
+
+
+def test_clr_numbers_narrow_when_value_fits():
+    assert PRIM.IntOrString(Int64(5)) == "int"
+    assert PRIM.OnlyByte(Int32(7)) == "byte:7"
+    with pytest.raises(TypeError):
+        PRIM.IntOrString(Int64(2**40))
+
+
+def test_clr_char_and_string_convert():
+    assert PRIM.OnlyString(Char("c")) == "string:c"
+
+
+def test_list_prefers_ilist_over_ienumerable():
+    assert SEQ.ListOrEnumerable([1, 2]) == "IList<int>"
 
 
 def test_large_int_falls_back_to_floating_point():
-    # 2**40 does not fit `int`; like C#'s long to double, `double` takes it
+    # 2**40 does not fit `int`; `double` takes it without narrowing
     assert PRIM.IntOrDouble(2**40) == "double"
     assert ResolverCtor(2**70).Tag == "double"
-
-
-def test_large_int_is_not_boxed_as_object():
-    # Python ints are boxed as Int32, which 2**40 does not fit
-    with pytest.raises(TypeError):
-        PRIM.OnlyObject(2**40)
-    with pytest.raises(TypeError):
-        PRIM.StringOrObject(2**40)
 
 
 def test_clr_numbers_widen():
@@ -1236,7 +1261,6 @@ def test_comparison_operators():
     assert not (a >= b)
 
 
-@pytest.mark.xfail(strict=True, reason="comparison operators are not inherited")
 def test_operators_inherited_by_derived_type():
     d = ResolverOpDerived(1)
     assert (d + 2).V == 3
@@ -1296,3 +1320,127 @@ def test_generic_type_constructor_overloads():
     assert ResolverCtorGeneric[Int32](1).Tag == "T:Int32"
     assert ResolverCtorGeneric[Int32](1, 2).Tag == "int,T:Int32"
 
+
+
+# --------------------------------------------------------------------------
+# Found by comparing calls against IronPython in Rhino
+# --------------------------------------------------------------------------
+
+
+def test_big_python_int_fills_object_parameter():
+    prim = ResolverPrimitives()
+    assert prim.OnlyObject(2**31) == "object:Int64"
+    assert prim.OnlyObject(2**63) == "object:UInt64"
+    assert prim.OnlyObject(2**64) == "object:BigInteger"
+    assert ResolverHierarchy().Pick(2**40) == "object"
+
+
+def test_big_python_int_sets_generic_type_by_size():
+    gen = ResolverGeneric()
+    assert gen.OnlyT(2**40) == "T:Int64"
+    assert gen.OnlyT(2**64) == "T:BigInteger"
+
+
+def test_clr_numbers_fill_biginteger():
+    assert ResolverCollections().OnlyBig(Int32(7)) == "BigInteger:7"
+    assert ResolverCollections().OnlyBig(Double(2.9)) == "BigInteger:2"
+
+
+def test_clr_float_into_int_drops_fraction():
+    prim = ResolverPrimitives()
+    assert prim.OnlyLong(Double(1.5)) == "long:1"
+    assert prim.OnlyByte(Single(2.9)) == "byte:2"
+
+
+def test_strongbox_fills_ref_parameter():
+    box = StrongBox[Int32](5)
+    assert ResolverOutRef().Ref(box) == 60
+    assert box.Value == 6
+
+
+def test_none_fills_delegate_parameter():
+    assert ResolverDelegates().ActionOrInt(None) == "Action"
+
+
+def test_generic_with_exact_type_beats_widening():
+    gen = ResolverGeneric()
+    assert gen.Echo(True) == "T:Boolean"
+    assert gen.Echo(Int16(1)) == "T:Int16"
+    assert gen.Echo(1) == "int"
+
+
+def test_iterator_prefers_ienumerable_over_ilist():
+    assert ResolverSequences().ListOrEnumerable(iter([1, 2])) == "IEnumerable<int>"
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: ResolverOpBase(5) + 1.5,
+        lambda: 1.5 + ResolverOpBase(5),
+        lambda: ResolverOpBase(5) + Int64(1),
+        lambda: ResolverVec(1.0) + ResolverConvertible(),
+    ],
+)
+def test_operator_operand_converts_only_in_safe_ways(call):
+    with pytest.raises(TypeError):
+        call()
+
+
+def test_operator_operand_widens():
+    assert (ResolverVec(1.0) + 2).X == 1003.0
+    assert (ResolverOpBase(5) + Int16(1)).V == 6
+
+
+def test_generic_rules_for_t_let_another_overload_win():
+    gen = ResolverGeneric()
+    # T would be Int32, which breaks `where T : class`
+    assert gen.Constrained(1) == "long"
+    assert gen.Constrained("a") == "T:String"
+    # T would be String, which breaks `where T : struct`
+    assert gen.ValueOnly("a") == "object"
+    assert gen.ValueOnly(Int16(1)) == "T:Int16"
+
+
+def test_bitwise_operator_on_plain_enum_raises():
+    with pytest.raises(TypeError):
+        ResolverColor.Red & ResolverColor.Green
+    with pytest.raises(TypeError):
+        ResolverOpBase(5) & ResolverColor.Red
+
+
+def test_bitwise_operator_on_flags_enum():
+    from System import AttributeTargets
+
+    both = AttributeTargets.Class | AttributeTargets.Method
+    assert both & AttributeTargets.Method == AttributeTargets.Method
+
+
+@pytest.mark.parametrize("other", ["a", 1, ResolverUnrelated()])
+def test_ordering_against_unrelated_type_raises_python_error(other):
+    with pytest.raises(TypeError, match="not supported between instances"):
+        ResolverOpBase(1) < other
+
+
+def test_lenient_iterator_fills_array():
+    assert ResolverSequences().OnlyIntArr(iter([1, 2])) == "int[]:2"
+
+
+def test_int_does_not_go_into_enum():
+    with pytest.raises(TypeError):
+        ResolverHierarchy().Color(0)
+
+
+def test_python_value_does_not_go_into_interface():
+    with pytest.raises(TypeError):
+        ResolverAmbiguous().Iface(1)
+
+
+def test_lenient_single_list_fills_params_array():
+    assert ResolverParams().Lead("x", [1, 2]) == "string,params object:2"
+    assert ResolverParams().Lead("x", [1, 2], 3) == "string,params object:2"
+
+
+def test_non_bool_value_does_not_go_into_bool():
+    with pytest.raises(TypeError):
+        ResolverPrimitives().BoolOrInt("a")

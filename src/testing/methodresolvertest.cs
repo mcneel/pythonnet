@@ -92,6 +92,15 @@ namespace Python.Test
         public string BoolOrInt(bool a) => "bool";
         public string BoolOrInt(int a) => "int";
 
+        public string SignedOrUnsigned(sbyte a) => "sbyte";
+        public string SignedOrUnsigned(byte a) => "byte";
+
+        public string IntOrString(int a) => "int";
+        public string IntOrString(string a) => "string";
+
+        public string FloatOrInt(float a) => "float";
+        public string FloatOrInt(int a) => "int";
+
         public string OnlyDouble(double a) => "double:" + a.ToString(System.Globalization.CultureInfo.InvariantCulture);
         public string OnlyFloat(float a) => "float:" + a.ToString(System.Globalization.CultureInfo.InvariantCulture);
         public string OnlyByte(byte a) => "byte:" + a;
@@ -236,6 +245,12 @@ namespace Python.Test
 
         public string Arr(double[] a) => "double[]";
         public string Arr<T>(T[] a) => "T[]:" + typeof(T).Name;
+
+        public string Constrained<T>(T a) where T : class => "T:" + typeof(T).Name;
+        public string Constrained(long a) => "long";
+
+        public string ValueOnly<T>(T a) where T : struct => "T:" + typeof(T).Name;
+        public string ValueOnly(object a) => "object";
     }
 
     /// <summary>Static and instance overloads sharing a name.</summary>
@@ -275,6 +290,9 @@ namespace Python.Test
         public string OnlyIntArr(int[] a) => "int[]:" + a.Length;
         public string OnlyEnumerable(IEnumerable<int> a) => "IEnumerable<int>:" + a.Count();
         public string OnlyList(IList<int> a) => "IList<int>:" + a.Count;
+
+        public string ListOrEnumerable(IList<int> a) => "IList<int>";
+        public string ListOrEnumerable(IEnumerable<int> a) => "IEnumerable<int>";
 
         public string ArrOrScalar(double a) => "double";
         public string ArrOrScalar(double[] a) => "double[]:" + a.Length;
