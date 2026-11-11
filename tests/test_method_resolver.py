@@ -1,0 +1,962 @@
+# -*- coding: utf-8 -*-
+
+"""Test which .NET overload the method resolver picks for a Python call.
+
+Every overload on the `Resolver*` test types returns a tag naming its own
+signature, so each test asserts the tag of the overload it expects.
+
+Two groups of tests live here:
+- plain tests: behaviour that is clearly intended.
+- `test_quirk_*`: current behaviour that is surprising. Pinned so a resolver
+  change cannot alter it unnoticed; change the expectation if the behaviour
+  is changed on purpose.
+"""
+
+import operator
+import threading
+
+import pytest
+from System import (
+    Array,
+    Byte,
+    Char,
+    Decimal,
+    Double,
+    Int16,
+    Int32,
+    Int64,
+    Object,
+    Single,
+    String,
+)
+from System.Runtime.CompilerServices import StrongBox
+
+from Python.Test import (
+    ResolverAmbiguous,
+    ResolverArity,
+    ResolverBase,
+    ResolverColor,
+    ResolverConvertible,
+    ResolverCtor,
+    ResolverDerived,
+    ResolverGeneric,
+    ResolverHierarchy,
+    ResolverInheritBase,
+    ResolverInheritDerived,
+    ResolverMoreDerived,
+    ResolverOptional,
+    ResolverOutRef,
+    ResolverParams,
+    ResolverPoint,
+    ResolverPrimitives,
+    ResolverSequences,
+    ResolverShape,
+    ResolverShapeDisposable,
+    ResolverSolid,
+    ResolverStatic,
+    ResolverUnrelated,
+    ResolverVec,
+    ResolverWide,
+)
+
+ARITY = ResolverArity()
+PRIM = ResolverPrimitives()
+HIER = ResolverHierarchy()
+OPT = ResolverOptional()
+PARAMS = ResolverParams()
+OUTREF = ResolverOutRef()
+GENERIC = ResolverGeneric()
+STATIC = ResolverStatic()
+SEQ = ResolverSequences()
+AMBIG = ResolverAmbiguous()
+WIDE = ResolverWide()
+
+BASE = ResolverBase()
+DERIVED = ResolverDerived()
+MORE_DERIVED = ResolverMoreDerived()
+UNRELATED = ResolverUnrelated()
+POINT = ResolverPoint(1, 2)
+
+
+def cases(*rows):
+    """Parametrize over (args, expected) rows, with readable test ids."""
+    return pytest.mark.parametrize(
+        "args, expected", rows, ids=[repr(row[0]) for row in rows]
+    )
+
+
+# --------------------------------------------------------------------------
+# Number of arguments
+# --------------------------------------------------------------------------
+
+
+@cases(
+    ((), ""),
+    ((1,), "int"),
+    ((1, 2), "int,int"),
+    ((1, 2, 3), "int,int,int"),
+)
+def test_arity_selects_by_argument_count(args, expected):
+    assert ARITY.Count(*args) == expected
+
+
+def test_arity_single_methods():
+    assert ARITY.Single() == "single"
+    assert ARITY.SingleInt(1) == "single:int"
+    assert ARITY.SingleThree(1, 2.5, "s") == "single:int,double,string"
+
+
+def test_arity_zero_args_prefers_parameterless_over_optional():
+    assert ARITY.ZeroOrOptional() == ""
+    assert ARITY.ZeroOrOptional(1) == "int="
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: ARITY.Count(1, 2, 3, 4),
+        lambda: ARITY.OnlyTwo(1),
+        lambda: ARITY.OnlyTwo(1, 2, 3),
+        lambda: ARITY.Single(1),
+    ],
+    ids=["too-many", "too-few", "one-extra", "arg-to-parameterless"],
+)
+def test_arity_mismatch_raises(call):
+    with pytest.raises(TypeError, match="No overload for method"):
+        call()
+
+
+def test_arity_mismatch_message_lists_argument_types():
+    with pytest.raises(TypeError) as err:
+        ARITY.Count(1, "s", 2.5, None)
+    message = str(err.value)
+    assert "takes '4' arguments" in message
+    assert "<class 'int'>, <class 'str'>, <class 'float'>" in message
+
+
+def test_wrong_type_for_single_overload_raises():
+    with pytest.raises(TypeError):
+        ARITY.SingleInt("a")
+    with pytest.raises(TypeError):
+        ARITY.SingleInt(None)
+    with pytest.raises(TypeError):
+        ARITY.OnlyTwo("a", "b")
+
+
+# --------------------------------------------------------------------------
+# Primitive types
+# --------------------------------------------------------------------------
+
+
+@cases(
+    ((True,), "bool"),
+    ((1,), "int"),
+    ((2**40,), "long"),
+    ((1.5,), "double"),
+    (("s",), "string"),
+    (("c",), "string"),
+)
+def test_primitives_python_values_pick_natural_type(args, expected):
+    assert PRIM.Pick(*args) == expected
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (Byte(1), "byte"),
+        (Int16(1), "short"),
+        (Int32(1), "int"),
+        (Int64(1), "long"),
+        (Single(1), "float"),
+        (Double(1), "double"),
+        (Decimal(1), "decimal"),
+        (Char("c"), "char"),
+        (String("s"), "string"),
+        (Object(), "object"),
+    ],
+    ids=lambda v: v if isinstance(v, str) else type(v).__name__,
+)
+def test_primitives_clr_values_pick_exact_type(value, expected):
+    assert PRIM.Pick(value) == expected
+
+
+def test_primitives_unknown_python_object_picks_object():
+    assert PRIM.Pick([1]) == "object"
+    assert PRIM.Pick(BASE) == "object"
+
+
+@pytest.mark.parametrize(
+    "method, value, expected",
+    [
+        ("IntOrDouble", 1, "int"),
+        ("IntOrDouble", 1.5, "double"),
+        ("LongOrString", 1, "long"),
+        ("LongOrString", 2**40, "long"),
+        ("LongOrString", "s", "string"),
+        ("LongOrString", Int64(1), "long"),
+        ("FloatOrDouble", 1.5, "double"),
+        ("FloatOrDouble", 1, "float"),
+        ("FloatOrDouble", Single(1), "float"),
+        ("ShortOrLong", 1, "short"),
+        ("ShortOrLong", 2**40, "long"),
+        ("ShortOrLong", Int16(1), "short"),
+        ("ShortOrLong", Int64(1), "long"),
+        ("StringOrObject", "s", "string"),
+        ("StringOrObject", 1, "object"),
+        ("StringOrObject", 1.5, "object"),
+        ("StringOrObject", True, "object"),
+        ("BoolOrInt", True, "bool"),
+        ("BoolOrInt", 1, "int"),
+    ],
+)
+def test_primitives_two_way_choice(method, value, expected):
+    assert getattr(PRIM, method)(value) == expected
+
+
+@pytest.mark.parametrize(
+    "method, value",
+    [
+        ("IntOrDouble", "s"),
+        ("LongOrString", 1.5),
+        ("FloatOrDouble", "s"),
+        ("ShortOrLong", "s"),
+        ("BoolOrInt", "s"),
+        ("OnlyDouble", "s"),
+        ("OnlyString", 1),
+        ("OnlyByte", 1.0),
+        ("OnlyLong", 2**70),
+    ],
+)
+def test_primitives_unconvertible_value_raises(method, value):
+    with pytest.raises(TypeError):
+        getattr(PRIM, method)(value)
+
+
+def test_primitives_single_overload_converts_python_values():
+    assert PRIM.OnlyDouble(1) == "double:1"
+    assert PRIM.OnlyDouble(1.5) == "double:1.5"
+    assert PRIM.OnlyFloat(1) == "float:1"
+    assert PRIM.OnlyFloat(1.5) == "float:1.5"
+    assert PRIM.OnlyLong(1) == "long:1"
+    assert PRIM.OnlyString("s") == "string:s"
+    assert PRIM.OnlyObject(1) == "object:Int32"
+    assert PRIM.OnlyObject("s") == "object:String"
+    assert PRIM.OnlyObject(1.5) == "object:Double"
+    assert PRIM.OnlyObject(BASE) == "object:ResolverBase"
+    assert PRIM.OnlyObject([1]) == "object:PyObject"
+
+
+@cases(
+    ((1, 1), "int,int"),
+    ((Int16(1), Int16(1)), "short,short"),
+    ((Int64(1), Int64(1)), "long,long"),
+    ((2**40, 1), "long,long"),
+    # the first argument decides between otherwise equal candidates
+    ((Int16(1), 1), "short,short"),
+    ((Int64(1), 1), "long,long"),
+)
+def test_primitives_two_parameters(args, expected):
+    assert PRIM.Pair(*args) == expected
+
+
+@cases(
+    ((1, 1.5), "int,double"),
+    ((1.5, 1), "double,int"),
+    (("a", "b"), "string,string"),
+)
+def test_primitives_mixed_parameters(args, expected):
+    assert PRIM.Mixed(*args) == expected
+
+
+def test_value_out_of_range_does_not_poison_later_calls():
+    """A failed conversion must not change how the same types resolve next time."""
+    assert PRIM.OnlyByte(5) == "byte:5"
+    with pytest.raises(TypeError):
+        PRIM.OnlyByte(300)
+    with pytest.raises(TypeError):
+        PRIM.OnlyByte(-1)
+    assert PRIM.OnlyByte(5) == "byte:5"
+
+    assert PRIM.ShortOrLong(1) == "short"
+    assert PRIM.ShortOrLong(2**40) == "long"
+    assert PRIM.ShortOrLong(1) == "short"
+
+
+def test_explicit_overload_selection():
+    assert PRIM.Pick.Overloads[Int32](1) == "int"
+    assert PRIM.Pick.Overloads[Int64](1) == "long"
+    assert PRIM.Pick.Overloads[Double](1) == "double"
+    assert PRIM.Pick.__overloads__[Double](1) == "double"
+
+
+# --------------------------------------------------------------------------
+# Class hierarchy, structs, enums, None
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (BASE, "base"),
+        (DERIVED, "derived"),
+        (MORE_DERIVED, "derived"),
+        (UNRELATED, "object"),
+        (1, "object"),
+        ("s", "object"),
+    ],
+    ids=["base", "derived", "more-derived", "unrelated", "int", "str"],
+)
+def test_hierarchy_picks_closest_ancestor(value, expected):
+    assert HIER.Pick(value) == expected
+
+
+def test_hierarchy_derived_is_accepted_as_base():
+    assert HIER.BaseOnly(DERIVED) == "base"
+    assert HIER.BaseOnly(MORE_DERIVED) == "base"
+    assert HIER.BaseOrObject(MORE_DERIVED) == "base"
+    assert HIER.BaseOrObject(UNRELATED) == "object"
+
+
+@pytest.mark.parametrize("value", [UNRELATED, 1, "s"], ids=["unrelated", "int", "str"])
+def test_hierarchy_unrelated_type_raises(value):
+    with pytest.raises(TypeError):
+        HIER.BaseOnly(value)
+
+
+@cases(
+    ((BASE, BASE), "base,base"),
+    ((DERIVED, BASE), "derived,base"),
+    ((DERIVED, DERIVED), "derived,derived"),
+    ((BASE, DERIVED), "base,base"),
+    ((MORE_DERIVED, MORE_DERIVED), "derived,derived"),
+    ((MORE_DERIVED, BASE), "derived,base"),
+)
+def test_hierarchy_two_parameters(args, expected):
+    assert HIER.Two(*args) == expected
+
+
+@cases(
+    ((POINT,), "point"),
+    ((POINT, POINT), "point,point"),
+    ((1.0, 2.0), "double,double"),
+    ((1, 2), "double,double"),
+)
+def test_struct_overloads(args, expected):
+    assert HIER.Point(*args) == expected
+
+
+def test_enum_overloads():
+    assert HIER.Color(ResolverColor.Red) == "color"
+    assert HIER.Color("s") == "string"
+    with pytest.raises(TypeError):
+        HIER.Color(1)
+
+
+def test_implicit_conversion_operator_is_used():
+    assert HIER.Convertible(ResolverConvertible()) == "double:42"
+    assert HIER.Convertible(1.5) == "double:1.5"
+
+
+def test_none_is_passed_as_null_reference():
+    assert PRIM.OnlyString(None) == "string:<null>"
+    assert PRIM.OnlyObject(None) == "object:<null>"
+    assert HIER.NullOnlyBase(None) == "null"
+    assert HIER.NullOnlyBase(BASE) == "base"
+
+
+def test_none_skips_value_type_overload():
+    assert HIER.NullRef(None) == "string"
+    assert HIER.NullRef(1) == "int"
+    assert HIER.NullRef("s") == "string"
+
+
+# --------------------------------------------------------------------------
+# Optional parameters and keyword arguments
+# --------------------------------------------------------------------------
+
+
+def test_optional_prefers_overload_without_unused_optionals():
+    assert OPT.Opt(1) == "int"
+    assert OPT.Opt(a=1) == "int"
+    assert OPT.Opt(1, 2) == "int,int=2"
+    assert OPT.Opt(1, b=2) == "int,int=2"
+    assert OPT.Opt(a=1, b=2) == "int,int=2"
+
+
+@pytest.mark.parametrize(
+    "args, kwargs, expected",
+    [
+        ((1,), {}, "a=1,b=2,c=c"),
+        ((1, 3), {}, "a=1,b=3,c=c"),
+        ((1, 3, "z"), {}, "a=1,b=3,c=z"),
+        ((1,), {"c": "z"}, "a=1,b=2,c=z"),
+        ((), {"c": "z", "a": 9}, "a=9,b=2,c=z"),
+        ((), {"c": "z", "b": 8, "a": 9}, "a=9,b=8,c=z"),
+    ],
+)
+def test_optional_defaults_and_keywords(args, kwargs, expected):
+    assert OPT.Named(*args, **kwargs) == expected
+
+
+@pytest.mark.parametrize(
+    "args, kwargs",
+    [
+        ((), {}),
+        ((1,), {"zzz": 2}),
+        ((1, 2, "c", 4), {}),
+    ],
+    ids=["missing-required", "unknown-keyword", "too-many"],
+)
+def test_optional_bad_calls_raise(args, kwargs):
+    with pytest.raises(TypeError, match="No overload for method"):
+        OPT.Named(*args, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "args, kwargs, expected",
+    [
+        ((1,), {}, "count"),
+        (("n",), {}, "name"),
+        ((1, "n"), {}, "count,name"),
+        ((), {"count": 1}, "count"),
+        ((), {"name": "n"}, "name"),
+        ((), {"count": 1, "name": "n"}, "count,name"),
+        ((), {"name": "n", "count": 1}, "count,name"),
+        ((1,), {"name": "n"}, "count,name"),
+    ],
+)
+def test_keywords_select_overload_by_parameter_name(args, kwargs, expected):
+    assert OPT.Kw(*args, **kwargs) == expected
+
+
+def test_optional_attribute_uses_type_default():
+    assert OPT.Attr(1) == "int,[opt]int=0"
+    assert OPT.Attr(1, 2) == "int,[opt]int=2"
+
+
+def test_all_optional_parameters():
+    assert OPT.Defaults() == "1,2.5,x,True,null"
+    assert OPT.Defaults(d=False) == "1,2.5,x,False,null"
+    assert OPT.Defaults(5, c="y") == "5,2.5,y,True,null"
+    assert OPT.Defaults(e="obj") == "1,2.5,x,True,obj"
+
+
+def test_unused_optional_does_not_count_against_closer_type():
+    assert OPT.FloatOrDoubleOpt(1.5) == "double"
+    assert OPT.FloatOrDoubleOpt(Single(1.5)) == "float,float="
+    assert OPT.FloatOrDoubleOpt(1.5, 2.5) == "float,float="
+
+
+# --------------------------------------------------------------------------
+# params arrays
+# --------------------------------------------------------------------------
+
+
+def test_params_accepts_any_number_of_arguments():
+    assert PARAMS.Ints() == "params int:0"
+    assert PARAMS.Ints(1) == "params int:1"
+    assert PARAMS.Ints(1, 2, 3) == "params int:3"
+    assert PARAMS.Sum(1, 2, 3) == 6
+    assert PARAMS.Sum(*range(50)) == sum(range(50))
+
+
+def test_params_accepts_single_sequence():
+    assert PARAMS.Ints([1, 2, 3]) == "params int:3"
+    assert PARAMS.Ints((1, 2)) == "params int:2"
+    assert PARAMS.Ints(Array[Int32]([1, 2, 3, 4])) == "params int:4"
+    assert PARAMS.Ints(values=[1, 2]) == "params int:2"
+
+
+def test_params_wrong_element_type_raises():
+    with pytest.raises(TypeError):
+        PARAMS.Ints("a")
+    with pytest.raises(TypeError):
+        PARAMS.Ints(1, "a")
+
+
+def test_params_after_leading_parameter():
+    assert PARAMS.Lead("a") == "string,params object:0"
+    assert PARAMS.Lead("a", 1, "b", 2.0) == "string,params object:3"
+    assert PARAMS.Lead("a", BASE) == "string,params object:1"
+    with pytest.raises(TypeError):
+        PARAMS.Lead()
+
+
+@cases(
+    ((), "params int:0"),
+    ((1,), "int"),
+    ((1, 2), "int,int"),
+    ((1, 2, 3), "params int:3"),
+    (([1, 2],), "params int:2"),
+)
+def test_params_loses_to_exact_parameter_count(args, expected):
+    assert PARAMS.Prefer(*args) == expected
+
+
+@cases(
+    ((1, 2), "params int:2"),
+    (("a", "b"), "params string:2"),
+    ((["a"],), "params string:1"),
+    (([1],), "params int:1"),
+)
+def test_params_selects_by_element_type(args, expected):
+    assert PARAMS.Typed(*args) == expected
+
+
+# --------------------------------------------------------------------------
+# out and ref parameters
+# --------------------------------------------------------------------------
+
+
+def test_out_parameter_is_returned_with_result():
+    assert OUTREF.TryGet(1) == (True, "v1")
+    assert OUTREF.TryGet(-1) == (False, "v-1")
+
+
+def test_out_parameter_only_is_returned_alone():
+    assert OUTREF.OutOnly() == 7
+    assert OUTREF.TwoOuts(2) == (4, 6)
+
+
+def test_out_parameter_fills_strongbox():
+    box = StrongBox[String]()
+    assert OUTREF.TryGet(3, box) is True
+    assert box.Value == "v3"
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: OUTREF.TryGet(1, None),
+        lambda: OUTREF.TryGet(1, "x"),
+        lambda: OUTREF.OutOnly(0),
+        lambda: OUTREF.Over(1, 2),
+    ],
+    ids=["none-for-out", "value-for-out", "value-for-out-only", "value-for-out-overload"],
+)
+def test_out_parameter_rejects_plain_value(call):
+    with pytest.raises(TypeError, match="No overload for method"):
+        call()
+
+
+def test_ref_parameter_is_required_and_returned():
+    assert OUTREF.Ref(1) == (20, 2)
+    with pytest.raises(TypeError):
+        OUTREF.Ref()
+
+
+def test_out_overload_does_not_shadow_plain_overloads():
+    assert OUTREF.Over(1) == "int"
+    assert OUTREF.Over(1, 2, 3) == "int,int,int"
+
+
+def test_in_attributed_array_is_a_normal_parameter():
+    assert OUTREF.InArray(Array[Byte]([1, 2, 3]), 0) == "[in]byte[],long:3"
+    assert OUTREF.InArray(b"abc", 0) == "[in]byte[],long:3"
+
+
+# --------------------------------------------------------------------------
+# Generic methods
+# --------------------------------------------------------------------------
+
+
+def test_generic_loses_to_exact_non_generic_match():
+    assert GENERIC.Echo(1) == "int"
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [("s", "T:String"), (1.5, "T:Double"), (BASE, "T:ResolverBase")],
+    ids=["str", "float", "clr-object"],
+)
+def test_generic_type_is_inferred_from_argument(value, expected):
+    assert GENERIC.Echo(value) == expected
+    assert GENERIC.OnlyT(value) == expected
+
+
+def test_generic_two_type_parameters_are_inferred():
+    assert GENERIC.Two(1, "s") == "T:Int32,U:String"
+    assert GENERIC.Two("s", BASE) == "T:String,U:ResolverBase"
+
+
+def test_generic_explicit_type_arguments():
+    assert GENERIC.Echo[str]("s") == "T:String"
+    assert GENERIC.Echo[int](1) == "T:Int32"
+    assert GENERIC.Echo[Double](1) == "T:Double"
+    assert GENERIC.OnlyT[Object](BASE) == "T:Object"
+    assert GENERIC.Two[int, str](1, "s") == "T:Int32,U:String"
+    assert GENERIC.Second[str](1, "s") == "int,T:String"
+    assert GENERIC.Explicit[int]() == "T:Int32"
+
+
+def test_generic_array_loses_to_exact_array_type():
+    assert GENERIC.Arr(Array[Double]([1.0])) == "double[]"
+    assert GENERIC.Arr([1.0]) == "double[]"
+
+
+# --------------------------------------------------------------------------
+# Static methods, inheritance, constructors, operators
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("target", [ResolverStatic, STATIC], ids=["class", "instance"])
+def test_static_overloads(target):
+    assert target.OnlyStatic(1) == "static:int"
+    assert target.OnlyStatic(1.5) == "static:double"
+    assert target.OnlyStatic("a") == "static:string,int="
+    assert target.OnlyStatic("a", 1) == "static:string,int="
+
+
+def test_static_and_instance_overloads_share_a_name():
+    assert STATIC.Mix(1) == "instance:int"
+    assert STATIC.Mix(1, 2) == "static:int,int"
+    assert ResolverStatic.Mix(1, 2) == "static:int,int"
+
+
+def test_instance_overload_needs_an_instance():
+    with pytest.raises(TypeError):
+        ResolverStatic.Mix(1)
+
+
+def test_inherited_overloads_join_derived_ones():
+    derived = ResolverInheritDerived()
+    assert derived.Pick(1) == "base:int"
+    assert derived.Pick("s") == "base:string"
+    assert derived.Pick(1.5) == "derived:double"
+    assert derived.Virt(1) == "derived:int"
+    assert derived.Virt("s") == "derived:string"
+
+
+@pytest.mark.parametrize(
+    "args, kwargs, expected",
+    [
+        ((), {}, ""),
+        ((1,), {}, "int"),
+        ((1.5,), {}, "double"),
+        (("s",), {}, "string"),
+        ((BASE,), {}, "base"),
+        ((DERIVED,), {}, "base"),
+        ((1, "a"), {}, "int,string"),
+        ((1, 2), {}, "int,int,int=3"),
+        ((1, 2, 9), {}, "int,int,int=9"),
+        ((1, 2), {"c": 9}, "int,int,int=9"),
+        ((), {"a": 1}, "int"),
+    ],
+)
+def test_constructor_overloads(args, kwargs, expected):
+    assert ResolverCtor(*args, **kwargs).Tag == expected
+
+
+@pytest.mark.parametrize(
+    "args",
+    [("a", "b"), (None, None), (1, 2, 3, 4, 5), (2**70,)],
+    ids=["wrong-types", "nones", "too-many", "too-large"],
+)
+def test_constructor_bad_calls_raise(args):
+    with pytest.raises(TypeError):
+        ResolverCtor(*args)
+
+
+def test_operator_overloads():
+    a = ResolverVec(1.0)
+    b = ResolverVec(2.0)
+    assert (a + b).X == 3.0
+    assert (a + 3.0).X == 1004.0
+    assert (a + 3).X == 1004.0
+    assert (3.0 + a).X == 2004.0
+    assert (a * 2.0).X == 2.0
+    assert (a * b).X == 2.5
+    assert (-a).X == -1.0
+    assert (b - a).X == 1.0
+    assert (b / 2.0).X == 1.0
+    assert (a < b) is True
+    assert (a > b) is False
+    assert (a == ResolverVec(1.0)) is True
+    assert (a != b) is True
+    assert (a == 1.0) is False
+
+
+def test_operators_and_member_access_chain():
+    a = ResolverVec(1.0)
+    b = ResolverVec(2.0)
+    assert ((a + b * 2.0) - a).X == 4.0
+
+
+# --------------------------------------------------------------------------
+# Arrays and sequences
+# --------------------------------------------------------------------------
+
+
+def test_clr_arrays_pick_exact_element_type():
+    assert SEQ.Arr(Array[Int32]([1, 2])) == "int[]:2"
+    assert SEQ.Arr(Array[Double]([1.0])) == "double[]:1"
+    assert SEQ.Arr(Array[String](["a"])) == "string[]:1"
+    assert SEQ.ArrOrScalar(Array[Double]([1.0])) == "double[]:1"
+    assert SEQ.ArrOrScalar(1.0) == "double"
+
+
+def test_python_sequences_convert_for_single_overload():
+    assert SEQ.OnlyIntArr([1, 2]) == "int[]:2"
+    assert SEQ.OnlyIntArr((1, 2)) == "int[]:2"
+    assert SEQ.OnlyEnumerable([1, 2]) == "IEnumerable<int>:2"
+    assert SEQ.OnlyEnumerable(range(3)) == "IEnumerable<int>:3"
+    assert SEQ.OnlyList([1, 2]) == "IList<int>:2"
+    assert SEQ.OnlyList(Array[Int32]([1, 2])) == "IList<int>:2"
+    with pytest.raises(TypeError):
+        SEQ.OnlyIntArr(["a"])
+
+
+def test_generator_is_not_consumed_while_resolving():
+    assert SEQ.OnlyIntArr(i for i in range(3)) == "int[]:3"
+    assert SEQ.OnlyEnumerable(i for i in range(3)) == "IEnumerable<int>:3"
+
+
+# --------------------------------------------------------------------------
+# Ambiguity
+# --------------------------------------------------------------------------
+
+
+def test_ambiguous_call_raises_and_names_candidates():
+    with pytest.raises(TypeError) as err:
+        AMBIG.OptTie()
+    message = str(err.value)
+    assert "The call is ambiguous" in message
+    assert "OptTie(Int32)" in message
+    assert "OptTie(System.String)" in message
+
+    with pytest.raises(TypeError, match="The call is ambiguous"):
+        PARAMS.Typed()
+
+
+def test_argument_resolves_otherwise_ambiguous_call():
+    assert AMBIG.OptTie(1) == "int="
+    assert AMBIG.OptTie("s") == "string="
+    assert AMBIG.Iface(ResolverShape()) == "shape"
+
+
+# --------------------------------------------------------------------------
+# Large overload set
+# --------------------------------------------------------------------------
+
+
+@cases(
+    ((), ""),
+    ((True,), "bool"),
+    ((1,), "int"),
+    ((1.5,), "double"),
+    (("s",), "string"),
+    ((BASE,), "base"),
+    ((DERIVED,), "derived"),
+    ((POINT,), "point"),
+    ((1, 1), "int,int"),
+    ((1, 1.5), "int,double"),
+    ((1.5, 1.5), "double,double"),
+    (("a", 1), "string,int"),
+    (("a", "b"), "string,string"),
+    ((BASE, 1), "base,int"),
+    ((POINT, POINT), "point,point"),
+    ((1, 2, 3), "int,int,int"),
+    ((1.5, 1.5, 1.5), "double,double,double"),
+    (("a", 1, 1.5), "string,int,double"),
+    ((POINT, POINT, POINT), "point,point,point"),
+    ((BASE, BASE, BASE), "base,base,base"),
+    ((1, 2, 3, 4), "int,int,int,int"),
+    ((1.5, 1.5, 1.5, 1.5), "double,double,double,double"),
+    (("a", "a", "a", "a"), "string,string,string,string"),
+)
+def test_wide_overload_set(args, expected):
+    assert WIDE.Wide(*args) == expected
+
+
+def test_wide_overload_set_no_match():
+    with pytest.raises(TypeError, match="No overload for method"):
+        WIDE.Wide(1, 1, 1, 1, 1)
+
+
+# --------------------------------------------------------------------------
+# Stability
+# --------------------------------------------------------------------------
+
+STABILITY_CALLS = [
+    (lambda: PRIM.Pick(1), "int"),
+    (lambda: PRIM.Pick(1.5), "double"),
+    (lambda: PRIM.Pick("s"), "string"),
+    (lambda: HIER.Pick(MORE_DERIVED), "derived"),
+    (lambda: OPT.Named(1, c="z"), "a=1,b=2,c=z"),
+    (lambda: PARAMS.Prefer(1, 2, 3), "params int:3"),
+    (lambda: GENERIC.Echo("s"), "T:String"),
+    (lambda: WIDE.Wide("a", 1, 1.5), "string,int,double"),
+    (lambda: ResolverCtor(1, "a").Tag, "int,string"),
+]
+
+
+def test_repeated_calls_resolve_the_same_way():
+    for _ in range(200):
+        for call, expected in STABILITY_CALLS:
+            assert call() == expected
+
+
+def test_concurrent_calls_resolve_correctly():
+    errors = []
+    start = threading.Barrier(8)
+
+    def worker():
+        try:
+            start.wait()
+            for _ in range(300):
+                for call, expected in STABILITY_CALLS:
+                    result = call()
+                    if result != expected:
+                        errors.append((result, expected))
+        except Exception as ex:  # report in the main thread
+            errors.append(ex)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors
+
+
+# --------------------------------------------------------------------------
+# Quirks: surprising current behaviour, pinned so changes are noticed
+# --------------------------------------------------------------------------
+
+
+def test_quirk_python_float_is_accepted_for_int_parameter():
+    # a float is silently truncated for `int`, but rejected for `long`
+    assert ARITY.SingleInt(1.5) == "single:int"
+    assert PRIM.Pair(1.5, 1) == "int,int"
+    assert PRIM.Mixed(1.5, 1.5) == "double,int"
+    assert ResolverInheritBase().Pick(1.5) == "base:int"
+    assert ResolverCtor(1.5, 1.5).Tag == "int,int,int=3"
+    with pytest.raises(TypeError):
+        PRIM.OnlyLong(1.5)
+
+
+def test_quirk_same_types_in_both_orders_pick_first_closest():
+    # C# reports this call as ambiguous
+    assert PRIM.Mixed(1, 1) == "int,double"
+
+
+def test_quirk_python_bool_prefers_double_over_int():
+    assert PRIM.IntOrDouble(True) == "double"
+    assert PRIM.FloatOrDouble(True) == "double"
+    assert ResolverCtor(True).Tag == "double"
+    # ...but it is an integer when no floating point overload exists
+    assert PRIM.LongOrString(True) == "long"
+    assert PRIM.ShortOrLong(True) == "short"
+
+
+def test_quirk_large_int_does_not_fall_back_to_wider_overload():
+    # 2**40 does not fit `int`; `double` and `object` could take it
+    with pytest.raises(TypeError):
+        PRIM.IntOrDouble(2**40)
+    with pytest.raises(TypeError):
+        PRIM.OnlyObject(2**40)
+    with pytest.raises(TypeError):
+        PRIM.StringOrObject(2**40)
+
+
+def test_quirk_clr_numbers_do_not_widen():
+    # a boxed Int16 is not accepted for `int`, nor Int32 for `double`
+    with pytest.raises(TypeError):
+        PRIM.IntOrDouble(Int16(1))
+    with pytest.raises(TypeError):
+        PRIM.OnlyDouble(Int32(3))
+    with pytest.raises(TypeError):
+        PRIM.Pair(1, Int16(1))
+
+
+def test_quirk_none_with_many_overloads():
+    # value types are skipped for None; `string` wins over `object`
+    assert PRIM.Pick(None) == "string"
+    # None prefers `object` over a class, and `string` over `object`
+    assert HIER.Pick(None) == "object"
+    assert HIER.BaseOrObject(None) == "object"
+    assert PRIM.StringOrObject(None) == "string"
+
+
+@pytest.mark.parametrize(
+    "value", [ResolverShape(), ResolverSolid()], ids=["shape", "solid"]
+)
+def test_quirk_object_overload_beats_implemented_interface(value):
+    # C# picks the interface overload
+    assert HIER.Shape(value) == "object"
+
+
+def test_quirk_two_implemented_interfaces_pick_first_silently():
+    # C# reports this call as ambiguous
+    assert AMBIG.Iface(ResolverShapeDisposable()) == "shape"
+
+
+def test_quirk_python_list_is_not_matched_to_array_by_element_type():
+    # the first array overload wins whatever the list holds
+    assert SEQ.Arr([1, 2]) == "int[]:2"
+    assert SEQ.Arr([1.0]) == "int[]:1"
+    assert SEQ.Arr([]) == "int[]:0"
+    with pytest.raises(TypeError):
+        SEQ.Arr(["a"])
+
+
+def test_list_skips_scalar_overloads():
+    assert SEQ.ArrOrScalar([1.0]) == "double[]:1"
+    assert WIDE.Wide([1]) == "int[]"
+
+
+def test_quirk_generic_array_not_used_for_other_element_type():
+    # `Arr<T>(T[])` could take an int array; `Arr(double[])` is picked and fails
+    with pytest.raises(TypeError):
+        GENERIC.Arr(Array[Int32]([1]))
+
+
+def test_quirk_keyword_can_displace_positional_argument():
+    # Python would raise "got multiple values for argument 'a'"
+    assert OPT.Named(1, a=2) == "a=2,b=1,c=c"
+
+
+# --------------------------------------------------------------------------
+# Fixed defects
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value, expected", [("s", "int,T:String"), (2, "int,T:Int32")], ids=["str", "int"]
+)
+def test_generic_parameter_not_in_first_position(value, expected):
+    assert GENERIC.Second(1, value) == expected
+
+
+def test_generic_accepts_none():
+    assert GENERIC.Echo(None) == "T:Object"
+
+
+def test_generic_without_type_arguments_raises_type_error():
+    with pytest.raises(TypeError):
+        GENERIC.Explicit()
+
+
+@pytest.mark.parametrize("target", [ResolverStatic, STATIC], ids=["class", "instance"])
+def test_static_overload_reachable_next_to_instance_overload(target):
+    assert target.Mix("a") == "static:string"
+
+
+def test_operator_without_reverse_overload_raises_type_error():
+    with pytest.raises(TypeError):
+        operator.mul(2.0, ResolverVec(1.0))
+
+
+def test_operator_with_unsupported_operand_raises_type_error():
+    with pytest.raises(TypeError):
+        operator.add(ResolverVec(1.0), "s")
+    with pytest.raises(TypeError):
+        operator.add("s", ResolverVec(1.0))
+
+
+def test_none_is_not_passed_to_value_type_parameter():
+    with pytest.raises(TypeError):
+        ARITY.SingleInt(None)
+    with pytest.raises(TypeError):
+        GENERIC.Echo[Int32](None)
