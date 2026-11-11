@@ -360,4 +360,198 @@ namespace Python.Test
         public string Wide(double a, double b, double c, double d) => "double,double,double,double";
         public string Wide(string a, string b, string c, string d) => "string,string,string,string";
     }
+
+    /// <summary>Delegate-typed parameters, filled from python callables.</summary>
+    public class ResolverDelegates
+    {
+        public delegate int IntTransform(int value);
+
+        public string OnlyAction(Action a) { a(); return "Action"; }
+        public string OnlyFunc(Func<int, int> f) => "Func<int,int>:" + f(2);
+        public string OnlyCustom(IntTransform f) => "IntTransform:" + f(3);
+
+        public string ActionOrInt(Action a) => "Action";
+        public string ActionOrInt(int a) => "int";
+
+        public string FuncOrString(Func<int> f) => "Func<int>:" + f();
+        public string FuncOrString(string a) => "string";
+    }
+
+    /// <summary>Nullable value type parameters.</summary>
+    public class ResolverNullable
+    {
+        public string Only(int? a) => "int?:" + (a.HasValue ? a.Value.ToString() : "<null>");
+
+        public string IntOrNullable(int a) => "int";
+        public string IntOrNullable(int? a) => "int?";
+
+        public string NullableOrString(int? a) => "int?";
+        public string NullableOrString(string a) => "string";
+    }
+
+    /// <summary>Collections and python objects as parameters.</summary>
+    public class ResolverCollections
+    {
+        public string OnlyBytes(byte[] a) => "byte[]:" + a.Length;
+        public string OnlyPyObject(Python.Runtime.PyObject a) => "PyObject";
+        public string PyObjectOrInt(Python.Runtime.PyObject a) => "PyObject";
+        public string PyObjectOrInt(int a) => "int";
+        public string OnlyBig(System.Numerics.BigInteger a) => "BigInteger:" + a;
+    }
+
+    /// <summary>A method hidden with `new`, and an explicit interface member.</summary>
+    public interface IResolverExplicit
+    {
+        string Hidden(int a);
+        string Explicit(int a);
+    }
+
+    public class ResolverHideBase
+    {
+        public string Hidden(int a) => "base:int";
+        public static string StaticHidden(int a) => "base:static";
+    }
+
+    public class ResolverHideDerived : ResolverHideBase, IResolverExplicit
+    {
+        public new string Hidden(int a) => "derived:int";
+        public static new string StaticHidden(int a) => "derived:static";
+        string IResolverExplicit.Explicit(int a) => "explicit:int";
+        public string Explicit(string a) => "public:string";
+    }
+
+    /// <summary>Overloaded indexers on one type.</summary>
+    public class ResolverIndexer
+    {
+        readonly Dictionary<string, string> _store = new();
+
+        public string this[int key]
+        {
+            get => "get:int:" + key;
+            set => _store["int"] = value;
+        }
+
+        public string this[string key]
+        {
+            get => "get:string:" + key;
+            set => _store["string"] = value;
+        }
+
+        public string this[int a, int b]
+        {
+            get => "get:int,int";
+            set => _store["int,int"] = value;
+        }
+
+        public string Stored(string key) => _store.TryGetValue(key, out var v) ? v : "<none>";
+    }
+
+    /// <summary>Indexer whose setter value type picks the overload.</summary>
+    public class ResolverIndexerValue
+    {
+        public string Last = "";
+
+        public object this[int key]
+        {
+            get => Last;
+            set => Last = "set:object:" + value;
+        }
+
+        public double this[double key]
+        {
+            get => key;
+            set => Last = "set:double:" + value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+    }
+
+    /// <summary>Events wired through their add_/remove_ accessors.</summary>
+    public class ResolverEvents
+    {
+        public event EventHandler Changed;
+        public static event EventHandler StaticChanged;
+
+        public int Fire()
+        {
+            int count = Changed?.GetInvocationList().Length ?? 0;
+            Changed?.Invoke(this, EventArgs.Empty);
+            return count;
+        }
+
+        public static int FireStatic()
+        {
+            int count = StaticChanged?.GetInvocationList().Length ?? 0;
+            StaticChanged?.Invoke(null, EventArgs.Empty);
+            return count;
+        }
+    }
+
+    /// <summary>Delegate types invoked directly from python.</summary>
+    public delegate string ResolverDoubleDelegate(double a, int b);
+    public delegate bool ResolverOutDelegate(int a, out int b);
+
+    public static class ResolverDelegateFactory
+    {
+        public static ResolverDoubleDelegate Double() => (a, b) => $"double,int:{a.ToString(System.Globalization.CultureInfo.InvariantCulture)},{b}";
+        public static ResolverOutDelegate Out() => (int a, out int b) => { b = a * 2; return true; };
+    }
+
+    /// <summary>Operators beyond the basics: unary, comparison, inherited, mixed operands.</summary>
+    public class ResolverOpBase
+    {
+        public int V { get; }
+
+        public ResolverOpBase(int v) { V = v; }
+
+        public static ResolverOpBase operator +(ResolverOpBase a, int b) => new ResolverOpBase(a.V + b);
+        public static ResolverOpBase operator +(ResolverOpBase a, string b) => new ResolverOpBase(a.V + b.Length * 100);
+        public static ResolverOpBase operator +(int a, ResolverOpBase b) => new ResolverOpBase(a + b.V + 1000);
+        public static ResolverOpBase operator -(ResolverOpBase a) => new ResolverOpBase(-a.V);
+        public static ResolverOpBase operator +(ResolverOpBase a) => new ResolverOpBase(a.V + 1);
+        public static ResolverOpBase operator ~(ResolverOpBase a) => new ResolverOpBase(~a.V);
+        public static ResolverOpBase operator %(ResolverOpBase a, int b) => new ResolverOpBase(a.V % b);
+        public static ResolverOpBase operator &(ResolverOpBase a, ResolverOpBase b) => new ResolverOpBase(a.V & b.V);
+        public static ResolverOpBase operator |(ResolverOpBase a, ResolverOpBase b) => new ResolverOpBase(a.V | b.V);
+        public static ResolverOpBase operator ^(ResolverOpBase a, ResolverOpBase b) => new ResolverOpBase(a.V ^ b.V);
+        public static ResolverOpBase operator <<(ResolverOpBase a, int b) => new ResolverOpBase(a.V << b);
+        public static ResolverOpBase operator >>(ResolverOpBase a, int b) => new ResolverOpBase(a.V >> b);
+        public static bool operator <(ResolverOpBase a, ResolverOpBase b) => a.V < b.V;
+        public static bool operator >(ResolverOpBase a, ResolverOpBase b) => a.V > b.V;
+        public static bool operator <=(ResolverOpBase a, ResolverOpBase b) => a.V <= b.V;
+        public static bool operator >=(ResolverOpBase a, ResolverOpBase b) => a.V >= b.V;
+    }
+
+    public class ResolverOpDerived : ResolverOpBase
+    {
+        public ResolverOpDerived(int v) : base(v) { }
+    }
+
+    /// <summary>Constructor shapes beyond plain overloads.</summary>
+    public class ResolverCtorShapes
+    {
+        public string Tag { get; }
+
+        public ResolverCtorShapes(params int[] values) { Tag = "params int:" + values.Length; }
+        public ResolverCtorShapes(string name, double scale = 1.0) { Tag = $"string,double={scale.ToString(System.Globalization.CultureInfo.InvariantCulture)}"; }
+        public ResolverCtorShapes(Func<int> f) { Tag = "Func<int>:" + f(); }
+    }
+
+    public struct ResolverCtorStruct
+    {
+        public string Tag;
+
+        public ResolverCtorStruct(int a) { Tag = "int"; }
+    }
+
+    public abstract class ResolverCtorAbstract
+    {
+        protected ResolverCtorAbstract() { }
+    }
+
+    public class ResolverCtorGeneric<T>
+    {
+        public string Tag { get; }
+
+        public ResolverCtorGeneric(T value) { Tag = "T:" + typeof(T).Name; }
+        public ResolverCtorGeneric(int count, T value) { Tag = "int,T:" + typeof(T).Name; }
+    }
 }

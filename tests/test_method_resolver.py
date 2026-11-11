@@ -5,11 +5,8 @@
 Every overload on the `Resolver*` test types returns a tag naming its own
 signature, so each test asserts the tag of the overload it expects.
 
-Two groups of tests live here:
-- plain tests: behaviour that is clearly intended.
-- `test_quirk_*`: current behaviour that is surprising. Pinned so a resolver
-  change cannot alter it unnoticed; change the expectation if the behaviour
-  is changed on purpose.
+Most tests follow C# overload rules. `test_lenient_*` tests pin where the
+resolver is deliberately more forgiving than C#.
 """
 
 import operator
@@ -57,6 +54,22 @@ from Python.Test import (
     ResolverUnrelated,
     ResolverVec,
     ResolverWide,
+    ResolverDelegates,
+    ResolverNullable,
+    ResolverCollections,
+    ResolverHideBase,
+    ResolverHideDerived,
+    IResolverExplicit,
+    ResolverIndexer,
+    ResolverIndexerValue,
+    ResolverEvents,
+    ResolverDelegateFactory,
+    ResolverOpBase,
+    ResolverOpDerived,
+    ResolverCtorShapes,
+    ResolverCtorStruct,
+    ResolverCtorAbstract,
+    ResolverCtorGeneric,
 )
 
 ARITY = ResolverArity()
@@ -649,8 +662,8 @@ def test_constructor_overloads(args, kwargs, expected):
 
 @pytest.mark.parametrize(
     "args",
-    [("a", "b"), (None, None), (1, 2, 3, 4, 5), (2**70,)],
-    ids=["wrong-types", "nones", "too-many", "too-large"],
+    [("a", "b"), (None, None), (1, 2, 3, 4, 5)],
+    ids=["wrong-types", "nones", "too-many"],
 )
 def test_constructor_bad_calls_raise(args):
     with pytest.raises(TypeError):
@@ -821,12 +834,12 @@ def test_concurrent_calls_resolve_correctly():
 
 
 # --------------------------------------------------------------------------
-# Quirks: surprising current behaviour, pinned so changes are noticed
+# Lenient rules: accepted where C# would refuse or call it ambiguous
 # --------------------------------------------------------------------------
 
 
-def test_quirk_python_float_is_accepted_for_int_parameter():
-    # a float is silently truncated for `int`, but rejected for `long`
+def test_lenient_python_float_is_accepted_for_int_parameter():
+    # truncated for `int` only, and only when no overload takes a float
     assert ARITY.SingleInt(1.5) == "single:int"
     assert PRIM.Pair(1.5, 1) == "int,int"
     assert PRIM.Mixed(1.5, 1.5) == "double,int"
@@ -836,69 +849,80 @@ def test_quirk_python_float_is_accepted_for_int_parameter():
         PRIM.OnlyLong(1.5)
 
 
-def test_quirk_same_types_in_both_orders_pick_first_closest():
-    # C# reports this call as ambiguous
+def test_lenient_first_differing_argument_decides():
+    # C# reports these as ambiguous
     assert PRIM.Mixed(1, 1) == "int,double"
+    assert PRIM.Pair(1, Int16(1)) == "int,int"
 
 
-def test_quirk_python_bool_prefers_double_over_int():
-    assert PRIM.IntOrDouble(True) == "double"
-    assert PRIM.FloatOrDouble(True) == "double"
-    assert ResolverCtor(True).Tag == "double"
-    # ...but it is an integer when no floating point overload exists
+def test_lenient_keyword_takes_its_slot_before_positionals():
+    # Python raises "got multiple values for argument 'a'";
+    # here `a` takes the keyword and 1 moves on to `b`
+    assert OPT.Named(1, a=2) == "a=2,b=1,c=c"
+
+
+def test_lenient_python_bool_is_an_integer_number():
+    # a bool overload wins; otherwise integers beat floating point
+    assert PRIM.IntOrDouble(True) == "int"
+    assert PRIM.FloatOrDouble(True) == "float"
+    assert ResolverCtor(True).Tag == "int"
     assert PRIM.LongOrString(True) == "long"
     assert PRIM.ShortOrLong(True) == "short"
 
 
-def test_quirk_large_int_does_not_fall_back_to_wider_overload():
-    # 2**40 does not fit `int`; `double` and `object` could take it
-    with pytest.raises(TypeError):
-        PRIM.IntOrDouble(2**40)
+# --------------------------------------------------------------------------
+# Rules that follow C#
+# --------------------------------------------------------------------------
+
+
+def test_large_int_falls_back_to_floating_point():
+    # 2**40 does not fit `int`; like C#'s long to double, `double` takes it
+    assert PRIM.IntOrDouble(2**40) == "double"
+    assert ResolverCtor(2**70).Tag == "double"
+
+
+def test_large_int_is_not_boxed_as_object():
+    # Python ints are boxed as Int32, which 2**40 does not fit
     with pytest.raises(TypeError):
         PRIM.OnlyObject(2**40)
     with pytest.raises(TypeError):
         PRIM.StringOrObject(2**40)
 
 
-def test_quirk_clr_numbers_do_not_widen():
-    # a boxed Int16 is not accepted for `int`, nor Int32 for `double`
-    with pytest.raises(TypeError):
-        PRIM.IntOrDouble(Int16(1))
-    with pytest.raises(TypeError):
-        PRIM.OnlyDouble(Int32(3))
-    with pytest.raises(TypeError):
-        PRIM.Pair(1, Int16(1))
+def test_clr_numbers_widen():
+    assert PRIM.IntOrDouble(Int16(1)) == "int"
+    assert PRIM.OnlyDouble(Int32(3)) == "double:3"
 
 
-def test_quirk_none_with_many_overloads():
-    # value types are skipped for None; `string` wins over `object`
+def test_none_picks_most_specific_reference_type():
+    # value types cannot take None
     assert PRIM.Pick(None) == "string"
-    # None prefers `object` over a class, and `string` over `object`
-    assert HIER.Pick(None) == "object"
-    assert HIER.BaseOrObject(None) == "object"
+    assert HIER.Pick(None) == "derived"
+    assert HIER.BaseOrObject(None) == "base"
     assert PRIM.StringOrObject(None) == "string"
 
 
 @pytest.mark.parametrize(
-    "value", [ResolverShape(), ResolverSolid()], ids=["shape", "solid"]
+    "value, expected",
+    [(ResolverShape(), "shape"), (ResolverSolid(), "solid")],
+    ids=["shape", "solid"],
 )
-def test_quirk_object_overload_beats_implemented_interface(value):
-    # C# picks the interface overload
-    assert HIER.Shape(value) == "object"
+def test_implemented_interface_beats_object(value, expected):
+    assert HIER.Shape(value) == expected
 
 
-def test_quirk_two_implemented_interfaces_pick_first_silently():
-    # C# reports this call as ambiguous
-    assert AMBIG.Iface(ResolverShapeDisposable()) == "shape"
+def test_two_implemented_interfaces_are_ambiguous():
+    with pytest.raises(TypeError, match="The call is ambiguous"):
+        AMBIG.Iface(ResolverShapeDisposable())
 
 
-def test_quirk_python_list_is_not_matched_to_array_by_element_type():
-    # the first array overload wins whatever the list holds
+def test_python_list_is_matched_to_array_by_items():
     assert SEQ.Arr([1, 2]) == "int[]:2"
-    assert SEQ.Arr([1.0]) == "int[]:1"
-    assert SEQ.Arr([]) == "int[]:0"
-    with pytest.raises(TypeError):
-        SEQ.Arr(["a"])
+    assert SEQ.Arr([1.0]) == "double[]:1"
+    assert SEQ.Arr(["a"]) == "string[]:1"
+    # every array type takes an empty list equally well
+    with pytest.raises(TypeError, match="The call is ambiguous"):
+        SEQ.Arr([])
 
 
 def test_list_skips_scalar_overloads():
@@ -906,15 +930,8 @@ def test_list_skips_scalar_overloads():
     assert WIDE.Wide([1]) == "int[]"
 
 
-def test_quirk_generic_array_not_used_for_other_element_type():
-    # `Arr<T>(T[])` could take an int array; `Arr(double[])` is picked and fails
-    with pytest.raises(TypeError):
-        GENERIC.Arr(Array[Int32]([1]))
-
-
-def test_quirk_keyword_can_displace_positional_argument():
-    # Python would raise "got multiple values for argument 'a'"
-    assert OPT.Named(1, a=2) == "a=2,b=1,c=c"
+def test_generic_array_takes_other_element_type():
+    assert GENERIC.Arr(Array[Int32]([1])) == "T[]:Int32"
 
 
 # --------------------------------------------------------------------------
@@ -938,7 +955,11 @@ def test_generic_without_type_arguments_raises_type_error():
         GENERIC.Explicit()
 
 
-@pytest.mark.parametrize("target", [ResolverStatic, STATIC], ids=["class", "instance"])
+@pytest.mark.parametrize(
+    "target",
+    [ResolverStatic, STATIC],
+    ids=["class", "instance"],
+)
 def test_static_overload_reachable_next_to_instance_overload(target):
     assert target.Mix("a") == "static:string"
 
@@ -960,3 +981,318 @@ def test_none_is_not_passed_to_value_type_parameter():
         ARITY.SingleInt(None)
     with pytest.raises(TypeError):
         GENERIC.Echo[Int32](None)
+
+
+# --------------------------------------------------------------------------
+# Delegate parameters
+# --------------------------------------------------------------------------
+
+DELEG = ResolverDelegates()
+
+
+def test_python_function_fills_action_parameter():
+    calls = []
+    assert DELEG.OnlyAction(lambda: calls.append(1)) == "Action"
+    assert calls == [1]
+
+
+def test_python_function_fills_func_parameter():
+    assert DELEG.OnlyFunc(lambda x: x * 10) == "Func<int,int>:20"
+
+
+def test_python_function_fills_custom_delegate_parameter():
+    assert DELEG.OnlyCustom(lambda x: x + 1) == "IntTransform:4"
+
+
+def test_clr_delegate_is_passed_as_is():
+    from System import Func
+
+    f = Func[Int32, Int32](lambda x: x - 1)
+    assert DELEG.OnlyFunc(f) == "Func<int,int>:1"
+
+
+def test_python_function_picks_delegate_overload():
+    assert DELEG.ActionOrInt(lambda: None) == "Action"
+    assert DELEG.ActionOrInt(5) == "int"
+    assert DELEG.FuncOrString(lambda: 9) == "Func<int>:9"
+    assert DELEG.FuncOrString("s") == "string"
+
+
+# --------------------------------------------------------------------------
+# Nullable value types
+# --------------------------------------------------------------------------
+
+NULLABLE = ResolverNullable()
+
+
+def test_nullable_accepts_value_and_none():
+    assert NULLABLE.Only(3) == "int?:3"
+    assert NULLABLE.Only(None) == "int?:<null>"
+
+
+def test_nullable_loses_to_exact_value_type():
+    assert NULLABLE.IntOrNullable(3) == "int"
+    assert NULLABLE.IntOrNullable(None) == "int?"
+
+
+def test_nullable_or_reference_type():
+    assert NULLABLE.NullableOrString(3) == "int?"
+    assert NULLABLE.NullableOrString("a") == "string"
+
+
+# --------------------------------------------------------------------------
+# Collections and python objects
+# --------------------------------------------------------------------------
+
+COLL = ResolverCollections()
+
+
+def test_python_bytes_fill_byte_array():
+    assert COLL.OnlyBytes(b"abc") == "byte[]:3"
+
+
+def test_pyobject_parameter_takes_any_python_value():
+    assert COLL.OnlyPyObject(object()) == "PyObject"
+    assert COLL.OnlyPyObject([1, 2]) == "PyObject"
+
+
+def test_big_python_int_fills_biginteger():
+    assert COLL.OnlyBig(2**80) == "BigInteger:" + str(2**80)
+
+
+def test_int_prefers_int_over_pyobject():
+    assert COLL.PyObjectOrInt(1) == "int"
+    assert COLL.PyObjectOrInt("x") == "PyObject"
+
+
+# --------------------------------------------------------------------------
+# Hidden and explicit interface members
+# --------------------------------------------------------------------------
+
+
+def test_new_method_hides_base_method():
+    assert ResolverHideDerived().Hidden(1) == "derived:int"
+    assert ResolverHideBase().Hidden(1) == "base:int"
+
+
+def test_new_static_method_hides_base_method():
+    assert ResolverHideDerived.StaticHidden(1) == "derived:static"
+
+
+def test_explicit_interface_member_through_interface():
+    ob = ResolverHideDerived()
+    assert IResolverExplicit(ob).Explicit(1) == "explicit:int"
+    assert ob.Explicit("a") == "public:string"
+
+
+def test_unbound_instance_method_takes_instance_first():
+    assert ResolverHideBase.Hidden(ResolverHideBase(), 1) == "base:int"
+
+
+# --------------------------------------------------------------------------
+# Indexers
+# --------------------------------------------------------------------------
+
+
+def test_indexer_getter_picks_overload_by_key_type():
+    ob = ResolverIndexer()
+    assert ob[1] == "get:int:1"
+    assert ob["k"] == "get:string:k"
+    assert ob[1, 2] == "get:int,int"
+
+
+def test_indexer_setter_picks_overload_by_key_type():
+    ob = ResolverIndexer()
+    ob[1] = "a"
+    ob["k"] = "b"
+    ob[1, 2] = "c"
+    assert ob.Stored("int") == "a"
+    assert ob.Stored("string") == "b"
+    assert ob.Stored("int,int") == "c"
+
+
+def test_indexer_bad_key_raises():
+    ob = ResolverIndexer()
+    with pytest.raises(TypeError):
+        ob[ResolverUnrelated()]
+
+
+def test_indexer_setter_picks_overload_by_key_and_value():
+    ob = ResolverIndexerValue()
+    ob[1] = "x"
+    assert ob.Last == "set:object:x"
+    ob[1.5] = 2.5
+    assert ob.Last == "set:double:2.5"
+
+
+# --------------------------------------------------------------------------
+# Event accessors
+# --------------------------------------------------------------------------
+
+
+def test_event_add_and_remove_accessors():
+    from System import EventHandler
+
+    ob = ResolverEvents()
+    seen = []
+    handler = EventHandler(lambda s, e: seen.append(s))
+    ob.add_Changed(handler)
+    assert ob.Fire() == 1
+    assert len(seen) == 1
+    ob.remove_Changed(handler)
+    assert ob.Fire() == 0
+
+
+def test_static_event_add_and_remove_accessors():
+    from System import EventHandler
+
+    handler = EventHandler(lambda s, e: None)
+    ResolverEvents.add_StaticChanged(handler)
+    assert ResolverEvents.FireStatic() == 1
+    ResolverEvents.remove_StaticChanged(handler)
+    assert ResolverEvents.FireStatic() == 0
+
+
+def test_event_accessor_rejects_python_function():
+    with pytest.raises(TypeError):
+        ResolverEvents().add_Changed(lambda s, e: None)
+
+
+def test_event_operator_accepts_python_function():
+    ob = ResolverEvents()
+    seen = []
+
+    def handler(s, e):
+        seen.append(1)
+
+    ob.Changed += handler
+    ob.Fire()
+    ob.Changed -= handler
+    assert ob.Fire() == 0
+    assert seen == [1]
+
+
+# --------------------------------------------------------------------------
+# Calling delegates
+# --------------------------------------------------------------------------
+
+
+def test_delegate_call_converts_arguments():
+    d = ResolverDelegateFactory.Double()
+    assert d(1, 2) == "double,int:1,2"
+    assert d(1.5, 2) == "double,int:1.5,2"
+
+
+def test_delegate_call_wrong_arguments_raise():
+    d = ResolverDelegateFactory.Double()
+    with pytest.raises(TypeError):
+        d(1)
+    with pytest.raises(TypeError):
+        d("a", 2)
+
+
+def test_delegate_call_returns_out_parameter():
+    d = ResolverDelegateFactory.Out()
+    assert d(4) == (True, 8)
+
+
+# --------------------------------------------------------------------------
+# Operators
+# --------------------------------------------------------------------------
+
+
+def test_operator_picks_overload_by_right_operand():
+    a = ResolverOpBase(1)
+    assert (a + 2).V == 3
+    assert (a + "abc").V == 301
+
+
+def test_reverse_operator_with_python_number():
+    assert (5 + ResolverOpBase(1)).V == 1006
+
+
+def test_unary_operators():
+    a = ResolverOpBase(5)
+    assert (-a).V == -5
+    assert (+a).V == 6
+    assert (~a).V == ~5
+
+
+def test_bitwise_shift_and_modulo_operators():
+    a, b = ResolverOpBase(6), ResolverOpBase(3)
+    assert (a & b).V == 2
+    assert (a | b).V == 7
+    assert (a ^ b).V == 5
+    assert (a << 1).V == 12
+    assert (a >> 1).V == 3
+    assert (a % 4).V == 2
+
+
+def test_comparison_operators():
+    a, b = ResolverOpBase(1), ResolverOpBase(2)
+    assert a < b and b > a
+    assert a <= b and b >= a
+    assert a <= ResolverOpBase(1)
+    assert not (a >= b)
+
+
+@pytest.mark.xfail(strict=True, reason="comparison operators are not inherited")
+def test_operators_inherited_by_derived_type():
+    d = ResolverOpDerived(1)
+    assert (d + 2).V == 3
+    assert (ResolverOpBase(1) + 0).V == 1
+    assert (d & ResolverOpDerived(3)).V == 1
+    assert ResolverOpDerived(1) < ResolverOpDerived(2)
+
+
+def test_in_place_operator_falls_back_to_binary():
+    a = ResolverOpBase(1)
+    a += 2
+    assert a.V == 3
+
+
+def test_operator_bad_operand_raises():
+    with pytest.raises(TypeError):
+        ResolverOpBase(1) + 1.5j
+
+
+# --------------------------------------------------------------------------
+# Constructor shapes
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "args, kwargs, expected",
+    [
+        ((), {}, "params int:0"),
+        ((1, 2, 3), {}, "params int:3"),
+        (("a",), {}, "string,double=1"),
+        (("a", 2.5), {}, "string,double=2.5"),
+        (("a",), {"scale": 3.0}, "string,double=3"),
+        ((), {"name": "a"}, "string,double=1"),
+    ],
+)
+def test_constructor_shapes(args, kwargs, expected):
+    assert ResolverCtorShapes(*args, **kwargs).Tag == expected
+
+
+def test_constructor_with_python_function():
+    assert ResolverCtorShapes(lambda: 4).Tag == "Func<int>:4"
+
+
+def test_struct_has_implicit_parameterless_constructor():
+    assert ResolverCtorStruct().Tag is None
+    assert ResolverCtorStruct(1).Tag == "int"
+
+
+def test_abstract_class_cannot_be_constructed():
+    with pytest.raises(TypeError):
+        ResolverCtorAbstract()
+
+
+def test_generic_type_constructor_overloads():
+    assert ResolverCtorGeneric[String]("a").Tag == "T:String"
+    assert ResolverCtorGeneric[String](1, "a").Tag == "int,T:String"
+    assert ResolverCtorGeneric[Int32](1).Tag == "T:Int32"
+    assert ResolverCtorGeneric[Int32](1, 2).Tag == "int,T:Int32"
+
