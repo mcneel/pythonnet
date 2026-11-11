@@ -57,7 +57,7 @@ jobs:
         run: dotnet test --framework net9.0 --runtime any-${{ matrix.os.platform }} --logger "console;verbosity=detailed" src/embed_tests/
 
       - name: Python Tests (.NET Core)
-        run: pytest --runtime coreclr
+        run: pytest --runtime coreclr -s  # TEMP: find Linux segfault
 
       - name: Python tests run from .NET
         run: dotnet test --framework net9.0 --runtime any-${{ matrix.os.platform }} src/python_tests_runner/
