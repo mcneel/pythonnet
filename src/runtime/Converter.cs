@@ -416,6 +416,15 @@ namespace Python.Runtime
                         Exceptions.SetError(Exceptions.TypeError, cb.type.DeletedMessage);
                         return false;
                     }
+                    // a .NET type only goes where a Type fits
+                    if (!obType.IsInstanceOfType(cb.type.Value))
+                    {
+                        if (setError)
+                        {
+                            Exceptions.SetError(Exceptions.TypeError, $"type {cb.type.Value} cannot be converted to {obType}");
+                        }
+                        return false;
+                    }
                     result = cb.type.Value;
                     return true;
 
@@ -506,7 +515,7 @@ namespace Python.Runtime
 
                 if (Runtime.PyInt_CheckExact(value))
                 {
-                    return ToPrimitive(value, int32Type, out result, setError);
+                    return ToSizedInteger(value, out result);
                 }
 
                 // give custom codecs a chance to take over conversion
@@ -534,7 +543,7 @@ namespace Python.Runtime
 
                 if (Runtime.PyInt_Check(value))
                 {
-                    return ToPrimitive(value, int32Type, out result, setError);
+                    return ToSizedInteger(value, out result);
                 }
 
                 result = new PyObject(value);
@@ -692,6 +701,25 @@ namespace Python.Runtime
         /// <summary>
         /// Convert a Python value to an instance of a primitive managed type.
         /// </summary>
+        static readonly Type[] s_integerSizes = { typeof(int), typeof(long), typeof(ulong) };
+
+        // A Python int as the smallest of Int32, Int64, UInt64 or BigInteger that holds it.
+        static bool ToSizedInteger(BorrowedReference value, out object? result)
+        {
+            foreach (Type size in s_integerSizes)
+            {
+                if (ToPrimitive(value, size, out result, setError: false))
+                {
+                    return true;
+                }
+                Exceptions.Clear();
+            }
+
+            using var pyInt = new PyInt(value);
+            result = pyInt.ToBigInteger();
+            return true;
+        }
+
         internal static bool ToPrimitive(BorrowedReference value, Type obType, out object? result, bool setError)
         {
             result = null;
