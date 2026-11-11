@@ -11,7 +11,6 @@ After an intended change in overload choice, regenerate the file and review its 
 """
 
 import os
-import sys
 import pathlib
 
 import pytest
@@ -464,7 +463,6 @@ def run_sweep():
             duplicates.append(name)
             return
         seen.add(name)
-        sys.__stderr__.write("SWEEP " + name + "\n"); sys.__stderr__.flush()  # TEMP: find Linux segfault
         try:
             outcome = "OK\t" + describe(call())
         except Exception as e:

@@ -226,7 +226,7 @@ namespace Python.Test
 
         public string Over(int a, int b, int c) => "int,int,int";
 
-        public string InArray([In] byte[] data, long offset) => "[in]byte[],long:" + data.Length;
+        public string InArray([In] byte[] data, long offset) => "[in]byte[],long:" + (data?.Length.ToString() ?? "null");
     }
 
     /// <summary>Generic methods next to plain ones.</summary>
@@ -283,19 +283,19 @@ namespace Python.Test
     /// <summary>Arrays and sequences.</summary>
     public class ResolverSequences
     {
-        public string Arr(int[] a) => "int[]:" + a.Length;
-        public string Arr(double[] a) => "double[]:" + a.Length;
+        public string Arr(int[] a) => "int[]:" + (a?.Length.ToString() ?? "null");
+        public string Arr(double[] a) => "double[]:" + (a?.Length.ToString() ?? "null");
         public string Arr(string[] a) => "string[]:" + a.Length;
 
-        public string OnlyIntArr(int[] a) => "int[]:" + a.Length;
+        public string OnlyIntArr(int[] a) => "int[]:" + (a?.Length.ToString() ?? "null");
         public string OnlyEnumerable(IEnumerable<int> a) => "IEnumerable<int>:" + a.Count();
-        public string OnlyList(IList<int> a) => "IList<int>:" + a.Count;
+        public string OnlyList(IList<int> a) => "IList<int>:" + (a?.Count.ToString() ?? "null");
 
         public string ListOrEnumerable(IList<int> a) => "IList<int>";
         public string ListOrEnumerable(IEnumerable<int> a) => "IEnumerable<int>";
 
         public string ArrOrScalar(double a) => "double";
-        public string ArrOrScalar(double[] a) => "double[]:" + a.Length;
+        public string ArrOrScalar(double[] a) => "double[]:" + (a?.Length.ToString() ?? "null");
     }
 
     /// <summary>Constructor overloads.</summary>
@@ -319,20 +319,23 @@ namespace Python.Test
 
         public ResolverVec(double x) { X = x; }
 
-        public static ResolverVec operator +(ResolverVec a, ResolverVec b) => new ResolverVec(a.X + b.X);
-        public static ResolverVec operator +(ResolverVec a, double b) => new ResolverVec(a.X + b + 1000);
-        public static ResolverVec operator +(double a, ResolverVec b) => new ResolverVec(a + b.X + 2000);
-        public static ResolverVec operator *(ResolverVec a, double b) => new ResolverVec(a.X * b);
-        public static ResolverVec operator *(ResolverVec a, ResolverVec b) => new ResolverVec(a.X * b.X + 0.5);
-        public static ResolverVec operator -(ResolverVec a) => new ResolverVec(-a.X);
-        public static ResolverVec operator -(ResolverVec a, ResolverVec b) => new ResolverVec(a.X - b.X);
-        public static ResolverVec operator /(ResolverVec a, double b) => new ResolverVec(a.X / b);
-        public static bool operator ==(ResolverVec a, ResolverVec b) => a.X == b.X;
-        public static bool operator !=(ResolverVec a, ResolverVec b) => a.X != b.X;
+        // The sweep passes None here; reading .X of null would crash the whole host on Linux.
+        static double Of(ResolverVec v) => v?.X ?? double.NaN;
+
+        public static ResolverVec operator +(ResolverVec a, ResolverVec b) => new ResolverVec(Of(a) + Of(b));
+        public static ResolverVec operator +(ResolverVec a, double b) => new ResolverVec(Of(a) + b + 1000);
+        public static ResolverVec operator +(double a, ResolverVec b) => new ResolverVec(a + Of(b) + 2000);
+        public static ResolverVec operator *(ResolverVec a, double b) => new ResolverVec(Of(a) * b);
+        public static ResolverVec operator *(ResolverVec a, ResolverVec b) => new ResolverVec(Of(a) * Of(b) + 0.5);
+        public static ResolverVec operator -(ResolverVec a) => new ResolverVec(-Of(a));
+        public static ResolverVec operator -(ResolverVec a, ResolverVec b) => new ResolverVec(Of(a) - Of(b));
+        public static ResolverVec operator /(ResolverVec a, double b) => new ResolverVec(Of(a) / b);
+        public static bool operator ==(ResolverVec a, ResolverVec b) => Of(a) == Of(b);
+        public static bool operator !=(ResolverVec a, ResolverVec b) => Of(a) != Of(b);
         public override bool Equals(object obj) => obj is ResolverVec other && other.X == X;
         public override int GetHashCode() => X.GetHashCode();
-        public static bool operator <(ResolverVec a, ResolverVec b) => a.X < b.X;
-        public static bool operator >(ResolverVec a, ResolverVec b) => a.X > b.X;
+        public static bool operator <(ResolverVec a, ResolverVec b) => Of(a) < Of(b);
+        public static bool operator >(ResolverVec a, ResolverVec b) => Of(a) > Of(b);
     }
 
     /// <summary>Calls that a C# compiler would report as ambiguous.</summary>
@@ -384,9 +387,9 @@ namespace Python.Test
     {
         public delegate int IntTransform(int value);
 
-        public string OnlyAction(Action a) { a(); return "Action"; }
-        public string OnlyFunc(Func<int, int> f) => "Func<int,int>:" + f(2);
-        public string OnlyCustom(IntTransform f) => "IntTransform:" + f(3);
+        public string OnlyAction(Action a) { a?.Invoke(); return a == null ? "Action:null" : "Action"; }
+        public string OnlyFunc(Func<int, int> f) => "Func<int,int>:" + (f == null ? "null" : f(2).ToString());
+        public string OnlyCustom(IntTransform f) => "IntTransform:" + (f == null ? "null" : f(3).ToString());
 
         public string ActionOrInt(Action a) => "Action";
         public string ActionOrInt(int a) => "int";
@@ -410,7 +413,7 @@ namespace Python.Test
     /// <summary>Collections and python objects as parameters.</summary>
     public class ResolverCollections
     {
-        public string OnlyBytes(byte[] a) => "byte[]:" + a.Length;
+        public string OnlyBytes(byte[] a) => "byte[]:" + (a?.Length.ToString() ?? "null");
         public string OnlyPyObject(Python.Runtime.PyObject a) => "PyObject";
         public string PyObjectOrInt(Python.Runtime.PyObject a) => "PyObject";
         public string PyObjectOrInt(int a) => "int";
@@ -520,22 +523,25 @@ namespace Python.Test
 
         public ResolverOpBase(int v) { V = v; }
 
-        public static ResolverOpBase operator +(ResolverOpBase a, int b) => new ResolverOpBase(a.V + b);
-        public static ResolverOpBase operator +(ResolverOpBase a, string b) => new ResolverOpBase(a.V + b.Length * 100);
-        public static ResolverOpBase operator +(int a, ResolverOpBase b) => new ResolverOpBase(a + b.V + 1000);
-        public static ResolverOpBase operator -(ResolverOpBase a) => new ResolverOpBase(-a.V);
-        public static ResolverOpBase operator +(ResolverOpBase a) => new ResolverOpBase(a.V + 1);
-        public static ResolverOpBase operator ~(ResolverOpBase a) => new ResolverOpBase(~a.V);
-        public static ResolverOpBase operator %(ResolverOpBase a, int b) => new ResolverOpBase(a.V % b);
-        public static ResolverOpBase operator &(ResolverOpBase a, ResolverOpBase b) => new ResolverOpBase(a.V & b.V);
-        public static ResolverOpBase operator |(ResolverOpBase a, ResolverOpBase b) => new ResolverOpBase(a.V | b.V);
-        public static ResolverOpBase operator ^(ResolverOpBase a, ResolverOpBase b) => new ResolverOpBase(a.V ^ b.V);
-        public static ResolverOpBase operator <<(ResolverOpBase a, int b) => new ResolverOpBase(a.V << b);
-        public static ResolverOpBase operator >>(ResolverOpBase a, int b) => new ResolverOpBase(a.V >> b);
-        public static bool operator <(ResolverOpBase a, ResolverOpBase b) => a.V < b.V;
-        public static bool operator >(ResolverOpBase a, ResolverOpBase b) => a.V > b.V;
-        public static bool operator <=(ResolverOpBase a, ResolverOpBase b) => a.V <= b.V;
-        public static bool operator >=(ResolverOpBase a, ResolverOpBase b) => a.V >= b.V;
+        // The sweep passes None here; reading .V of null would crash the whole host on Linux.
+        static int Of(ResolverOpBase o) => o?.V ?? -1;
+
+        public static ResolverOpBase operator +(ResolverOpBase a, int b) => new ResolverOpBase(Of(a) + b);
+        public static ResolverOpBase operator +(ResolverOpBase a, string b) => new ResolverOpBase(Of(a) + (b?.Length ?? -1) * 100);
+        public static ResolverOpBase operator +(int a, ResolverOpBase b) => new ResolverOpBase(a + Of(b) + 1000);
+        public static ResolverOpBase operator -(ResolverOpBase a) => new ResolverOpBase(-Of(a));
+        public static ResolverOpBase operator +(ResolverOpBase a) => new ResolverOpBase(Of(a) + 1);
+        public static ResolverOpBase operator ~(ResolverOpBase a) => new ResolverOpBase(~Of(a));
+        public static ResolverOpBase operator %(ResolverOpBase a, int b) => new ResolverOpBase(Of(a) % b);
+        public static ResolverOpBase operator &(ResolverOpBase a, ResolverOpBase b) => new ResolverOpBase(Of(a) & Of(b));
+        public static ResolverOpBase operator |(ResolverOpBase a, ResolverOpBase b) => new ResolverOpBase(Of(a) | Of(b));
+        public static ResolverOpBase operator ^(ResolverOpBase a, ResolverOpBase b) => new ResolverOpBase(Of(a) ^ Of(b));
+        public static ResolverOpBase operator <<(ResolverOpBase a, int b) => new ResolverOpBase(Of(a) << b);
+        public static ResolverOpBase operator >>(ResolverOpBase a, int b) => new ResolverOpBase(Of(a) >> b);
+        public static bool operator <(ResolverOpBase a, ResolverOpBase b) => Of(a) < Of(b);
+        public static bool operator >(ResolverOpBase a, ResolverOpBase b) => Of(a) > Of(b);
+        public static bool operator <=(ResolverOpBase a, ResolverOpBase b) => Of(a) <= Of(b);
+        public static bool operator >=(ResolverOpBase a, ResolverOpBase b) => Of(a) >= Of(b);
     }
 
     public class ResolverOpDerived : ResolverOpBase
@@ -548,9 +554,9 @@ namespace Python.Test
     {
         public string Tag { get; }
 
-        public ResolverCtorShapes(params int[] values) { Tag = "params int:" + values.Length; }
+        public ResolverCtorShapes(params int[] values) { Tag = "params int:" + (values?.Length.ToString() ?? "null"); }
         public ResolverCtorShapes(string name, double scale = 1.0) { Tag = $"string,double={scale.ToString(System.Globalization.CultureInfo.InvariantCulture)}"; }
-        public ResolverCtorShapes(Func<int> f) { Tag = "Func<int>:" + f(); }
+        public ResolverCtorShapes(Func<int> f) { Tag = "Func<int>:" + (f == null ? "null" : f().ToString()); }
     }
 
     public struct ResolverCtorStruct

@@ -2875,7 +2875,7 @@ Sequences.OnlyIntArr('a')	ERR	TypeError
 Sequences.OnlyIntArr('abc')	ERR	TypeError
 Sequences.OnlyIntArr('')	OK	int[]:0
 Sequences.OnlyIntArr(b'a')	OK	int[]:1
-Sequences.OnlyIntArr(None)	ERR	NullReferenceException
+Sequences.OnlyIntArr(None)	OK	int[]:null
 Sequences.OnlyIntArr([1, 2])	OK	int[]:2
 Sequences.OnlyIntArr([1.0, 2.0])	OK	int[]:2
 Sequences.OnlyIntArr(['a', 'b'])	ERR	TypeError
@@ -2985,7 +2985,7 @@ Sequences.OnlyList('a')	ERR	TypeError
 Sequences.OnlyList('abc')	ERR	TypeError
 Sequences.OnlyList('')	OK	IList<int>:0
 Sequences.OnlyList(b'a')	OK	IList<int>:1
-Sequences.OnlyList(None)	ERR	NullReferenceException
+Sequences.OnlyList(None)	OK	IList<int>:null
 Sequences.OnlyList([1, 2])	OK	IList<int>:2
 Sequences.OnlyList([1.0, 2.0])	OK	IList<int>:2
 Sequences.OnlyList(['a', 'b'])	ERR	TypeError
@@ -3095,7 +3095,7 @@ Sequences.ArrOrScalar('a')	ERR	TypeError: no overload
 Sequences.ArrOrScalar('abc')	ERR	TypeError: no overload
 Sequences.ArrOrScalar('')	ERR	TypeError: no overload
 Sequences.ArrOrScalar(b'a')	OK	double[]:1
-Sequences.ArrOrScalar(None)	ERR	NullReferenceException
+Sequences.ArrOrScalar(None)	OK	double[]:null
 Sequences.ArrOrScalar([1, 2])	OK	double[]:2
 Sequences.ArrOrScalar([1.0, 2.0])	OK	double[]:2
 Sequences.ArrOrScalar(['a', 'b'])	ERR	TypeError: no overload
@@ -3315,7 +3315,7 @@ Delegates.OnlyAction('a')	ERR	TypeError
 Delegates.OnlyAction('abc')	ERR	TypeError
 Delegates.OnlyAction('')	ERR	TypeError
 Delegates.OnlyAction(b'a')	ERR	TypeError
-Delegates.OnlyAction(None)	ERR	NullReferenceException
+Delegates.OnlyAction(None)	OK	Action:null
 Delegates.OnlyAction([1, 2])	ERR	TypeError
 Delegates.OnlyAction([1.0, 2.0])	ERR	TypeError
 Delegates.OnlyAction(['a', 'b'])	ERR	TypeError
@@ -3370,7 +3370,7 @@ Delegates.OnlyFunc('a')	ERR	TypeError
 Delegates.OnlyFunc('abc')	ERR	TypeError
 Delegates.OnlyFunc('')	ERR	TypeError
 Delegates.OnlyFunc(b'a')	ERR	TypeError
-Delegates.OnlyFunc(None)	ERR	NullReferenceException
+Delegates.OnlyFunc(None)	OK	Func<int,int>:null
 Delegates.OnlyFunc([1, 2])	ERR	TypeError
 Delegates.OnlyFunc([1.0, 2.0])	ERR	TypeError
 Delegates.OnlyFunc(['a', 'b'])	ERR	TypeError
@@ -3425,7 +3425,7 @@ Delegates.OnlyCustom('a')	ERR	TypeError
 Delegates.OnlyCustom('abc')	ERR	TypeError
 Delegates.OnlyCustom('')	ERR	TypeError
 Delegates.OnlyCustom(b'a')	ERR	TypeError
-Delegates.OnlyCustom(None)	ERR	NullReferenceException
+Delegates.OnlyCustom(None)	OK	IntTransform:null
 Delegates.OnlyCustom([1, 2])	ERR	TypeError
 Delegates.OnlyCustom([1.0, 2.0])	ERR	TypeError
 Delegates.OnlyCustom(['a', 'b'])	ERR	TypeError
@@ -3755,7 +3755,7 @@ Collections.OnlyBytes('a')	ERR	TypeError
 Collections.OnlyBytes('abc')	ERR	TypeError
 Collections.OnlyBytes('')	OK	byte[]:0
 Collections.OnlyBytes(b'a')	OK	byte[]:1
-Collections.OnlyBytes(None)	ERR	NullReferenceException
+Collections.OnlyBytes(None)	OK	byte[]:null
 Collections.OnlyBytes([1, 2])	OK	byte[]:2
 Collections.OnlyBytes([1.0, 2.0])	ERR	TypeError
 Collections.OnlyBytes(['a', 'b'])	ERR	TypeError
@@ -4195,7 +4195,7 @@ CtorShapes('a')	OK	string,double=1
 CtorShapes('abc')	OK	string,double=1
 CtorShapes('')	OK	string,double=1
 CtorShapes(b'a')	ERR	TypeError: no overload
-CtorShapes(None)	ERR	NullReferenceException
+CtorShapes(None)	OK	Func<int>:null
 CtorShapes([1, 2])	OK	params int:2
 CtorShapes([1.0, 2.0])	OK	params int:2
 CtorShapes(['a', 'b'])	ERR	TypeError: no overload
@@ -6356,15 +6356,15 @@ OutRef.InArray('a', Int16(1))	ERR	TypeError
 OutRef.InArray('a', Int64(1))	ERR	TypeError
 OutRef.InArray('a', Derived())	ERR	TypeError
 OutRef.InArray('a', Point(1, 2))	ERR	TypeError
-OutRef.InArray(None, 1)	ERR	NullReferenceException
-OutRef.InArray(None, True)	ERR	NullReferenceException
+OutRef.InArray(None, 1)	OK	[in]byte[],long:null
+OutRef.InArray(None, True)	OK	[in]byte[],long:null
 OutRef.InArray(None, 1.5)	ERR	TypeError
 OutRef.InArray(None, 'a')	ERR	TypeError
 OutRef.InArray(None, None)	ERR	TypeError
 OutRef.InArray(None, [1, 2])	ERR	TypeError
 OutRef.InArray(None, lambda: 1)	ERR	TypeError
-OutRef.InArray(None, Int16(1))	ERR	NullReferenceException
-OutRef.InArray(None, Int64(1))	ERR	NullReferenceException
+OutRef.InArray(None, Int16(1))	OK	[in]byte[],long:null
+OutRef.InArray(None, Int64(1))	OK	[in]byte[],long:null
 OutRef.InArray(None, Derived())	ERR	TypeError
 OutRef.InArray(None, Point(1, 2))	ERR	TypeError
 OutRef.InArray([1, 2], 1)	OK	[in]byte[],long:2
@@ -7660,7 +7660,7 @@ Vec(1) + 'a'	ERR	TypeError: unsupported operand
 Vec(1) + 'abc'	ERR	TypeError: unsupported operand
 Vec(1) + ''	ERR	TypeError: unsupported operand
 Vec(1) + b'a'	ERR	TypeError: unsupported operand
-Vec(1) + None	ERR	NullReferenceException
+Vec(1) + None	OK	Vec(nan)
 Vec(1) + [1, 2]	ERR	TypeError: unsupported operand
 Vec(1) + [1.0, 2.0]	ERR	TypeError: unsupported operand
 Vec(1) + ['a', 'b']	ERR	TypeError: unsupported operand
@@ -7770,7 +7770,7 @@ Vec(2) * 'a'	ERR	TypeError
 Vec(2) * 'abc'	ERR	TypeError
 Vec(2) * ''	ERR	TypeError
 Vec(2) * b'a'	ERR	TypeError
-Vec(2) * None	ERR	NullReferenceException
+Vec(2) * None	OK	Vec(nan)
 Vec(2) * [1, 2]	ERR	TypeError
 Vec(2) * [1.0, 2.0]	ERR	TypeError
 Vec(2) * ['a', 'b']	ERR	TypeError
@@ -7880,7 +7880,7 @@ Vec(2) - 'a'	ERR	TypeError: unsupported operand
 Vec(2) - 'abc'	ERR	TypeError: unsupported operand
 Vec(2) - ''	ERR	TypeError: unsupported operand
 Vec(2) - b'a'	ERR	TypeError: unsupported operand
-Vec(2) - None	ERR	NullReferenceException
+Vec(2) - None	OK	Vec(nan)
 Vec(2) - [1, 2]	ERR	TypeError: unsupported operand
 Vec(2) - [1.0, 2.0]	ERR	TypeError: unsupported operand
 Vec(2) - ['a', 'b']	ERR	TypeError: unsupported operand
@@ -7935,7 +7935,7 @@ Vec(1) == 'a'	OK	False
 Vec(1) == 'abc'	OK	False
 Vec(1) == ''	OK	False
 Vec(1) == b'a'	OK	False
-Vec(1) == None	ERR	NullReferenceException
+Vec(1) == None	OK	False
 Vec(1) == [1, 2]	OK	False
 Vec(1) == [1.0, 2.0]	OK	False
 Vec(1) == ['a', 'b']	OK	False
@@ -7990,7 +7990,7 @@ Vec(1) != 'a'	OK	True
 Vec(1) != 'abc'	OK	True
 Vec(1) != ''	OK	True
 Vec(1) != b'a'	OK	True
-Vec(1) != None	ERR	NullReferenceException
+Vec(1) != None	OK	True
 Vec(1) != [1, 2]	OK	True
 Vec(1) != [1.0, 2.0]	OK	True
 Vec(1) != ['a', 'b']	OK	True
@@ -8045,7 +8045,7 @@ Vec(1) < 'a'	ERR	TypeError: unsupported operand
 Vec(1) < 'abc'	ERR	TypeError: unsupported operand
 Vec(1) < ''	ERR	TypeError: unsupported operand
 Vec(1) < b'a'	ERR	TypeError: unsupported operand
-Vec(1) < None	ERR	NullReferenceException
+Vec(1) < None	OK	False
 Vec(1) < [1, 2]	ERR	TypeError: unsupported operand
 Vec(1) < [1.0, 2.0]	ERR	TypeError: unsupported operand
 Vec(1) < ['a', 'b']	ERR	TypeError: unsupported operand
@@ -8100,7 +8100,7 @@ Op(5) + 'a'	OK	Op(105)
 Op(5) + 'abc'	OK	Op(305)
 Op(5) + ''	OK	Op(5)
 Op(5) + b'a'	ERR	TypeError: unsupported operand
-Op(5) + None	ERR	NullReferenceException
+Op(5) + None	OK	Op(-95)
 Op(5) + [1, 2]	ERR	TypeError: unsupported operand
 Op(5) + [1.0, 2.0]	ERR	TypeError: unsupported operand
 Op(5) + ['a', 'b']	ERR	TypeError: unsupported operand
@@ -8320,7 +8320,7 @@ Op(5) & 'a'	ERR	TypeError: unsupported operand
 Op(5) & 'abc'	ERR	TypeError: unsupported operand
 Op(5) & ''	ERR	TypeError: unsupported operand
 Op(5) & b'a'	ERR	TypeError: unsupported operand
-Op(5) & None	ERR	NullReferenceException
+Op(5) & None	OK	Op(5)
 Op(5) & [1, 2]	ERR	TypeError: unsupported operand
 Op(5) & [1.0, 2.0]	ERR	TypeError: unsupported operand
 Op(5) & ['a', 'b']	ERR	TypeError: unsupported operand
@@ -8430,7 +8430,7 @@ Op(5) < 'a'	ERR	TypeError: unsupported operand
 Op(5) < 'abc'	ERR	TypeError: unsupported operand
 Op(5) < ''	ERR	TypeError: unsupported operand
 Op(5) < b'a'	ERR	TypeError: unsupported operand
-Op(5) < None	ERR	NullReferenceException
+Op(5) < None	OK	False
 Op(5) < [1, 2]	ERR	TypeError: unsupported operand
 Op(5) < [1.0, 2.0]	ERR	TypeError: unsupported operand
 Op(5) < ['a', 'b']	ERR	TypeError: unsupported operand
@@ -8485,7 +8485,7 @@ Op(5) >= 'a'	ERR	TypeError: unsupported operand
 Op(5) >= 'abc'	ERR	TypeError: unsupported operand
 Op(5) >= ''	ERR	TypeError: unsupported operand
 Op(5) >= b'a'	ERR	TypeError: unsupported operand
-Op(5) >= None	ERR	NullReferenceException
+Op(5) >= None	OK	True
 Op(5) >= [1, 2]	ERR	TypeError: unsupported operand
 Op(5) >= [1.0, 2.0]	ERR	TypeError: unsupported operand
 Op(5) >= ['a', 'b']	ERR	TypeError: unsupported operand
@@ -8540,7 +8540,7 @@ OpDerived(5) + 'a'	OK	Op(105)
 OpDerived(5) + 'abc'	OK	Op(305)
 OpDerived(5) + ''	OK	Op(5)
 OpDerived(5) + b'a'	ERR	TypeError: unsupported operand
-OpDerived(5) + None	ERR	NullReferenceException
+OpDerived(5) + None	OK	Op(-95)
 OpDerived(5) + [1, 2]	ERR	TypeError: unsupported operand
 OpDerived(5) + [1.0, 2.0]	ERR	TypeError: unsupported operand
 OpDerived(5) + ['a', 'b']	ERR	TypeError: unsupported operand
@@ -8595,7 +8595,7 @@ OpDerived(5) < 'a'	ERR	TypeError: unsupported operand
 OpDerived(5) < 'abc'	ERR	TypeError: unsupported operand
 OpDerived(5) < ''	ERR	TypeError: unsupported operand
 OpDerived(5) < b'a'	ERR	TypeError: unsupported operand
-OpDerived(5) < None	ERR	NullReferenceException
+OpDerived(5) < None	OK	False
 OpDerived(5) < [1, 2]	ERR	TypeError: unsupported operand
 OpDerived(5) < [1.0, 2.0]	ERR	TypeError: unsupported operand
 OpDerived(5) < ['a', 'b']	ERR	TypeError: unsupported operand
