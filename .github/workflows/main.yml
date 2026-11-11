@@ -25,7 +25,7 @@ jobs:
             platform: x64
             instance: ubuntu-22.04
 
-          # macOS dropped for now: macos-13 runners are retired and arm64 runners need Mono setup work
+          # macOS dropped for now: macos-13 runners are retired
 
         # Rhino 9 ships Python 3.13
         python: ["3.13.13"]
@@ -52,7 +52,7 @@ jobs:
       - name: Synchronize the virtual environment
         run: uv sync --managed-python
 
-      # .NET Core only (Rhino 9 runs on net9.0); .NET Framework and Mono are not tested
+      # .NET Core only (Rhino 9 runs on net9.0)
       - name: Embedding tests
         run: dotnet test --framework net9.0 --runtime any-${{ matrix.os.platform }} --logger "console;verbosity=detailed" src/embed_tests/
 
