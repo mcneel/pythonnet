@@ -1,337 +1,1513 @@
-#define METHODBINDER_SOLVER_NEW_CACHE_DIST
-#define METHODBINDER_SOLVER_NEW_CACHE_TYPE
 using System;
-using System.Reflection;
+using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Diagnostics;
 
 namespace Python.Runtime
 {
-    /*
-    ┌── INPUT ARGS/KWARGS
-    │
-    ▼
-
-    HORIZONTAL FILTER:
-    Filter functions based on number of arguments provided and parameter count.
-
-        ──────────────────────────►
-        FOO<T,T,T,T,...>(X,Y,Z,...)
-
-    │
-    ▼
-
-    VERTICAL FILTER:
-    Filter functions based on kind (static vs instance), argument types,
-    function parameter type, and type of parameter match. Compute a distance
-    value for each potential function based on aforementioned properties.
-    
-            │ │ │ │      │ │ │
-            ▼ ▼ ▼ ▼      ▼ ▼ ▼
-        FOO<T,T,T,T,...>(X,Y,Z,...)
-
-    Distance Range:
-    This is the overall range of computed distance for each function.
-    It is split into blocks to ensure various function kinds do not
-    end up with overlapping distances e.g. a static generic method with
-    fewer parameters, matching distance with an instance method with a
-    larger number of parameters.
-
-    The groups are:
-
-    FUNCTION GROUP: Kind of function e.g. static vs instance
-                    (*) <T> methods here are method with no generic parameters.
-    ARGS     GROUP: Dedicated slot for each parameter. See MethodBinder.MAX_ARGS
-    TYPE     GROUP: Kind of Type e.g. ByRef
-    MATCH    GROUP: Kind of type match e.g. an exact match has a lower distance
-
-                  MIN
-    ┌───────────────┐       ┌───┐       ┌────────┐       ┌──────────────┐
-    │               │ ────► │   │ ────► │        │ ───── │              │
-  D │  INSTANCE     │       │   │       │        │       │ EXACT        │
-  I │               │ ──┐   │   │ ──┐   │        │ ──┐   │              │
-  S ├───────────────┤   │   ├───┤   │   ├────────┤   │   ├──────────────┤
-  T │               │   │   │┼┼┼│   │   │        │   │   │              │
-  A │  INSTANCE<T>  │   │   │┼┼┼│   │   │ BY REF │   │   │ DERIVED      │
-  N │               │   │   │┼┼┼│   │   │        │   │   │              │
-  C ├───────────────┤   │   │┼┼┼│   │   ├────────┤   │   ├──────────────┤
-  E │               │   │   │┼┼┼│   │   │        │   │   │              │
-    │  STATIC       │   │   │┼┼┼│   │   │ resvd. │   │   │ GENERIC      │
-  R │               │   │   │┼┼┼│   │   │        │   │   │              │
-  A ├───────────────┤   │   │┼┼┼│   │   ├────────┤   │   ├──────────────┤
-  N │               │   │   │┼┼┼│   │   │        │   │   │              │
-  G │  STATIC<T>    │   │   │┼┼┼│   │   │ resvd. │   │   │ CONVERT/CAST │
-  E │               │   └─► │┼┼┼│   └── │        │   └── │              │
-    └───────────────┘       └───┘       └────────┘       └──────────────┘
-    FUNCTION      MAX       ARGS        TYPE             MATCH
-    GROUP                   GROUP       GROUP            GROUP
-
-    */
+    // Picks the .NET overload for a call from Python, in four steps:
+    //
+    //   1. SHAPE   drop methods that cannot take this many args or these keywords.
+    //   2. MATCH   assign args to parameters and grade each one (see MatchLevel).
+    //   3. SELECT  keep candidates at the strictest grade any of them reached,
+    //              then compare those head to head, argument by argument.
+    //              A winner must be at least as good on every argument and
+    //              better on one. When each is better somewhere, the first
+    //              argument that differs decides. Otherwise tie-breaks apply.
+    //   4. BIND    convert the winner's arguments and call it.
+    //
+    // Caching plan (not implemented; keep each step a pure function of its key):
+    //   - SHAPE depends only on the MethodBase: cache the parameter kinds per method.
+    //   - MATCH depends only on (argument CLR type, parameter type) when the
+    //     argument has a CLR type: cache Match per type pair.
+    //   - SELECT depends on (method group, argument kinds and types): cache the
+    //     winner per method group, keyed by that tuple.
     partial class MethodBinder
     {
-        private ref struct ArgProvider
+        #region Entry
+
+        static bool TryBind(MethodBase[] methods,
+                            BorrowedReference args,
+                            BorrowedReference kwargs,
+                            bool allowRedirected,
+                            out BindSpec? spec,
+                            out BindError? error)
         {
-            private readonly BorrowedReference _args;
-            private readonly BorrowedReference _kwargs;
+            spec = null;
+            error = null;
 
-# if METHODBINDER_SOLVER_NEW_CACHE_TYPE
-            private readonly Dictionary<IntPtr, Type?> _typeMap = new();
-#endif
+            var call = new CallArgs(args, kwargs);
 
-            public uint ArgsCount;
-            public uint KWargsCount;
-            public uint GivenArgs;
-            public HashSet<string> Keys;
+            var shaped = new List<BindSpec>(methods.Length);
+            foreach (MethodBase method in methods)
+            {
+                if (!allowRedirected && BindSpec.IsRedirected(method))
+                {
+                    continue;
+                }
 
-            public ArgProvider(BorrowedReference args,
-                               BorrowedReference kwargs)
+                if (!TryShape(method, ref call, out BindSpec? shape))
+                {
+                    continue;
+                }
+
+                // a parameterless method is the exact fit for a call without arguments
+                if (call.Total == 0 && shape!.Parameters.Length == 0)
+                {
+                    spec = shape;
+                    return true;
+                }
+
+                shaped.Add(shape!);
+            }
+
+            // with one method there is nothing to compare; conversion reports
+            // what is wrong, which reads better than "no overload"
+            bool grade = shaped.Count > 1;
+
+            var candidates = new List<Candidate>(shaped.Count);
+            foreach (BindSpec shape in shaped)
+            {
+                if (TryMatch(shape, ref call, grade, out Candidate? candidate))
+                {
+                    candidates.Add(candidate!);
+                }
+            }
+
+            return TrySelect(candidates, out spec, out error);
+        }
+
+        #endregion
+
+        #region Call arguments
+
+        // Python args and kwargs of one call. Lives for that call only.
+        // Arguments are numbered positional first, then keywords in dict order.
+        private ref struct CallArgs
+        {
+            readonly BorrowedReference _args;
+            readonly BorrowedReference _kwargs;
+            readonly ArgInfo?[] _infos;
+
+            public readonly int Count;
+            public readonly string[] KwNames;
+
+            public CallArgs(BorrowedReference args, BorrowedReference kwargs)
             {
                 _args = args;
                 _kwargs = kwargs;
-
-                int argSize = _args == null ? 0 : (int)Runtime.PyTuple_Size(_args);
-                ArgsCount = (uint)(argSize == -1 ? 0 : argSize);
-
-                int kwargSize = _kwargs == null ? 0 : (int)Runtime.PyDict_Size(_kwargs);
-                KWargsCount = (uint)(kwargSize == -1 ? 0 : kwargSize);
-                Keys = kwargSize > 0 ? GetKeys(_kwargs) : new();
-
-                GivenArgs = ArgsCount + KWargsCount;
+                Count = args == null ? 0 : Math.Max(0, (int)Runtime.PyTuple_Size(args));
+                KwNames = kwargs == null ? Array.Empty<string>() : GetKeywordNames(kwargs);
+                _infos = new ArgInfo?[Count + KwNames.Length];
             }
 
-            public readonly BorrowedReference GetArg(uint index)
+            public readonly int Total => Count + KwNames.Length;
+
+            public readonly BorrowedReference this[int index]
+                => index < Count
+                    ? Runtime.PyTuple_GetItem(_args, index)
+                    : Runtime.PyDict_GetItemString(_kwargs, KwNames[index - Count]);
+
+            // what kind of value an argument is; worked out once per call
+            public readonly ArgInfo Info(int index)
+                => _infos[index] ??= ArgInfo.Of(this[index]);
+
+            public readonly int KwIndex(string name)
             {
-                return Runtime.PyTuple_GetItem(_args, (nint)index);
+                for (int i = 0; i < KwNames.Length; i++)
+                {
+                    if (KwNames[i] == name)
+                    {
+                        return Count + i;
+                    }
+                }
+                return -1;
             }
 
-            public readonly BorrowedReference GetKWArg(string key)
+            static string[] GetKeywordNames(BorrowedReference kwargs)
             {
-                return Runtime.PyDict_GetItemString(_kwargs, key);
-            }
-
-            public readonly Type? GetCLRType(BorrowedReference op)
-            {
-#if UNIT_TEST_DEBUG || !METHODBINDER_SOLVER_NEW_CACHE_TYPE
-                return MethodBinder.GetCLRType(op);
-#else
-
-                IntPtr ptr = op.DangerousGetAddressOrNull();
-                if (IntPtr.Zero == ptr)
+                int count = (int)Runtime.PyDict_Size(kwargs);
+                if (count <= 0)
                 {
-                    return null;
+                    return Array.Empty<string>();
                 }
 
-                if (_typeMap.ContainsKey(ptr))
+                var names = new string[count];
+                using NewReference keys = Runtime.PyDict_Keys(kwargs);
+                for (int i = 0; i < count; i++)
                 {
-                    return _typeMap[ptr];
+                    names[i] = Runtime.GetManagedString(Runtime.PyList_GetItem(keys.Borrow(), i))!;
                 }
-
-                Type? clrType = MethodBinder.GetCLRType(op);
-
-                _typeMap[ptr] = clrType;
-
-                return clrType;
-#endif
-            }
-
-            static HashSet<string> GetKeys(BorrowedReference kwargs)
-            {
-                var keys = new HashSet<string>();
-                if (kwargs == null)
-                {
-                    return keys;
-                }
-
-                using NewReference keyList = Runtime.PyDict_Keys(kwargs);
-                using NewReference valueList = Runtime.PyDict_Values(kwargs);
-                for (int i = 0; i < Runtime.PyDict_Size(kwargs); ++i)
-                {
-                    string keyStr = Runtime.GetManagedString(
-                            Runtime.PyList_GetItem(keyList.Borrow(), i)
-                        )!;
-
-                    keys.Add(keyStr);
-                }
-
-                return keys;
+                return names;
             }
         }
 
+        private enum ArgKind : byte
+        {
+            None,       // Python None
+            Clr,        // wrapped .NET object, or a .NET type
+            Bool,
+            Int,
+            Float,
+            Str,
+            Bytes,
+            Sequence,   // list, tuple, and other sequences
+            Iterator,   // generators and other one-shot iterators; never read ahead
+            Other,
+        }
+
+        // A Python argument, classified once so each overload can grade it cheaply.
+        private sealed class ArgInfo
+        {
+            public ArgKind Kind;
+            public Type? ClrType;       // for Clr
+            public int Length;          // for Str and Bytes
+            public long Signed;         // for Int, when it fits a long
+            public ulong Unsigned;      // for Int, when it only fits a ulong
+            public IntRange Range;      // for Int
+
+            public static ArgInfo Of(BorrowedReference arg)
+            {
+                var info = new ArgInfo { Kind = ArgKind.Other };
+
+                if (arg == null || arg == Runtime.PyNone)
+                {
+                    info.Kind = ArgKind.None;
+                    return info;
+                }
+
+                switch (ManagedType.GetManagedObject(arg))
+                {
+                    case CLRObject co:
+                        info.Kind = ArgKind.Clr;
+                        info.ClrType = co.inst?.GetType() ?? typeof(object);
+                        return info;
+
+                    case ClassBase cb when cb.type.Valid:
+                        info.Kind = ArgKind.Clr;
+                        info.ClrType = cb.type.Value.GetType();
+                        return info;
+                }
+
+                // bool before int: a Python bool is also an int
+                if (Runtime.PyBool_Check(arg))
+                {
+                    info.Kind = ArgKind.Bool;
+                }
+                else if (Runtime.PyInt_Check(arg))
+                {
+                    info.Kind = ArgKind.Int;
+                    ReadInt(arg, info);
+                }
+                else if (Runtime.PyFloat_Check(arg))
+                {
+                    info.Kind = ArgKind.Float;
+                }
+                else if (Runtime.PyString_Check(arg))
+                {
+                    info.Kind = ArgKind.Str;
+                    info.Length = (int)Runtime.PyUnicode_GetLength(arg);
+                }
+                else if (Runtime.PyObject_TypeCheck(arg, Runtime.PyBytesType))
+                {
+                    info.Kind = ArgKind.Bytes;
+                    info.Length = (int)Runtime.PyBytes_Size(arg);
+                }
+                else if (Runtime.PySequence_Check(arg))
+                {
+                    info.Kind = ArgKind.Sequence;
+                }
+                else if (Runtime.PyIter_Check(arg))
+                {
+                    info.Kind = ArgKind.Iterator;
+                }
+
+                return info;
+            }
+
+            static void ReadInt(BorrowedReference arg, ArgInfo info)
+            {
+                if (Runtime.PyLong_AsLongLong(arg) is long signed)
+                {
+                    info.Signed = signed;
+                    info.Range = IntRange.Signed;
+                    return;
+                }
+                Exceptions.Clear();
+
+                if (Runtime.PyLong_AsUnsignedLongLong(arg) is ulong unsigned)
+                {
+                    info.Unsigned = unsigned;
+                    info.Range = IntRange.Unsigned;
+                    return;
+                }
+                Exceptions.Clear();
+
+                info.Range = IntRange.Big;
+            }
+
+            // whether a Python int fits an integer type
+            public bool IntFits(TypeCode code)
+            {
+                if (Range == IntRange.Big)
+                {
+                    return false;
+                }
+
+                if (Range == IntRange.Unsigned)
+                {
+                    return code == TypeCode.UInt64;
+                }
+
+                long v = Signed;
+                return code switch
+                {
+                    TypeCode.SByte => v >= sbyte.MinValue && v <= sbyte.MaxValue,
+                    TypeCode.Byte => v >= byte.MinValue && v <= byte.MaxValue,
+                    TypeCode.Int16 => v >= short.MinValue && v <= short.MaxValue,
+                    TypeCode.UInt16 => v >= ushort.MinValue && v <= ushort.MaxValue,
+                    TypeCode.Char => v >= char.MinValue && v <= char.MaxValue,
+                    TypeCode.Int32 => v >= int.MinValue && v <= int.MaxValue,
+                    TypeCode.UInt32 => v >= uint.MinValue && v <= uint.MaxValue,
+                    TypeCode.Int64 => true,
+                    TypeCode.UInt64 => v >= 0,
+                    _ => false,
+                };
+            }
+        }
+
+        private enum IntRange : byte
+        {
+            Signed,     // fits a long
+            Unsigned,   // fits only a ulong
+            Big,        // fits neither
+        }
+
+        #endregion
+
+        #region Shape (step 1)
+
+        // How a parameter takes its argument.
         private enum BindParamKind
         {
-            Default,
-            Option,
-            Params,
-            BoxedReturn,
-            Return,
-            Self,
+            Default,        // plain required parameter
+            Option,         // has a default value, or [Optional]
+            Params,         // trailing params T[]; collects extra positional args
+            BoxedReturn,    // `out`; may also take a StrongBox<T> to write into
+            Return,         // `ref`; required, and its new value is returned
+            Self,           // operator operand filled with the instance
         }
 
+        // Returns false when the method cannot take this many args or these keywords.
+        static bool TryShape(MethodBase method, ref CallArgs call, out BindSpec? spec)
+        {
+            spec = null;
+
+            ParameterInfo[] mparams = method.GetParameters();
+
+            BindParam[] argSpecs;
+            uint required = 0;
+            uint optional = 0;
+            uint returns = 0;
+            bool expands = false;
+
+            if (OperatorMethod.IsOperatorMethod(method))
+            {
+                bool isReverse = OperatorMethod.IsReverse(method);
+                if (isReverse && OperatorMethod.IsComparisonOp(method))
+                {
+                    return false;
+                }
+
+                if (mparams.Length == 2)
+                {
+                    required = 1;
+                    argSpecs = isReverse
+                        ? new[] { new BindParam(mparams[0], BindParamKind.Default), new BindParam(mparams[1], BindParamKind.Self) }
+                        : new[] { new BindParam(mparams[0], BindParamKind.Self), new BindParam(mparams[1], BindParamKind.Default) };
+                }
+                else
+                {
+                    // operators always have at least one operand
+                    argSpecs = new[] { new BindParam(mparams[0], BindParamKind.Self) };
+                }
+
+                if (call.Total != required)
+                {
+                    return false;
+                }
+
+                spec = new BindSpec(method, argSpecs, required, optional, returns, expands);
+                return true;
+            }
+
+            int kwLeft = call.KwNames.Length;
+            argSpecs = new BindParam[mparams.Length];
+
+            if (mparams.Length > 0)
+            {
+                int last = mparams.Length - 1;
+                expands = Attribute.IsDefined(mparams[last], typeof(ParamArrayAttribute));
+
+                for (int i = 0; i < mparams.Length; i++)
+                {
+                    ParameterInfo param = mparams[i];
+
+                    if (kwLeft > 0 && call.KwIndex(param.Name) >= 0)
+                    {
+                        kwLeft--;
+                    }
+
+                    // `.IsOut` is false for `ref`. [In][Out] arrays (e.g. Stream.Read) are inputs.
+                    if (param.IsOut && param.GetCustomAttribute<InAttribute>() is null)
+                    {
+                        argSpecs[i] = new BindParam(param, BindParamKind.BoxedReturn);
+                        returns++;
+                    }
+                    else if (param.ParameterType.IsByRef)
+                    {
+                        argSpecs[i] = new BindParam(param, param.IsOut ? BindParamKind.BoxedReturn : BindParamKind.Return);
+                        returns++;
+                        required++;
+                    }
+                    else if (param.IsOptional)
+                    {
+                        argSpecs[i] = new BindParam(param, BindParamKind.Option);
+                        optional++;
+                    }
+                    else if (expands && i == last)
+                    {
+                        argSpecs[i] = new BindParam(param, BindParamKind.Params);
+                    }
+                    else
+                    {
+                        argSpecs[i] = new BindParam(param, BindParamKind.Default);
+                        required++;
+                    }
+                }
+
+                // a keyword that names no parameter of this method
+                if (kwLeft > 0)
+                {
+                    return false;
+                }
+            }
+            else if (kwLeft > 0)
+            {
+                return false;
+            }
+
+            uint given = (uint)call.Total;
+            bool fits = given == required
+                     || (required < given && (given <= required + optional + returns || expands));
+            if (!fits)
+            {
+                return false;
+            }
+
+            spec = new BindSpec(method, argSpecs, required, optional, returns, expands);
+            return true;
+        }
+
+        #endregion
+
+        #region Match (step 2)
+
+        // How well one argument fits one parameter. Lower is stricter.
+        private enum MatchLevel : byte
+        {
+            Exact,      // same .NET type
+            Widening,   // no data loss: subclass to base, Int16 to int, T to T?, None to a class
+            Python,     // Python value to a .NET type that holds it: int to Int32, str to String
+            Converted,  // needs a converter: float to int, callable to delegate, list to array
+            None,       // cannot fit
+        }
+
+        // Ranks order matches within one level. Lower is closer.
+        const ushort RankNatural = 0;       // a Python value's own .NET type
+        const ushort RankNumeric = 1;       // another number type that holds the value
+        const ushort RankBoolNumber = 2;    // a Python bool used as a number
+        const ushort RankBoxed = 50;        // a Python value boxed as `object`
+        const ushort RankIterator = 1500;   // a one-shot iterator; its items are not checked
+        const ushort RankConverter = 2000;  // only the converter (or a codec) knows how
+        const ushort RankPyObject = 2500;   // passed through as a PyObject
+        const ushort RankObject = 3000;     // a Python object wrapped as `object`
+
+        // Items of a Python sequence checked when grading it against a collection.
+        // A later item that does not fit is reported when the argument is converted.
+        const int SequenceSample = 16;
+
+        // Grade of one argument, plus a rank within that grade.
+        private readonly struct Match
+        {
+            public readonly MatchLevel Level;
+            public readonly ushort Rank;
+
+            public Match(MatchLevel level, ushort rank = 0)
+            {
+                Level = level;
+                Rank = rank;
+            }
+
+            public static readonly Match None = new(MatchLevel.None);
+            public static readonly Match Exact = new(MatchLevel.Exact);
+
+            public bool IsWorseThan(Match other)
+                => Level != other.Level ? Level > other.Level : Rank > other.Rank;
+        }
+
+        // A method that passed SHAPE, with its arguments assigned and graded.
+        private sealed class Candidate
+        {
+            public readonly BindSpec Spec;
+            public readonly Match[] Matches;    // per argument number
+            public readonly Type[] Targets;     // parameter type each argument went to
+            public MatchLevel Level;            // worst of Matches
+            public bool Expanded;               // params[] taken as separate arguments
+            public int Unfilled;                // optional and out slots left to defaults
+
+            public Candidate(BindSpec spec, int argCount)
+            {
+                Spec = spec;
+                Matches = new Match[argCount];
+                Targets = new Type[argCount];
+            }
+
+            public bool IsGenericDefinition
+                => Spec.Method.IsGenericMethod && Spec.Method.ContainsGenericParameters;
+
+            public void Grade(int argIndex, Match match, Type target)
+            {
+                Matches[argIndex] = match;
+                Targets[argIndex] = target;
+                if (match.Level > Level)
+                {
+                    Level = match.Level;
+                }
+            }
+        }
+
+        // Assigns args and kwargs to the method's slots, then grades them when
+        // `grade` is set. Returns false when the arguments cannot be assigned
+        // or one of them cannot fit.
+        static bool TryMatch(BindSpec spec, ref CallArgs call, bool grade, out Candidate? candidate)
+        {
+            candidate = null;
+            BindParam[] slots = spec.Parameters;
+
+            // keywords take their slots first; positional arguments fill the rest
+            // in order, so `F(1, i=1)` on F(i, params int[] rest) puts 1 in rest
+            int next = 0;
+            foreach (BindParam slot in slots)
+            {
+                if (slot.Kind == BindParamKind.Self)
+                {
+                    continue;
+                }
+
+                int kw = call.KwIndex(slot.Key);
+                if (kw >= 0)
+                {
+                    if (slot.Kind == BindParamKind.Params)
+                    {
+                        slot.AssignArray(call[kw], kw);
+                    }
+                    else if (!slot.TryAssign(call[kw], kw))
+                    {
+                        return false;
+                    }
+                    continue;
+                }
+
+                if (next == call.Count)
+                {
+                    continue;
+                }
+
+                if (slot.Kind == BindParamKind.Params)
+                {
+                    slot.AssignItems(ref call, next, call.Count - next);
+                    next = call.Count;
+                }
+                // an `out` slot given a plain value is left out; the value goes to the next slot
+                else if (slot.TryAssign(call[next], next))
+                {
+                    next++;
+                }
+                else if (slot.Kind != BindParamKind.BoxedReturn)
+                {
+                    return false;
+                }
+            }
+
+            if (next < call.Count)
+            {
+                return false;
+            }
+
+            var result = new Candidate(spec, call.Total);
+            foreach (BindParam slot in slots)
+            {
+                switch (slot.Kind)
+                {
+                    case BindParamKind.Default:
+                    case BindParamKind.Return:
+                        if (!slot.IsAssigned)
+                        {
+                            return false;
+                        }
+                        break;
+
+                    case BindParamKind.Option:
+                    case BindParamKind.BoxedReturn:
+                        if (!slot.IsAssigned)
+                        {
+                            result.Unfilled++;
+                        }
+                        break;
+
+                    case BindParamKind.Params:
+                        if (!slot.AsArray)
+                        {
+                            result.Expanded = true;
+                        }
+                        break;
+                }
+
+                if (grade && !TryGrade(slot, ref call, result))
+                {
+                    return false;
+                }
+            }
+
+            candidate = result;
+            return true;
+        }
+
+        // Grades the arguments in one slot. False when one of them cannot fit.
+        static bool TryGrade(BindParam slot, ref CallArgs call, Candidate candidate)
+        {
+            if (!slot.IsAssigned || slot.Kind == BindParamKind.Self)
+            {
+                return true;
+            }
+
+            int index = slot.ArgIndex;
+
+            if (slot.Kind == BindParamKind.BoxedReturn)
+            {
+                // assignment already checked that it is a fitting StrongBox
+                candidate.Grade(index, Match.Exact, slot.ParameterType);
+                return true;
+            }
+
+            if (slot.Kind != BindParamKind.Params)
+            {
+                Match match = GetMatch(call.Info(index), call[index], slot.ParameterType);
+                candidate.Grade(index, match, slot.ParameterType);
+                return match.Level != MatchLevel.None;
+            }
+
+            // params[] given one sequence: prefer reading it as the whole array
+            if (slot.ItemCount == 1)
+            {
+                ArgInfo info = call.Info(index);
+                if (slot.ByKeyword || info.Kind is ArgKind.Sequence or ArgKind.Clr)
+                {
+                    Match asArray = GetMatch(info, call[index], slot.ParameterType);
+                    if (asArray.Level != MatchLevel.None || slot.ByKeyword)
+                    {
+                        slot.AsArray = true;
+                        candidate.Expanded = false;
+                        candidate.Grade(index, asArray, slot.ParameterType);
+                        return asArray.Level != MatchLevel.None;
+                    }
+                }
+            }
+
+            slot.AsArray = false;
+            candidate.Expanded = true;
+            for (int i = 0; i < slot.ItemCount; i++)
+            {
+                Match match = GetMatch(call.Info(index + i), call[index + i], slot.Type);
+                candidate.Grade(index + i, match, slot.Type);
+                if (match.Level == MatchLevel.None)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        // Grades one argument against one parameter type.
+        static Match GetMatch(ArgInfo arg, BorrowedReference value, Type to)
+        {
+            if (to.IsByRef)
+            {
+                to = to.GetElementType();
+            }
+
+            return arg.Kind == ArgKind.Clr
+                ? MatchClr(arg.ClrType!, to)
+                : MatchPython(arg, value, to);
+        }
+
+        static Match MatchClr(Type from, Type to)
+        {
+            if (from == to)
+            {
+                return Match.Exact;
+            }
+
+            if (to.ContainsGenericParameters)
+            {
+                if (to.IsGenericParameter)
+                {
+                    return Match.Exact;
+                }
+                return Unify(to, from, new Type?[GenericArity(to)]) ? new Match(MatchLevel.Widening) : Match.None;
+            }
+
+            if (to.IsAssignableFrom(from))
+            {
+                return new Match(MatchLevel.Widening);
+            }
+
+            Type target = Nullable.GetUnderlyingType(to) ?? to;
+            if (target == from)
+            {
+                return new Match(MatchLevel.Widening);
+            }
+
+            if (IsImplicitNumeric(from, target))
+            {
+                return new Match(MatchLevel.Widening, RankNumeric);
+            }
+
+            if (typeof(PyObject).IsAssignableFrom(to))
+            {
+                return new Match(MatchLevel.Converted, RankPyObject);
+            }
+
+            if (HasCastOperator(from, to))
+            {
+                return new Match(MatchLevel.Converted);
+            }
+
+            return Match.None;
+        }
+
+        static Match MatchPython(ArgInfo arg, BorrowedReference value, Type to)
+        {
+            if (arg.Kind == ArgKind.None)
+            {
+                bool takesNull = !to.IsValueType || Nullable.GetUnderlyingType(to) is not null || to.IsGenericParameter;
+                return takesNull ? new Match(MatchLevel.Widening) : Match.None;
+            }
+
+            // T is inferred from the value's own .NET type
+            if (to.IsGenericParameter)
+            {
+                return new Match(MatchLevel.Python);
+            }
+
+            if (to.ContainsGenericParameters)
+            {
+                return Match.None;
+            }
+
+            if (typeof(PyObject).IsAssignableFrom(to))
+            {
+                return new Match(MatchLevel.Converted, RankPyObject);
+            }
+
+            if (typeof(Delegate).IsAssignableFrom(to))
+            {
+                return Runtime.PyCallable_Check(value) == 1 ? new Match(MatchLevel.Converted) : Match.None;
+            }
+
+            Type target = Nullable.GetUnderlyingType(to) ?? to;
+
+            switch (arg.Kind)
+            {
+                case ArgKind.Bool:
+                    return MatchBool(target);
+
+                case ArgKind.Int:
+                    return MatchInt(arg, target);
+
+                case ArgKind.Float:
+                    return MatchFloat(target);
+
+                case ArgKind.Str:
+                    if (target == typeof(string))
+                    {
+                        return new Match(MatchLevel.Python);
+                    }
+                    if (target == typeof(char))
+                    {
+                        return arg.Length == 1 ? new Match(MatchLevel.Converted) : Match.None;
+                    }
+                    if (target == typeof(object))
+                    {
+                        return new Match(MatchLevel.Python, RankBoxed);
+                    }
+                    return MatchSequence(value, to);
+
+                case ArgKind.Bytes:
+                    if (arg.Length == 1 && (target == typeof(byte) || target == typeof(sbyte) || target == typeof(char)))
+                    {
+                        return new Match(MatchLevel.Converted);
+                    }
+                    break;
+
+                case ArgKind.Iterator:
+                    if (TryGetElementType(to, out _))
+                    {
+                        return new Match(MatchLevel.Converted, RankIterator);
+                    }
+                    return to == typeof(object) ? new Match(MatchLevel.Converted, RankObject) : Match.None;
+            }
+
+            if (arg.Kind is ArgKind.Bool or ArgKind.Int or ArgKind.Float)
+            {
+                return Match.None;
+            }
+
+            if (arg.Kind is ArgKind.Sequence or ArgKind.Bytes)
+            {
+                Match asCollection = MatchSequence(value, to);
+                if (asCollection.Level != MatchLevel.None)
+                {
+                    return asCollection;
+                }
+            }
+
+            if (to == typeof(object))
+            {
+                return new Match(MatchLevel.Converted, RankObject);
+            }
+
+            return MatchByConverter(value, to);
+        }
+
+        static Match MatchBool(Type target)
+        {
+            if (target == typeof(bool))
+            {
+                return new Match(MatchLevel.Python);
+            }
+
+            if (Converter.IsInteger(target) || Converter.IsFloatingNumber(target))
+            {
+                return new Match(MatchLevel.Converted, RankBoolNumber);
+            }
+
+            return target == typeof(object) ? new Match(MatchLevel.Python, RankBoxed) : Match.None;
+        }
+
+        static Match MatchInt(ArgInfo arg, Type target)
+        {
+            TypeCode code = Type.GetTypeCode(target);
+            if (target.IsEnum)
+            {
+                return Match.None;
+            }
+
+            switch (code)
+            {
+                case TypeCode.Int32:
+                    return arg.IntFits(code) ? new Match(MatchLevel.Python, RankNatural) : Match.None;
+
+                case TypeCode.SByte:
+                case TypeCode.Byte:
+                case TypeCode.Int16:
+                case TypeCode.UInt16:
+                case TypeCode.UInt32:
+                case TypeCode.Int64:
+                case TypeCode.UInt64:
+                    return arg.IntFits(code) ? new Match(MatchLevel.Python, RankNumeric) : Match.None;
+
+                case TypeCode.Single:
+                case TypeCode.Double:
+                    return new Match(MatchLevel.Python, RankNumeric);
+
+                case TypeCode.Char:
+                    return arg.IntFits(code) ? new Match(MatchLevel.Converted) : Match.None;
+            }
+
+            if (target == typeof(System.Numerics.BigInteger))
+            {
+                return new Match(MatchLevel.Converted);
+            }
+
+            // boxed as Int32, so only when it fits one
+            if (target == typeof(object))
+            {
+                return arg.IntFits(TypeCode.Int32) ? new Match(MatchLevel.Python, RankBoxed) : Match.None;
+            }
+
+            return Match.None;
+        }
+
+        static Match MatchFloat(Type target)
+        {
+            if (target == typeof(double))
+            {
+                return new Match(MatchLevel.Python, RankNatural);
+            }
+
+            if (target == typeof(float))
+            {
+                return new Match(MatchLevel.Python, RankNumeric);
+            }
+
+            // truncated; kept so older scripts work, but never preferred
+            if (target == typeof(int))
+            {
+                return new Match(MatchLevel.Converted);
+            }
+
+            return target == typeof(object) ? new Match(MatchLevel.Python, RankBoxed) : Match.None;
+        }
+
+        // Grades a Python sequence against an array or collection type, by its items.
+        static Match MatchSequence(BorrowedReference value, Type to)
+        {
+            if (!TryGetElementType(to, out Type? element))
+            {
+                return Match.None;
+            }
+
+            nint size = Runtime.PySequence_Size(value);
+            if (size < 0)
+            {
+                Exceptions.Clear();
+                return new Match(MatchLevel.Converted, RankIterator);
+            }
+
+            Match worst = Match.Exact;
+            int sample = (int)Math.Min(size, SequenceSample);
+            for (int i = 0; i < sample; i++)
+            {
+                using NewReference item = Runtime.PySequence_GetItem(value, i);
+                if (item.IsNull())
+                {
+                    Exceptions.Clear();
+                    return Match.None;
+                }
+
+                Match match = GetMatch(ArgInfo.Of(item.Borrow()), item.Borrow(), element!);
+                if (match.Level == MatchLevel.None)
+                {
+                    return Match.None;
+                }
+
+                if (match.IsWorseThan(worst))
+                {
+                    worst = match;
+                }
+            }
+
+            // closer items make a closer collection: [1] picks int[] over double[]
+            int rank = 1 + (int)worst.Level * 256 + Math.Min((int)worst.Rank, 255);
+            return new Match(MatchLevel.Converted, (ushort)rank);
+        }
+
+        // Element type of a collection the converter can build from a Python iterable.
+        static bool TryGetElementType(Type to, out Type? element)
+        {
+            element = null;
+
+            if (to.IsArray)
+            {
+                element = to.GetArrayRank() == 1 ? to.GetElementType() : null;
+            }
+            else if (to == typeof(IEnumerable))
+            {
+                element = typeof(object);
+            }
+            else if (to.IsGenericType
+                        && to.GenericTypeArguments.Length == 1
+                        && typeof(IEnumerable).IsAssignableFrom(to))
+            {
+                // the converter builds an array, so the type must take one
+                Type item = to.GenericTypeArguments[0];
+                if (to.IsAssignableFrom(item.MakeArrayType()))
+                {
+                    element = item;
+                }
+            }
+
+            return element is not null;
+        }
+
+        // Last resort for Python objects: ask the converter, which also runs codecs.
+        static Match MatchByConverter(BorrowedReference value, Type to)
+        {
+            bool converts = Converter.ToManaged(value, to, out _, setError: false);
+            if (Exceptions.ErrorOccurred())
+            {
+                Exceptions.Clear();
+            }
+            return converts ? new Match(MatchLevel.Converted, RankConverter) : Match.None;
+        }
+
+        static bool HasCastOperator(Type from, Type to)
+            => FindCastOperator(from, from, to) || FindCastOperator(to, from, to);
+
+        static bool FindCastOperator(Type owner, Type from, Type to)
+        {
+            foreach (MethodInfo m in owner.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                if ((m.Name == "op_Implicit" || m.Name == "op_Explicit")
+                        && m.ReturnType == to
+                        && m.GetParameters() is { Length: 1 } ps
+                        && ps[0].ParameterType == from)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // C# implicit numeric conversions.
+        static bool IsImplicitNumeric(Type from, Type to)
+        {
+            if (!from.IsPrimitive || !(to.IsPrimitive || to == typeof(decimal)) || from == typeof(bool) || to == typeof(bool))
+            {
+                return false;
+            }
+
+            TypeCode f = Type.GetTypeCode(from);
+            TypeCode t = Type.GetTypeCode(to);
+            return f switch
+            {
+                TypeCode.SByte => t is TypeCode.Int16 or TypeCode.Int32 or TypeCode.Int64 or TypeCode.Single or TypeCode.Double or TypeCode.Decimal,
+                TypeCode.Byte => t is TypeCode.Int16 or TypeCode.UInt16 or TypeCode.Int32 or TypeCode.UInt32 or TypeCode.Int64 or TypeCode.UInt64 or TypeCode.Single or TypeCode.Double or TypeCode.Decimal,
+                TypeCode.Int16 => t is TypeCode.Int32 or TypeCode.Int64 or TypeCode.Single or TypeCode.Double or TypeCode.Decimal,
+                TypeCode.UInt16 => t is TypeCode.Int32 or TypeCode.UInt32 or TypeCode.Int64 or TypeCode.UInt64 or TypeCode.Single or TypeCode.Double or TypeCode.Decimal,
+                TypeCode.Char => t is TypeCode.UInt16 or TypeCode.Int32 or TypeCode.UInt32 or TypeCode.Int64 or TypeCode.UInt64 or TypeCode.Single or TypeCode.Double or TypeCode.Decimal,
+                TypeCode.Int32 => t is TypeCode.Int64 or TypeCode.Single or TypeCode.Double or TypeCode.Decimal,
+                TypeCode.UInt32 => t is TypeCode.Int64 or TypeCode.UInt64 or TypeCode.Single or TypeCode.Double or TypeCode.Decimal,
+                TypeCode.Int64 => t is TypeCode.Single or TypeCode.Double or TypeCode.Decimal,
+                TypeCode.UInt64 => t is TypeCode.Single or TypeCode.Double or TypeCode.Decimal,
+                TypeCode.Single => t is TypeCode.Double,
+                _ => false,
+            };
+        }
+
+        // Whether a value of `from` can go where `to` is expected without a cast, as in C#.
+        static bool IsImplicit(Type from, Type to)
+        {
+            if (from == to || to.IsAssignableFrom(from))
+            {
+                return true;
+            }
+
+            if (Nullable.GetUnderlyingType(to) is Type underlying)
+            {
+                return IsImplicit(from, underlying);
+            }
+
+            return IsImplicitNumeric(from, to);
+        }
+
+        // Fills `inferred` with the generic arguments that make `parameter` take `argument`.
+        static bool Unify(Type parameter, Type argument, Type?[] inferred)
+        {
+            if (parameter.IsGenericParameter)
+            {
+                if (parameter.DeclaringMethod is null)
+                {
+                    return false;
+                }
+
+                int position = parameter.GenericParameterPosition;
+                if (position < inferred.Length)
+                {
+                    inferred[position] ??= argument;
+                }
+                return true;
+            }
+
+            if (!parameter.ContainsGenericParameters)
+            {
+                return parameter.IsAssignableFrom(argument);
+            }
+
+            if (parameter.IsArray)
+            {
+                return argument.IsArray
+                    && argument.GetArrayRank() == parameter.GetArrayRank()
+                    && Unify(parameter.GetElementType(), argument.GetElementType(), inferred);
+            }
+
+            if (parameter.IsGenericType)
+            {
+                Type definition = parameter.GetGenericTypeDefinition();
+                foreach (Type candidate in SelfBasesAndInterfaces(argument))
+                {
+                    if (candidate.IsGenericType && candidate.GetGenericTypeDefinition() == definition)
+                    {
+                        Type[] want = parameter.GetGenericArguments();
+                        Type[] have = candidate.GetGenericArguments();
+                        for (int i = 0; i < want.Length; i++)
+                        {
+                            if (!Unify(want[i], have[i], inferred))
+                            {
+                                return false;
+                            }
+                        }
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        static IEnumerable<Type> SelfBasesAndInterfaces(Type type)
+        {
+            for (Type? t = type; t is not null; t = t.BaseType)
+            {
+                yield return t;
+            }
+
+            foreach (Type i in type.GetInterfaces())
+            {
+                yield return i;
+            }
+        }
+
+        // Number of type parameters on the generic method that declares `type`'s parameters.
+        static int GenericArity(Type type)
+        {
+            if (type.IsGenericParameter)
+            {
+                return type.DeclaringMethod?.GetGenericArguments().Length ?? 0;
+            }
+
+            if (type.HasElementType)
+            {
+                return GenericArity(type.GetElementType());
+            }
+
+            int arity = 0;
+            if (type.IsGenericType)
+            {
+                foreach (Type arg in type.GetGenericArguments())
+                {
+                    arity = Math.Max(arity, GenericArity(arg));
+                }
+            }
+            return arity;
+        }
+
+        #endregion
+
+        #region Select (step 3)
+
+        // Keeps the strictest level, then picks the one candidate that beats
+        // all others; otherwise reports the tied ones as ambiguous.
+        static bool TrySelect(List<Candidate> candidates, out BindSpec? spec, out BindError? error)
+        {
+            spec = null;
+            error = null;
+
+            if (candidates.Count == 0)
+            {
+                error = BindError.NoMatchBindError;
+                return false;
+            }
+
+            if (candidates.Count == 1)
+            {
+                spec = candidates[0].Spec;
+                return true;
+            }
+
+            MatchLevel strictest = MatchLevel.None;
+            foreach (Candidate c in candidates)
+            {
+                if (c.Level < strictest)
+                {
+                    strictest = c.Level;
+                }
+            }
+
+            Candidate? best = null;
+            foreach (Candidate c in candidates)
+            {
+                if (c.Level == strictest && (best is null || Compare(c, best) > 0))
+                {
+                    best = c;
+                }
+            }
+
+            List<MethodBase>? tied = null;
+            foreach (Candidate c in candidates)
+            {
+                if (c != best && c.Level == strictest && Compare(best!, c) <= 0)
+                {
+                    tied ??= new List<MethodBase> { best!.Spec.Method };
+                    tied.Add(c.Spec.Method);
+                }
+            }
+
+            if (tied is not null)
+            {
+                error = new AmbiguousBindError(tied.ToArray());
+                return false;
+            }
+
+            spec = best!.Spec;
+            return true;
+        }
+
+        // >0 when `a` is the better call, <0 when `b` is, 0 when neither.
+        static int Compare(Candidate a, Candidate b)
+        {
+            bool aBetter = false;
+            bool bBetter = false;
+            int firstDifference = 0;
+
+            for (int i = 0; i < a.Matches.Length; i++)
+            {
+                int r = CompareArgument(a.Matches[i], a.Targets[i], b.Matches[i], b.Targets[i]);
+                if (r == 0)
+                {
+                    continue;
+                }
+
+                if (firstDifference == 0)
+                {
+                    firstDifference = r;
+                }
+
+                if (r > 0)
+                {
+                    aBetter = true;
+                }
+                else
+                {
+                    bBetter = true;
+                }
+            }
+
+            if (aBetter != bBetter)
+            {
+                return aBetter ? 1 : -1;
+            }
+
+            // each is better somewhere; C# calls this ambiguous,
+            // here the first argument that differs decides
+            if (aBetter)
+            {
+                return firstDifference;
+            }
+
+            return TieBreak(a, b);
+        }
+
+        // Compares where one argument went in two candidates.
+        static int CompareArgument(Match ma, Type? ta, Match mb, Type? tb)
+        {
+            if (ma.Level != mb.Level)
+            {
+                return ma.Level < mb.Level ? 1 : -1;
+            }
+
+            if (ma.Rank != mb.Rank)
+            {
+                return ma.Rank < mb.Rank ? 1 : -1;
+            }
+
+            if (ta is null || tb is null)
+            {
+                return 0;
+            }
+
+            if (ta.IsByRef)
+            {
+                ta = ta.GetElementType();
+            }
+            if (tb.IsByRef)
+            {
+                tb = tb.GetElementType();
+            }
+
+            if (ta == tb)
+            {
+                return 0;
+            }
+
+            // the more specific type wins: one that converts to the other, not back
+            bool aToB = IsImplicit(ta, tb);
+            bool bToA = IsImplicit(tb, ta);
+            if (aToB != bToA)
+            {
+                return aToB ? 1 : -1;
+            }
+
+            // signed beats unsigned, as in C#
+            bool aSigned = IsSignedInteger(ta), bSigned = IsSignedInteger(tb);
+            bool aUnsigned = IsUnsignedInteger(ta), bUnsigned = IsUnsignedInteger(tb);
+            if (aSigned && bUnsigned)
+            {
+                return 1;
+            }
+            if (bSigned && aUnsigned)
+            {
+                return -1;
+            }
+
+            return 0;
+        }
+
+        static bool IsSignedInteger(Type t)
+            => t == typeof(sbyte) || t == typeof(short) || t == typeof(int) || t == typeof(long);
+
+        static bool IsUnsignedInteger(Type t)
+            => t == typeof(byte) || t == typeof(ushort) || t == typeof(uint) || t == typeof(ulong);
+
+        // Whole-method preferences, used when every argument fits equally well.
+        static int TieBreak(Candidate a, Candidate b)
+        {
+            // params[] taken as written beats params[] expanded
+            if (a.Expanded != b.Expanded)
+            {
+                return a.Expanded ? -1 : 1;
+            }
+
+            // a plain method beats a generic one
+            bool aGeneric = a.IsGenericDefinition;
+            bool bGeneric = b.IsGenericDefinition;
+            if (aGeneric != bGeneric)
+            {
+                return aGeneric ? -1 : 1;
+            }
+
+            // every argument given explicitly beats leaning on defaults
+            if (a.Unfilled != b.Unfilled)
+            {
+                return a.Unfilled < b.Unfilled ? 1 : -1;
+            }
+
+            // a Python override beats the .NET method it redirects
+            bool aRedirected = BindSpec.IsRedirected(a.Spec.Method);
+            bool bRedirected = BindSpec.IsRedirected(b.Spec.Method);
+            if (aRedirected != bRedirected)
+            {
+                return aRedirected ? 1 : -1;
+            }
+
+            // a method hidden with `new` loses to the one hiding it
+            Type? da = a.Spec.Method.DeclaringType;
+            Type? db = b.Spec.Method.DeclaringType;
+            if (da is not null && db is not null && da != db)
+            {
+                if (da.IsSubclassOf(db))
+                {
+                    return 1;
+                }
+                if (db.IsSubclassOf(da))
+                {
+                    return -1;
+                }
+            }
+
+            return 0;
+        }
+
+        #endregion
+
+        #region Bind (step 4)
+
+        // One parameter slot of a method, and the Python argument assigned to it.
+        // Holds borrowed pointers into the call's args and kwargs, which outlive the call.
         private sealed class BindParam
         {
-            static readonly Type s_boxType =
-                typeof(System.Runtime.CompilerServices.StrongBox<>);
+            static readonly Type s_boxType = typeof(System.Runtime.CompilerServices.StrongBox<>);
 
             readonly ParameterInfo _param;
 
-            public readonly BindParamKind Kind = BindParamKind.Default;
+            public readonly BindParamKind Kind;
             public readonly string Key;
+            public readonly Type ParameterType;
+
+            // element type for params[], otherwise the parameter type
             public readonly Type Type;
 
-            public object? Value { get; private set; } = default;
-            public bool HasBox { get; private set; } = false;
+            IntPtr _arg;
+            IntPtr[]? _items;
 
-            public uint Distance { get; set; } = uint.MaxValue;
+            // number of the argument in this slot; the first one for params[]
+            public int ArgIndex { get; private set; } = -1;
+
+            // params[]: the single argument is the whole array, not one item
+            public bool AsArray { get; set; }
+
+            public bool HasBox { get; private set; }
+
+            // params[] given by keyword
+            public bool ByKeyword { get; private set; }
 
             public BindParam(ParameterInfo paramInfo, BindParamKind kind)
             {
                 _param = paramInfo;
-
                 Kind = kind;
                 Key = paramInfo.Name;
-
-                // this type is used to compute distance between
-                // provided argument type and parameter type.
-                // for capturing params[] lets use the element type.
-                if (Kind == BindParamKind.Params)
-                {
-                    Type = paramInfo.ParameterType.GetElementType();
-                }
-                else
-                {
-                    Type = paramInfo.ParameterType;
-                }
+                ParameterType = paramInfo.ParameterType;
+                Type = kind == BindParamKind.Params ? ParameterType.GetElementType() : ParameterType;
             }
 
-            public bool TryAssign(object? value)
-            {
-                if (Kind == BindParamKind.BoxedReturn
-                        && value is PyObject pyObj)
-                {
-                    if (IsBoxedValue(pyObj, out Type? maybeBoxType)
-                            && maybeBoxType is Type boxType
-                            && boxType.MakeByRefType().IsAssignableFrom(Type))
-                    {
-                        Value = value;
-                        HasBox = true;
-                        return true;
-                    }
+            public bool IsAssigned => ArgIndex >= 0;
 
-                    return false;
+            public int ItemCount => _items?.Length ?? 0;
+
+            // the StrongBox given for an `out` slot
+            public PyObject? Value => HasBox ? new PyObject(new BorrowedReference(_arg)) : null;
+
+            // false when an `out` slot is given something other than a fitting StrongBox
+            public bool TryAssign(BorrowedReference arg, int index)
+            {
+                if (Kind == BindParamKind.BoxedReturn)
+                {
+                    if (!IsFittingBox(arg))
+                    {
+                        return false;
+                    }
+                    HasBox = true;
                 }
 
-                Value = value;
+                _arg = arg.DangerousGetAddress();
+                ArgIndex = index;
                 return true;
             }
 
-            public bool TryConvert(out object? value)
+            public void AssignItems(ref CallArgs call, int first, int count)
             {
-                // NOTE:
-                // value is either a PyObject for standard parameters,
-                // or a PyObject[] for a capturing params[]
-                object? v = Value;
-
-                if (Type.IsGenericParameter)
+                _items = new IntPtr[count];
+                for (int i = 0; i < count; i++)
                 {
-                    if (v is null)
-                    {
-                        value = null;
-                        return true;
-                    }
+                    _items[i] = call[first + i].DangerousGetAddress();
+                }
+                ArgIndex = first;
 
-                    return TryGetManagedValue((PyObject)v, out value);
+                // without grading, one sequence or fitting .NET array is read as the whole array
+                if (count == 1)
+                {
+                    ArgInfo info = call.Info(first);
+                    AsArray = info.Kind == ArgKind.Sequence
+                           || (info.Kind == ArgKind.Clr && ParameterType.IsAssignableFrom(info.ClrType));
+                }
+            }
+
+            // params[] given by keyword: always the whole array
+            public void AssignArray(BorrowedReference arg, int index)
+            {
+                _items = new[] { arg.DangerousGetAddress() };
+                ArgIndex = index;
+                AsArray = true;
+                ByKeyword = true;
+            }
+
+            // Python argument from which a generic type argument can be read
+            public bool TryGetHint(out BorrowedReference arg, out Type type)
+            {
+                type = AsArray || Kind != BindParamKind.Params ? ParameterType : Type;
+                if (type.IsByRef)
+                {
+                    type = type.GetElementType();
                 }
 
-                if (v is null)
-                {
-                    if (Kind == BindParamKind.Option)
-                    {
-                        value = GetDefaultValue(_param);
-                        return true;
-                    }
+                IntPtr ptr = _items is { Length: > 0 } ? _items[0] : _arg;
+                arg = new BorrowedReference(ptr);
+                return ptr != IntPtr.Zero && Kind != BindParamKind.BoxedReturn;
+            }
 
-                    if (Kind == BindParamKind.Params)
-                    {
-                        value = Array.CreateInstance(Type, 0);
-                        return true;
-                    }
-
-                    value = null;
-                    return true;
-                }
-
-                if (Kind == BindParamKind.BoxedReturn)
-                {
-                    PyObject box = (PyObject)v;
-                    PyObject boxed = box!.GetAttr("Value");
-                    return TryGetManagedValue(boxed, Type, out value);
-                }
+            // Converts the assigned Python value to `parameterType`, which differs
+            // from ParameterType only once a generic method has been closed.
+            public bool TryConvert(Type parameterType, out object? value)
+            {
+                Type type = parameterType.IsByRef ? parameterType.GetElementType() : parameterType;
 
                 if (Kind == BindParamKind.Params)
                 {
-                    PyObject[] values = (PyObject[])v;
-
-                    // NOTE:
-                    // if param is a capturing params[] and there
-                    // is only one argument of sequence type provided,
-                    // then lets convert that sequence to params[] type
-                    // and pass that as the array of arguments.
-                    // e.g. Calling .Foo(params int[]) as .Foo([1,2,3])
-                    if (values.Length == 1
-                            && values[0] is PyObject arg
-                            && Runtime.PySequence_Check(arg))
+                    Type element = type.GetElementType();
+                    if (_items is null)
                     {
-                        Type ptype = _param.ParameterType;
-                        return TryGetManagedValue(arg, ptype, out value);
+                        value = Array.CreateInstance(element, 0);
+                        return true;
                     }
 
-                    // otherwise, lets build an array and add each arg
-                    // e.g. Calling .Foo(params int[]) as .Foo(1,2,3)
-                    var parray = Array.CreateInstance(Type, values.Length);
-                    for (int i = 0; i < values.Length; i++)
+                    if (AsArray)
                     {
-                        if (TryGetManagedValue(values[i], Type, out object? p))
+                        return TryConvertArg(new BorrowedReference(_items[0]), type, out value);
+                    }
+
+                    var array = Array.CreateInstance(element, _items.Length);
+                    for (int i = 0; i < _items.Length; i++)
+                    {
+                        if (!TryConvertArg(new BorrowedReference(_items[i]), element, out object? item))
                         {
-                            parray.SetValue(p, i);
-                            continue;
+                            value = null;
+                            return false;
                         }
-
-                        value = default;
-                        return false;
-                        //else
-                        //{
-                        //    parray.SetValue(GetDefaultValue(_param), i);
-                        //}
+                        array.SetValue(item, i);
                     }
 
-                    value = parray;
+                    value = array;
                     return true;
                 }
 
-                return TryGetManagedValue((PyObject)v, Type, out value);
+                if (_arg == IntPtr.Zero)
+                {
+                    value = Kind == BindParamKind.Option ? GetDefaultValue(_param) : null;
+                    return true;
+                }
+
+                if (HasBox)
+                {
+                    using var box = new PyObject(new BorrowedReference(_arg));
+                    using PyObject boxed = box.GetAttr("Value");
+                    return TryConvertArg(boxed.Reference, type, out value);
+                }
+
+                return TryConvertArg(new BorrowedReference(_arg), type, out value);
             }
 
-            static bool IsBoxedValue(PyObject value, out Type? boxType)
+            static bool TryConvertArg(BorrowedReference arg, Type type, out object? value)
             {
-                boxType = default;
-
-                Type? clrType = GetCLRType(value);
-                if (clrType == null)
+                // .NET numbers widen as in C#: an Int16 goes where an int is expected
+                if (ManagedType.GetManagedObject(arg) is CLRObject { inst: IConvertible number }
+                        && !type.IsInstanceOfType(number)
+                        && IsImplicitNumeric(number.GetType(), Nullable.GetUnderlyingType(type) ?? type))
                 {
-                    return false;
-                }
-
-                if (clrType.IsGenericType
-                        && clrType.GetGenericTypeDefinition() == s_boxType)
-                {
-                    boxType = clrType.GetGenericArguments()[0];
+                    value = Convert.ChangeType(number, Nullable.GetUnderlyingType(type) ?? type, CultureInfo.InvariantCulture);
                     return true;
                 }
 
+                return Converter.ToManaged(arg, type, out value, setError: true);
+            }
+
+            bool IsFittingBox(BorrowedReference arg)
+            {
+                if (ManagedType.GetManagedObject(arg) is CLRObject { inst: object box })
+                {
+                    Type boxType = box.GetType();
+                    return boxType.IsGenericType
+                        && boxType.GetGenericTypeDefinition() == s_boxType
+                        && boxType.GetGenericArguments()[0].MakeByRefType().IsAssignableFrom(ParameterType);
+                }
                 return false;
             }
 
+            // [Optional] without a default: https://stackoverflow.com/questions/3416216
             static object? GetDefaultValue(ParameterInfo paramInfo)
             {
                 if (paramInfo.HasDefaultValue)
@@ -339,26 +1515,17 @@ namespace Python.Runtime
                     return paramInfo.DefaultValue;
                 }
 
-                // [OptionalAttribute] was specified for the parameter.
-                // See https://stackoverflow.com/questions/3416216/optionalattribute-parameters-default-value
-                // for rules on determining the value to pass to the parameter
-                var type = paramInfo.ParameterType;
-
+                Type type = paramInfo.ParameterType;
                 if (type == typeof(object))
                 {
                     return Type.Missing;
                 }
-                else if (type.IsValueType)
-                {
-                    return Activator.CreateInstance(type);
-                }
-                else
-                {
-                    return null;
-                }
+
+                return type.IsValueType ? Activator.CreateInstance(type) : null;
             }
         }
 
+        // The chosen method, with its parameter slots filled.
         private sealed class BindSpec
         {
             public static bool IsRedirected(MethodBase method) =>
@@ -371,34 +1538,35 @@ namespace Python.Runtime
             public readonly uint Returns;
             public readonly bool Expands;
 
-            public BindSpec(MethodBase method,
-                            ref BindParam[] argSpecs,
-                            uint required,
-                            uint optional,
-                            uint returns,
-                            bool expands)
+            public BindSpec(MethodBase method, BindParam[] parameters,
+                            uint required, uint optional, uint returns, bool expands)
             {
                 Method = method;
-                Parameters = argSpecs;
+                Parameters = parameters;
                 Required = required;
                 Optional = optional;
                 Returns = returns;
                 Expands = expands;
             }
 
-            public bool TryGetArguments(object? instance,
-                                        out MethodBase method,
-                                        out object?[] arguments)
+            // Converts every slot to its .NET value. Closes a generic method over
+            // the types of the arguments given for its type parameters.
+            public bool TryGetArguments(object? instance, out MethodBase method, out object?[] arguments)
             {
                 method = Method;
                 arguments = new object?[Parameters.Length];
+                bool[]? converted = null;
 
-                Type[] genericTypes =
-                    new Type[
-                        Method.IsGenericMethod ?
-                            Method.GetGenericArguments().Length
-                          : 0
-                    ];
+                if (Method.IsGenericMethod && Method.ContainsGenericParameters)
+                {
+                    converted = new bool[Parameters.Length];
+                    if (!TryCloseGeneric(arguments, converted, out method))
+                    {
+                        return false;
+                    }
+                }
+
+                ParameterInfo[]? closed = method == Method ? null : method.GetParameters();
 
                 for (int i = 0; i < Parameters.Length; i++)
                 {
@@ -408,230 +1576,119 @@ namespace Python.Runtime
                     {
                         arguments[i] = instance;
                     }
-                    else if (param.TryConvert(out object? value))
+                    else if (converted is null || !converted[i])
                     {
-                        arguments[i] = value;
-
-                        if (param.Type.IsGenericParameter)
+                        Type type = closed?[i].ParameterType ?? param.ParameterType;
+                        if (!param.TryConvert(type, out arguments[i]))
                         {
-                            genericTypes[i] = value?.GetType() ?? typeof(object);
+                            return false;
                         }
-                    }
-                    else
-                    {
-                        return false;
-                    }
-                }
-
-                if (Method.IsGenericMethod
-                        && method.ContainsGenericParameters)
-                {
-                    try
-                    {
-                        // .MakeGenericMethod can throw ArgumentException if
-                        // the type parameters do not obey the constraints.
-                        if (Method is MethodInfo minfo)
-                        {
-                            method = minfo.MakeGenericMethod(genericTypes);
-                        }
-                    }
-                    catch (ArgumentException)
-                    {
                     }
                 }
 
                 return true;
             }
 
-            // 0 <= x <= TOTAL_MAX_DIST
-            public bool TryAssignArguments(ref ArgProvider prov, out uint distance)
+            // Infers each type parameter from the argument given for it.
+            // A Python value given for a bare T is converted to its own .NET type,
+            // which then is T; `converted` marks those so they are not converted twice.
+            bool TryCloseGeneric(object?[] arguments, bool[] converted, out MethodBase method)
             {
-                distance = 0;
+                method = Method;
+                Type[] typeParams = Method.GetGenericArguments();
+                var inferred = new Type?[typeParams.Length];
+                var nullOnly = new bool[typeParams.Length];
 
-                if (Method.IsStatic)
-                {
-                    distance += FUNC_GROUP_SIZE;
-                }
-
-                // NOTE:
-                // if method contains generic parameters, the distance
-                // compute logic will take that into consideration.
-                // but methods can be generic with no generic parameters,
-                // e.g. Foo<T>(int, float).
-                // this ensures these methods are furthur away from
-                // non-generic instance methods with matching parameters
-                if (Method.IsGenericMethod
-                        && !Method.ContainsGenericParameters)
-                {
-                    distance += FUNC_GROUP_SIZE;
-                    distance += (ARG_GROUP_SIZE *
-                                (uint)Method.GetGenericArguments().Length);
-                }
-
-
-                if (TryExtractArguments(ref prov, out uint argdist))
-                {
-                    distance += argdist;
-
-#if UNIT_TEST_DEBUG
-                    Debug.Print($"{Method} -> {distance}");
-#endif
-                    return true;
-                }
-                else
-                {
-                    return false;
-                }
-            }
-
-            bool TryExtractArguments(ref ArgProvider prov, out uint distance)
-            {
-                distance = 0;
-
-                uint argidx = 0;
-                bool checkArgs = prov.ArgsCount > 0;
-                bool checkKwargs = prov.KWargsCount > 0;
-                uint pickedArgs = 0;
-                uint pickedKWArgs = 0;
-
-                for (uint i = 0; i < Parameters.Length; i++)
+                for (int i = 0; i < Parameters.Length; i++)
                 {
                     BindParam param = Parameters[i];
-                    if (param is null)
-                    {
-                        break;
-                    }
-
-                    BorrowedReference item;
-
-                    // NOTE:
-                    // value of self if provided on invoke
-                    // since this is the instance the bound
-                    // method is being invoked on. lets skip.
-                    if (param.Kind == BindParamKind.Self)
+                    if (param.Kind == BindParamKind.Self
+                            || !param.TryGetHint(out BorrowedReference arg, out Type type)
+                            || !type.ContainsGenericParameters)
                     {
                         continue;
                     }
 
-                    // NOTE:
-                    // if kwargs contains a value for this parameter,
-                    // lets capture that and compute distance.
-                    if (checkKwargs)
+                    switch (ManagedType.GetManagedObject(arg))
                     {
-                        item = prov.GetKWArg(param.Key);
-                        if (item != null)
-                        {
-                            PyObject value = new(item);
-                            bool assigned;
+                        case CLRObject co:
+                            Unify(type, co.inst?.GetType() ?? typeof(object), inferred);
+                            continue;
 
-                            // NOTE:
-                            // if this param is a capturing params[], expect
-                            // a tuple or a list as value for this parameter.
-                            // e.g. From python calling .Foo(paramsArray=[])
-                            if (param.Kind == BindParamKind.Params)
-                            {
-                                assigned =
-                                    param.TryAssign(new PyObject[] { value });
-                            }
-                            else
-                            {
-                                // NOTE:
-                                // if kwarg is being assigned to a BoxedReturn
-                                // parameter and value is not a box, returns false
-                                assigned =
-                                    param.TryAssign(value);
-                            }
-
-                            if (assigned)
-                            {
-                                param.Distance =
-                                    GetDistance(ref prov, item, param);
-                                distance += param.Distance;
-
-                                pickedKWArgs++;
-                                continue;
-                            }
-                        }
+                        case ClassBase cb when cb.type.Valid:
+                            Unify(type, cb.type.Value.GetType(), inferred);
+                            continue;
                     }
 
-                    // NOTE:
-                    // now that we have checked kwargs for potential matches
-                    // and found none, lets look in the args to find one
-                    // for this param and compute distance.
-                    if (checkArgs)
+                    if (!type.IsGenericParameter || type.DeclaringMethod is null)
                     {
-                        // NOTE:
-                        // if this param is a capturing params[], walk
-                        // through all remaining args and add them to the
-                        // list of args for this capturing array.
-                        // compute distance based on type of the first arg.
-                        // this is always the last param in this loop.
-                        if (param.Kind == BindParamKind.Params)
+                        continue;
+                    }
+
+                    if (arg == Runtime.PyNone)
+                    {
+                        nullOnly[type.GenericParameterPosition] = true;
+                        continue;
+                    }
+
+                    if (param.Kind == BindParamKind.Params)
+                    {
+                        if (!TryGetManagedValue(arg, out object? item))
                         {
-                            // if there are remaining args, capture them
-                            if (argidx < prov.ArgsCount)
-                            {
-                                uint count = prov.ArgsCount - argidx;
-                                var values = new PyObject[count];
-                                for (uint ai = argidx,
-                                          vi = 0; ai < prov.ArgsCount; ai++, vi++)
-                                {
-                                    item = prov.GetArg(ai);
-                                    if (item != null)
-                                    {
-                                        values[vi] = new PyObject(item);
-
-                                        // compute distance on first arg
-                                        // that is being captured by params []
-                                        param.Distance =
-                                            GetDistance(ref prov, item, param);
-                                        distance += param.Distance;
-
-                                        argidx++;
-                                        pickedArgs++;
-                                        continue;
-                                    }
-                                }
-
-                                param.TryAssign(values);
-                            }
-
-                            // if args are already processsed, compute
-                            // a default distance for this param slot
-                            else if (argidx > prov.ArgsCount)
-                            {
-                                distance += ARG_GROUP_SIZE;
-                            }
-
-                            continue;
+                            return false;
                         }
+                        Unify(type, item?.GetType() ?? typeof(object), inferred);
+                        continue;
+                    }
 
-                        // NOTE:
-                        // otherwise look into the args and grab one
-                        // for this param if available. compute distance
-                        // based on type of the arg.
-                        else if (argidx < prov.ArgsCount)
-                        {
-                            item = prov.GetArg(argidx);
-                            if (item != null)
-                            {
-                                if (param.TryAssign(new PyObject(item)))
-                                {
-                                    param.Distance =
-                                        GetDistance(ref prov, item, param);
-                                    distance += param.Distance;
+                    if (!TryGetNaturalValue(arg, out object? value))
+                    {
+                        return false;
+                    }
+                    arguments[i] = value;
+                    converted[i] = true;
+                    Unify(type, value?.GetType() ?? typeof(object), inferred);
+                }
 
-                                    argidx++;
-                                    pickedArgs++;
-                                    continue;
-                                }
-                            }
-                        }
+                for (int t = 0; t < inferred.Length; t++)
+                {
+                    // None was the only hint: T is object
+                    if (inferred[t] is null && nullOnly[t])
+                    {
+                        inferred[t] = typeof(object);
+                    }
+
+                    if (inferred[t] is null)
+                    {
+                        Exceptions.SetError(Exceptions.TypeError,
+                            "can not infer generic type arguments; provide them explicitly");
+                        return false;
                     }
                 }
 
-                return pickedArgs == prov.ArgsCount
-                        && pickedKWArgs == prov.KWargsCount;
+                try
+                {
+                    method = ((MethodInfo)Method).MakeGenericMethod(inferred!);
+                    return true;
+                }
+                // T does not satisfy the method's constraints
+                catch (ArgumentException ex)
+                {
+                    Exceptions.SetError(Exceptions.TypeError, ex.Message);
+                    return false;
+                }
+            }
+
+            // A Python value as its own .NET type; anything without one stays a PyObject.
+            static bool TryGetNaturalValue(BorrowedReference arg, out object? value)
+            {
+                if (GetCLRType(arg) is null)
+                {
+                    Exceptions.Clear();
+                    value = new PyObject(arg);
+                    return true;
+                }
+                return TryGetManagedValue(arg, out value);
             }
         }
 
@@ -652,831 +1709,6 @@ namespace Python.Runtime
             }
         }
 
-        static bool TryBind(MethodBase[] methods,
-                            BorrowedReference args,
-                            BorrowedReference kwargs,
-                            bool allowRedirected,
-                            out BindSpec? spec,
-                            out BindError? error)
-        {
-            spec = default;
-            error = default;
-
-            ArgProvider provider = new(args, kwargs);
-
-            // Find any method that could accept this many args and kwargs
-            int index = 0;
-            BindSpec?[] specs = new BindSpec?[methods.Length];
-
-            foreach (MethodBase method in methods)
-            {
-                // NOTE:
-                // methods could be marked as Original, or Redirected.
-                // lets skip redirected methods if redirection is not allowed.
-                // redirection is usuall allowed so we check that first.
-                if (!allowRedirected && BindSpec.IsRedirected(method))
-                {
-                    continue;
-                }
-
-                if (TryBindByCount(method, ref provider,
-                                   out BindSpec? bindSpec))
-                {
-                    // if givenArgs==0 find the method with zero params.
-                    // that should take precedence over any other method
-                    // with optional params that could be called as .Foo()
-                    // without the optional params. This should make calling
-                    // zero-parameter functions faster.
-                    if (provider.GivenArgs == 0
-                            && bindSpec!.Parameters.Length == 0)
-                    {
-                        spec = bindSpec;
-                        return true;
-                    }
-
-                    specs[index] = bindSpec;
-                    index++;
-                }
-            }
-
-            return TryBindByValue(index, ref specs, ref provider,
-                                  out spec, out error);
-        }
-
-        // vertical filter
-        static bool TryBindByValue(int count,
-                                   ref BindSpec?[] specs,
-                                   ref ArgProvider prov,
-                                   out BindSpec? spec,
-                                   out BindError? error)
-        {
-            spec = null;
-            error = null;
-
-            if (count == 0)
-            {
-                error = BindError.NoMatchBindError;
-                return false;
-            }
-
-            uint ambigCount = 0;
-            MethodBase?[] ambigMethods = new MethodBase?[count];
-            uint closest = uint.MaxValue;
-            for (int sidx = 0; sidx < count; sidx++)
-            {
-                BindSpec mspec = specs[sidx]!;
-
-                if (!mspec.TryAssignArguments(ref prov, out uint distance))
-                {
-                    continue;
-                }
-
-                // NOTE:
-                // if method has the exact same distance,
-                // lets look at a few other properties to determine which
-                // method should be used. if can not automatically resolve
-                // the ambiguity, it will return an error with a list of
-                // ambiguous matches for the given args and kwargs.
-                if (distance == closest)
-                {
-                    // NOTE:
-                    // if there is a redirected method with same distance,
-                    // lets use that. redirected methods should be in order
-                    // of redirection e.g. origial->redirected->redirected
-                    if (BindSpec.IsRedirected(mspec!.Method))
-                    {
-                        ambigCount = 0;
-                        spec = mspec;
-                        continue;
-                    }
-
-                    // NOTE:
-                    // if method expands and other method does not, choose
-                    // the non-expanding one as it is more specific
-                    if (mspec!.Expands != spec!.Expands)
-                    {
-                        ambigCount = 0;
-                        spec = mspec!.Expands ? spec : mspec!;
-                        continue;
-                    }
-
-                    // NOTE:
-                    // if method has the same distance, lets use the one
-                    // with the least amount of optional parameters.
-                    // e.g. between .Foo(int) and .Foo(int, float=0)
-                    // we would pick the former since it is shorter.
-                    // we do not compute the optional parameters that do not
-                    // have a matching input arguments in the distance.
-                    // otherwise for example .Foo(double) might end up closer
-                    // than .Foo(float, float=0) when passing a float input,
-                    // since including optional float might push it further
-                    // away from computed distance for .Foo(double), depending
-                    // on the computed distance for the actual types.
-                    uint mspecOpts = mspec!.Required + mspec!.Optional;
-                    uint specOpts = spec!.Required + spec!.Optional;
-                    if (mspecOpts < specOpts)
-                    {
-                        ambigCount = 0;
-                        spec = mspec;
-                        continue;
-                    }
-                    else if (mspecOpts > specOpts)
-                    {
-                        continue;
-                    }
-
-                    // NOTE:
-                    // if method has the same distance, lets use the one
-                    // with the least amount of 'out' parameters.
-                    if (mspec!.Returns < spec!.Returns)
-                    {
-                        ambigCount = 0;
-                        spec = mspec;
-                        continue;
-                    }
-                    else if (mspec!.Returns > spec!.Returns)
-                    {
-                        continue;
-                    }
-
-                    // NOTE:
-                    // if none of the resolutions above worked out, return error
-                    if (prov.GivenArgs == 0)
-                    {
-                        goto ambiguousError;
-                    }
-
-                    // NOTE:
-                    // if method has the same distance, and have the least
-                    // optional parameters, and least amount of 'out' params,
-                    // lets look at distance computed for each parameter and
-                    // choose method which starts with closer params.
-                    // dotnet compiler detects this as ambiguous but since
-                    // python is dynamically typed, we can make an selection
-                    // in certain conditions and avoid the error.
-                    // e.g. when passing (short, int) or (int, short)
-                    // compiler will complain about ambiguous call between:
-                    // .Foo(short, short)
-                    // .Foo(int, int)
-                    // but we can choose the method with closer parameters
-                    // in order and therefore call:
-                    // .Foo(short, short) for (short, int) args
-                    // .Foo(int, int) for (int, short) args
-                    BindParam[] sparams = spec.Parameters;
-                    BindParam[] msparams = mspec!.Parameters;
-                    if (sparams.Length == msparams.Length)
-                    {
-                        for (int pidx = 0; pidx < sparams.Length; pidx++)
-                        {
-                            BindParam sp = sparams[pidx];
-                            BindParam mp = msparams[pidx];
-
-                            if (mp.Distance == sp.Distance)
-                            {
-                                continue;
-                            }
-                            else if (mp.Distance > sp.Distance)
-                            {
-                                break;
-                            }
-                            else
-                            {
-                                ambigCount = 0;
-                                spec = mspec;
-                                break;
-                            }
-                        }
-
-                        continue;
-                    }
-
-                // NOTE:
-                // if we get here, two methods have the same distance,
-                // and we were not able to resolve the ambiguity and choose
-                // one of the two. so lets add this to the list of
-                // ambiguous methods and increate the count.
-                // if a closer match is not later found, this method will
-                // return an ambiguous call error with these methods.
-                ambiguousError:
-                    if (ambigCount == 0)
-                    {
-                        ambigMethods[0] = spec.Method;
-                        ambigCount++;
-                    }
-
-                    ambigMethods[ambigCount] = mspec!.Method;
-                    ambigCount++;
-                }
-
-                else if (distance < closest)
-                {
-                    ambigCount = 0;
-                    closest = distance;
-                    spec = mspec;
-                }
-            }
-
-            if (ambigCount > 0)
-            {
-                MethodBase[] ambigs = new MethodBase[(int)ambigCount];
-                Array.Copy(ambigMethods, ambigs, ambigCount);
-
-                error = new AmbiguousBindError(ambigs);
-                return false;
-            }
-
-            if (spec is null)
-            {
-                error = new NoMatchBindError();
-                return false;
-            }
-
-            return true;
-        }
-
-        // horizontal filter
-        static bool TryBindByCount(MethodBase method,
-                                   ref ArgProvider prov,
-                                   out BindSpec? spec)
-        {
-            spec = default;
-
-            ParameterInfo[] mparams = method.GetParameters();
-
-            BindParam[] argSpecs;
-            uint required = 0;
-            uint optional = 0;
-            uint returns = 0;
-            bool expands = false;
-
-            if (OperatorMethod.IsOperatorMethod(method) is bool isOperator
-                    && isOperator)
-            {
-                bool isReverse = isOperator
-                              && OperatorMethod.IsReverse(method);
-
-                if (isReverse && OperatorMethod.IsComparisonOp(method))
-                {
-                    return false;
-                }
-
-                // binary operators
-                if (mparams.Length == 2)
-                {
-                    required = 1;
-
-                    if (isReverse)
-                    {
-                        argSpecs = new BindParam[]
-                        {
-                            new BindParam(mparams[0], BindParamKind.Default),
-                            new BindParam(mparams[1], BindParamKind.Self),
-                        };
-                    }
-                    else
-                    {
-                        argSpecs = new BindParam[]
-                        {
-                            new BindParam(mparams[0], BindParamKind.Self),
-                            new BindParam(mparams[1], BindParamKind.Default),
-                        };
-                    }
-                }
-
-                // unary operators
-                // NOTE:
-                // we are not checking for mparams.Length == 0 since that
-                // should never happen. Operator methods must have at least
-                // one parameter (operand) defined.
-                else
-                {
-                    argSpecs = new BindParam[]
-                    {
-                        new BindParam(mparams[0], BindParamKind.Self),
-                    };
-                }
-
-                goto matched;
-            }
-
-            if (mparams.Length > 0)
-            {
-                uint kwargCount = prov.KWargsCount;
-                uint length = (uint)mparams.Length;
-                uint last = length - 1;
-
-                // check if last parameter is a params array.
-                // this means method can accept parameters
-                // beyond what is required.
-                expands =
-                    Attribute.IsDefined(mparams[last],
-                                        typeof(ParamArrayAttribute));
-
-                argSpecs = new BindParam[length];
-
-                for (uint i = 0; i < length; i++)
-                {
-                    ParameterInfo param = mparams[i];
-
-                    if (prov.Keys.Contains(param.Name))
-                    {
-                        kwargCount--;
-                    }
-
-                    // `.IsOut` is false for `ref` parameters
-                    // NOTE:
-                    // some out parameters might specify `[In]` attribute.
-                    // lets make sure we count them as required.
-                    // e.g. Stream.Read([In][Out] char[] ...
-                    if (param.IsOut
-                            && param.GetCustomAttribute<InAttribute>() is null)
-                    {
-                        argSpecs[i] =
-                            new BindParam(param, BindParamKind.BoxedReturn);
-
-                        returns++;
-                    }
-                    else if (param.ParameterType.IsByRef)
-                    {
-                        BindParamKind kind = param.IsOut ?
-                                BindParamKind.BoxedReturn
-                              : BindParamKind.Return;
-
-                        argSpecs[i] =
-                            new BindParam(param, kind);
-
-                        returns++;
-                        required++;
-                    }
-                    // `.IsOptional` will be true if the parameter has
-                    // a default value, or if the parameter has the `[Optional]`
-                    // attribute specified.
-                    else if (param.IsOptional)
-                    {
-                        argSpecs[i] =
-                            new BindParam(param, BindParamKind.Option);
-
-                        optional++;
-                    }
-                    // if this is last param, and method is expanding,
-                    // mark this slot as catcher for all extra args
-                    else if (expands && i == last)
-                    {
-                        argSpecs[i] =
-                            new BindParam(param, BindParamKind.Params);
-                    }
-                    // otherwise this is a required parameter
-                    else
-                    {
-                        argSpecs[i] =
-                            new BindParam(param, BindParamKind.Default);
-
-                        required++;
-                    }
-                }
-
-                // we count back the kwargs as we see them during loop above.
-                // by the end if `kwargCount > 0` it means one of the kwargs
-                // is not in this method signature so we won't match.
-                if (kwargCount > 0)
-                {
-                    goto not_matched;
-                }
-
-                // no point in processing the rest if we know this
-                if (required > prov.GivenArgs)
-                {
-                    goto not_matched;
-                }
-            }
-            else
-            {
-                argSpecs = Array.Empty<BindParam>();
-            }
-
-            // we compare required number of arguments for this
-            // method with the number of total arguments provided
-            if (prov.GivenArgs == required)
-            {
-                goto matched;
-            }
-
-            else if (required < prov.GivenArgs
-                        && (prov.GivenArgs <= (required + optional + returns)
-                                || expands))
-            {
-                goto matched;
-            }
-
-            else
-            {
-                goto not_matched;
-            }
-
-        not_matched:
-            return false;
-
-        matched:
-            spec = new BindSpec(method,
-                                ref argSpecs,
-                                required,
-                                optional,
-                                returns,
-                                expands);
-            return true;
-        }
-
-        #region Distance Compute Logic
-        static readonly Dictionary<int, uint> s_primDistMap =
-            new()
-            {
-                [ComputeKey(TypeCode.UInt64, TypeCode.UInt64)] = 0,
-                [ComputeKey(TypeCode.UInt64, TypeCode.Int64)] = 1,
-                [ComputeKey(TypeCode.UInt64, TypeCode.UInt32)] = 2,
-                [ComputeKey(TypeCode.UInt64, TypeCode.Int32)] = 3,
-                [ComputeKey(TypeCode.UInt64, TypeCode.UInt16)] = 4,
-                [ComputeKey(TypeCode.UInt64, TypeCode.Int16)] = 5,
-                [ComputeKey(TypeCode.UInt64, TypeCode.Double)] = 6,
-                [ComputeKey(TypeCode.UInt64, TypeCode.Single)] = 7,
-                [ComputeKey(TypeCode.UInt64, TypeCode.Decimal)] = 7,
-                [ComputeKey(TypeCode.UInt64, TypeCode.Object)] = uint.MaxValue - 1,
-                [ComputeKey(TypeCode.UInt64, TypeCode.DateTime)] = uint.MaxValue,
-
-                [ComputeKey(TypeCode.UInt32, TypeCode.UInt32)] = 0,
-                [ComputeKey(TypeCode.UInt32, TypeCode.Int32)] = 1,
-                [ComputeKey(TypeCode.UInt32, TypeCode.UInt16)] = 2,
-                [ComputeKey(TypeCode.UInt32, TypeCode.Int16)] = 3,
-
-                [ComputeKey(TypeCode.UInt16, TypeCode.UInt16)] = 0,
-                [ComputeKey(TypeCode.UInt16, TypeCode.Int16)] = 1,
-
-                [ComputeKey(TypeCode.Int64, TypeCode.Int64)] = 0,
-                [ComputeKey(TypeCode.Int32, TypeCode.Int32)] = 0,
-                [ComputeKey(TypeCode.Int16, TypeCode.Int16)] = 0,
-            };
-
-#if METHODBINDER_SOLVER_NEW_CACHE_DIST
-        static readonly Dictionary<int, uint> s_distMap = new();
-#endif
-
-        // https://stackoverflow.com/a/17268854/2350244
-        // assumes two groups of parameters, hence *2
-        // Foo<generic-params>(params)
-        static readonly uint MAX_ARGS =
-            Convert.ToUInt32(Math.Pow(2, 16)) * 2;
-
-        static readonly uint TOTAL_MAX_DIST = uint.MaxValue;
-        static readonly uint FUNC_GROUP_SIZE = TOTAL_MAX_DIST / 4;
-        static readonly uint ARG_GROUP_SIZE = FUNC_GROUP_SIZE / MAX_ARGS;
-        static readonly uint ARG_MAX_DIST = ARG_GROUP_SIZE;
-        static readonly uint TYPE_GROUP_SIZE = ARG_GROUP_SIZE / 4;
-        static readonly uint TYPE_MAX_DIST = TYPE_GROUP_SIZE;
-        static readonly uint MATCH_GROUP_SIZE = TYPE_GROUP_SIZE / 4;
-        static readonly uint MATCH_MAX_DIST = MATCH_GROUP_SIZE;
-
-        // NOTE:
-        // this method computes a distance between the given python arg
-        // and the expected type iin target parameter slot.
-        // However in many cases when given arg is a python object,
-        // the final clr type of arg is unknown. therefore we return the
-        // max distance for these and let the arg converter attempt
-        // to convert the type to the expected type later.
-        static uint GetDistance(ref ArgProvider prov,
-                                BorrowedReference arg, BindParam param)
-        {
-            Type toType = param.Type;
-
-            if (param.Kind == BindParamKind.Params
-                    && Runtime.PySequence_Check(arg))
-            {
-                uint argsCount = (uint)Runtime.PySequence_Size(arg);
-                if (argsCount > 0)
-                {
-                    using var iterObj = Runtime.PyObject_GetIter(arg);
-                    using var item = Runtime.PyIter_Next(iterObj.Borrow());
-                    if (!item.IsNull()
-                            && prov.GetCLRType(item.Borrow()) is Type argType)
-                    {
-                        return GetDistance(arg, argType, toType);
-                    }
-                }
-            }
-
-            else if (prov.GetCLRType(arg) is Type argType)
-            {
-                return GetDistance(arg, argType, toType);
-            }
-
-            else if (arg == null
-                        || Runtime.None == arg
-                        || toType == typeof(object)
-                        || toType == typeof(PyObject))
-            {
-                return 0;
-            }
-
-            return ARG_MAX_DIST;
-        }
-
-        // 0 <= x <= ARG_MAX_DIST
-        static uint GetDistance(BorrowedReference arg, Type from, Type to)
-        {
-#if METHODBINDER_SOLVER_NEW_CACHE_DIST
-            int key = ComputeKey(from, to);
-            if (s_distMap.TryGetValue(key, out uint dist))
-            {
-                return dist;
-            }
-#endif
-
-            uint distance = 0;
-
-            // NOTE:
-            // shift distance based on type kind
-            if (to.IsByRef)
-            {
-                distance += TYPE_GROUP_SIZE;
-            }
-
-            // NOTE:
-            // shift distance based on match kind
-            // exact match
-            if (from == to)
-            {
-                goto computed;
-            }
-
-            if (from.IsArray != to.IsArray)
-            {
-                distance = ARG_MAX_DIST;
-                goto computed;
-            }
-
-            if ((from.IsArray && to.IsArray)
-                    && (from.GetElementType() != to.GetElementType()))
-            {
-                distance = ARG_MAX_DIST;
-                goto computed;
-            }
-
-            // derived match
-            distance += MATCH_GROUP_SIZE;
-            if (TryGetDerivedTypeDistance(from, to, out uint derivedDistance))
-            {
-                distance += derivedDistance;
-                goto computed;
-            }
-
-            // generic match
-            distance += MATCH_GROUP_SIZE;
-            if (to.IsGenericParameter)
-            {
-                goto computed;
-            }
-
-            // convert/cast match
-            distance += MATCH_GROUP_SIZE;
-            if (TryGetCastTypeDistance(from, to, out uint castDistance))
-            {
-                distance += castDistance;
-            }
-            else if (TryGetIteratorDistance(arg, to, out uint iterDistance))
-            {
-                return distance + iterDistance;
-            }
-            else if (TryGetManagedValue(arg, to, out object? _, setError: false))
-            {
-                distance += MATCH_MAX_DIST - 1;
-            }
-            else
-            {
-                distance = ARG_MAX_DIST;
-            }
-
-        computed:
-#if METHODBINDER_SOLVER_NEW_CACHE_DIST
-            s_distMap[key] = distance;
-#endif
-            return distance;
-        }
-
-        // zero when types are equal.
-        // assumes derived is assignable to @base
-        // 0 <= x <= MATCH_MAX_DIST
-        static bool TryGetDerivedTypeDistance(Type from, Type to, out uint distance)
-        {
-            distance = default;
-
-            if (!to.IsAssignableFrom(from))
-            {
-                return false;
-            }
-
-            uint depth = 0;
-
-            if (from.IsInterface)
-            {
-                // assumes to.IsInterface==true
-                // since we have checked assignability before
-                Type[] interfaces = from.GetInterfaces();
-                for (int i = 0; i < interfaces.Length; i++)
-                {
-                    depth++;
-                    if (interfaces[i] == to)
-                    {
-                        break;
-                    }
-                }
-
-                distance = depth;
-                return true;
-            }
-
-            Type t = from;
-            while (t != null
-                    && t != to
-                    && depth < MATCH_MAX_DIST)
-            {
-                depth++;
-                t = t.BaseType;
-            }
-
-            distance = depth;
-            return true;
-        }
-
-        // Generators and other iterators can only be read once. Test-converting one
-        // here would empty it before the real call, so assume it will convert.
-        // 0 <= x <= MATCH_MAX_DIST
-        static bool TryGetIteratorDistance(BorrowedReference arg, Type to, out uint distance)
-        {
-            distance = default;
-
-            if (to == typeof(string)
-                    || !typeof(System.Collections.IEnumerable).IsAssignableFrom(to)
-                    || !Runtime.PyIter_Check(arg))
-            {
-                return false;
-            }
-
-            distance = MATCH_MAX_DIST - 1;
-            return true;
-        }
-
-        // zero when types are equal.
-        // 0 <= x <= MATCH_MAX_DIST
-        static bool TryGetCastTypeDistance(Type from, Type to, out uint distance)
-        {
-            distance = default;
-
-            TypeCode fromCode = Type.GetTypeCode(from);
-            TypeCode toCode = Type.GetTypeCode(to);
-
-            if (fromCode > TypeCode.DBNull
-                    || toCode > TypeCode.DBNull)
-            {
-                int key = ComputeKey(fromCode, toCode);
-
-                if (s_primDistMap.TryGetValue(key, out distance))
-                {
-                    return true;
-                }
-
-                if (TryGetPrecedence(from, out uint fromPrec)
-                        && TryGetPrecedence(to, out uint toPrec))
-                {
-                    distance = (uint)Math.Abs((int)toPrec - (int)fromPrec);
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        static bool TryGetPrecedence(Type of, out uint predecence)
-        {
-            predecence = 0;
-
-            if (of is null)
-            {
-                return false;
-            }
-
-            if (!of.IsPrimitive)
-            {
-                return false;
-            }
-
-            if (of.IsArray)
-            {
-                return TryGetPrecedence(of.GetElementType(), out predecence);
-            }
-
-            if (typeof(nuint) == of)
-            {
-                predecence = 30;
-                return true;
-            }
-
-            if (typeof(nint) == of)
-            {
-                predecence = 31;
-                return true;
-            }
-
-            switch (Type.GetTypeCode(of))
-            {
-                // 0-9
-                case TypeCode.Object:
-                    return false;
-
-                // 10-19
-                case TypeCode.UInt64:
-                    predecence = 10;
-                    return true;
-
-                case TypeCode.UInt32:
-                    predecence = 11;
-                    return true;
-
-                case TypeCode.UInt16:
-                    predecence = 12;
-                    return true;
-
-                case TypeCode.Int64:
-                    predecence = 13;
-                    return true;
-
-                case TypeCode.Int32:
-                    predecence = 14;
-                    return true;
-
-                case TypeCode.Int16:
-                    predecence = 15;
-                    return true;
-
-                case TypeCode.Char:
-                    predecence = 16;
-                    return true;
-
-                case TypeCode.SByte:
-                    predecence = 17;
-                    return true;
-
-                case TypeCode.Byte:
-                    predecence = 18;
-                    return true;
-
-                // 20-29
-
-                // 30-39
-                // UIntPtr  |   nuint
-                // IntPtr   |   nint
-
-                // 40-49
-                case TypeCode.Single:
-                    predecence = 40;
-                    return true;
-
-                case TypeCode.Double:
-                    predecence = 41;
-                    return true;
-
-                // 50-59
-                case TypeCode.String:
-                    predecence = 50;
-                    return true;
-
-                // 60-69
-                case TypeCode.Boolean:
-                    predecence = 60;
-                    return true;
-            }
-
-            return false;
-        }
-
-        static int ComputeKey(Type from, Type to)
-        {
-            unchecked
-            {
-                int hash = 17;
-                hash = hash * 23 + from.GetHashCode();
-                hash = hash * 23 + to.GetHashCode();
-                return hash;
-            }
-        }
-
-        static int ComputeKey(TypeCode from, TypeCode to)
-        {
-            unchecked
-            {
-                int hash = 17;
-                hash = hash * 23 + (int)from;
-                hash = hash * 23 + (int)to;
-                return hash;
-            }
-        }
         #endregion
     }
 }
