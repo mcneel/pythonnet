@@ -11,6 +11,10 @@ namespace Python.Runtime
     internal class FieldObject : ExtensionType
     {
         private MaybeFieldInfo info;
+        [NonSerialized]
+        private DirectReader.Reader? reader;
+        [NonSerialized]
+        private bool readerBuilt;
 
         public FieldObject(FieldInfo info)
         {
@@ -67,6 +71,16 @@ namespace Python.Runtime
                 {
                     Exceptions.SetError(Exceptions.TypeError, "instance is not a clr object");
                     return default;
+                }
+                if (!self.readerBuilt)
+                {
+                    self.reader = DirectReader.ForField(info);
+                    self.readerBuilt = true;
+                }
+                // only when the target fits; otherwise reflection reports the mismatch as before
+                if (self.reader is { } read && info.DeclaringType!.IsInstanceOfType(co.inst))
+                {
+                    return read(co.inst);
                 }
                 result = info.GetValue(co.inst);
                 return Converter.ToPython(result, info.FieldType);

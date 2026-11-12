@@ -16,6 +16,10 @@ namespace Python.Runtime
         private MethodInfo? getter;
         [NonSerialized]
         private MethodInfo? setter;
+        [NonSerialized]
+        private DirectReader.Reader? reader;
+        [NonSerialized]
+        private bool readerBuilt;
 
         public PropertyObject(PropertyInfo md)
         {
@@ -75,6 +79,25 @@ namespace Python.Runtime
             if (co == null)
             {
                 return Exceptions.RaiseTypeError("invalid target");
+            }
+
+            if (!self.readerBuilt)
+            {
+                self.reader = DirectReader.ForProperty(getter);
+                self.readerBuilt = true;
+            }
+            // only when the target fits; otherwise reflection reports the mismatch as before
+            if (self.reader is { } read && getter.DeclaringType!.IsInstanceOfType(co.inst))
+            {
+                try
+                {
+                    return read(co.inst);
+                }
+                catch (Exception e)
+                {
+                    Exceptions.SetError(e);
+                    return default;
+                }
             }
 
             try
