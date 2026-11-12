@@ -304,6 +304,9 @@ namespace Python.Runtime
         // volatile + lock: first-time GetMethods() races would otherwise sort `list`
         // concurrently and publish a partial methods array (free-threaded Python)
         [NonSerialized] volatile bool methodsInit = false;
+        // the overloads Invoke picks from, with its remembered picks;
+        // dropped whenever `list` changes or is re-sorted
+        [NonSerialized] volatile Overloads? callable;
         readonly List<MaybeMethodBase> list;
 
         public bool AllowRedirected = true;
@@ -327,6 +330,7 @@ namespace Python.Runtime
             {
                 list.Add(m);
                 methodsInit = false;
+                callable = null;
             }
         }
 
@@ -336,6 +340,7 @@ namespace Python.Runtime
             {
                 list.AddRange(methods.Select(m => new MaybeMethodBase(m)));
                 methodsInit = false;
+                callable = null;
             }
         }
 
@@ -354,7 +359,30 @@ namespace Python.Runtime
                 list.Sort(new Sorter());
                 methods = (from method in list where method.Valid select method.Value).ToArray();
                 methodsInit = true;
+                callable = null;
                 return methods!;
+            }
+        }
+
+        sealed class Overloads
+        {
+            public readonly MethodBase[] Methods;
+            public readonly ChoiceCache Choices = new();
+
+            public Overloads(MethodBase[] methods) => Methods = methods;
+        }
+
+        Overloads GetOverloads()
+        {
+            Overloads? result = callable;
+            if (result is not null)
+            {
+                return result;
+            }
+
+            lock (list)
+            {
+                return callable ??= new Overloads((from m in list where m.Valid select m.Value).ToArray());
             }
         }
 
@@ -371,7 +399,7 @@ namespace Python.Runtime
             else
             {
                 MethodBase[] methods = new MethodBase[] { targetMethod };
-                return Invoke(inst, args, kwargs, methods);
+                return Invoke(inst, args, kwargs, methods, null);
             }
         }
 
@@ -379,14 +407,15 @@ namespace Python.Runtime
                                      BorrowedReference args,
                                      BorrowedReference kwargs)
         {
-            MethodBase[] methods = (from m in list where m.Valid select m.Value).ToArray();
-            return Invoke(inst, args, kwargs, methods);
+            Overloads overloads = GetOverloads();
+            return Invoke(inst, args, kwargs, overloads.Methods, overloads.Choices);
         }
 
         NewReference Invoke(BorrowedReference inst,
                             BorrowedReference args,
                             BorrowedReference kwargs,
-                            MethodBase[] methods)
+                            MethodBase[] methods,
+                            ChoiceCache? choices)
         {
             if (methods.Length == 0)
             {
@@ -408,7 +437,9 @@ namespace Python.Runtime
                 methods = GetStaticallyCallableMethods(methods);
             }
 
-            if (TryBind(methods, args, kwargs, AllowRedirected, out BindSpec? spec, out BindError? error))
+            // calls through the class see only static methods, and AllowRedirected hides some
+            int variant = (inst == null ? 1 : 0) | (AllowRedirected ? 2 : 0);
+            if (TryBind(methods, args, kwargs, AllowRedirected, choices, variant, out BindSpec? spec, out BindError? error))
             {
                 MethodBase match = spec!.Method;
                 BindParam[] bindParams = spec.Parameters;

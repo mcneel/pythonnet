@@ -1,8 +1,10 @@
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace Python.Runtime
@@ -18,32 +20,85 @@ namespace Python.Runtime
     //              argument that differs decides. Otherwise tie-breaks apply.
     //   4. BIND    convert the winner's arguments and call it.
     //
-    // Caching plan (not implemented; keep each step a pure function of its key):
-    //   - SHAPE depends only on the MethodBase: cache the parameter kinds per method.
-    //   - MATCH depends only on (argument CLR type, parameter type) when the
-    //     argument has a CLR type: cache Match per type pair.
-    //   - SELECT depends on (method group, argument kinds and types): cache the
-    //     winner per method group, keyed by that tuple.
+    // Caching:
+    //   - SHAPE: each method's parameters are read once and kept (MethodShape).
+    //   - MATCH + SELECT: each method list remembers which overload it picked for
+    //     the argument types of a call (CallKey). When picking had to look at an
+    //     argument's value, not just its type, the pick is not remembered.
     partial class MethodBinder
     {
         #region Entry
 
+        // `choices` holds earlier picks for this `methods` list; null means don't remember.
+        // `variant` keeps apart calls on the same list that can pick differently.
         static bool TryBind(MethodBase[] methods,
                             BorrowedReference args,
                             BorrowedReference kwargs,
                             bool allowRedirected,
+                            ChoiceCache? choices,
+                            int variant,
                             out BindSpec? spec,
                             out BindError? error)
+        {
+            var call = new CallArgs(args, kwargs);
+
+            // with a single method there is nothing to choose, so nothing to remember
+            if (choices is null || methods.Length < 2)
+            {
+                return TrySolve(methods, ref call, allowRedirected, out spec, out error);
+            }
+
+            var key = new CallKey(ref call, variant);
+            if (choices.TryGetValue(key, out Choice choice) && TryReuse(choice, ref call, out spec))
+            {
+                error = null;
+                return true;
+            }
+
+            if (!TrySolve(methods, ref call, allowRedirected, out spec, out error))
+            {
+                return false;
+            }
+
+            if (!call.ReadValues)
+            {
+                choices.Add(key, new Choice(spec!));
+            }
+            return true;
+        }
+
+        // Fits this call's arguments to an overload picked earlier, skipping the comparison.
+        static bool TryReuse(Choice choice, ref CallArgs call, out BindSpec? spec)
+        {
+            if (!TryShape(choice.Method, ref call, out spec) || !TryMatch(spec!, ref call, grade: false, out _))
+            {
+                spec = null;
+                return false;
+            }
+
+            foreach (BindParam slot in spec!.Parameters)
+            {
+                if (slot.Kind == BindParamKind.Params)
+                {
+                    slot.AsArray = choice.AsArray;
+                }
+            }
+            return true;
+        }
+
+        static bool TrySolve(MethodBase[] methods,
+                             ref CallArgs call,
+                             bool allowRedirected,
+                             out BindSpec? spec,
+                             out BindError? error)
         {
             spec = null;
             error = null;
 
-            var call = new CallArgs(args, kwargs);
-
             var shaped = new List<BindSpec>(methods.Length);
             foreach (MethodBase method in methods)
             {
-                if (!allowRedirected && BindSpec.IsRedirected(method))
+                if (!allowRedirected && MethodShape.Of(method).IsRedirected)
                 {
                     continue;
                 }
@@ -81,6 +136,111 @@ namespace Python.Runtime
 
         #endregion
 
+        #region Cache
+
+        // What the pick depends on when only argument types were looked at: the keyword
+        // names, each argument's type, which integer types an int fits, and whether a
+        // string is one character long.
+        private sealed class CallKey : IEquatable<CallKey>
+        {
+            readonly int _variant;
+            readonly string[] _kwNames;
+            readonly (ArgKind Kind, Type From, int Detail)[] _args;
+            readonly int _hash;
+
+            public CallKey(ref CallArgs call, int variant)
+            {
+                _variant = variant;
+                _kwNames = call.KwNames;
+                _args = new (ArgKind, Type, int)[call.Total];
+
+                int hash = variant;
+                for (int i = 0; i < _args.Length; i++)
+                {
+                    ArgInfo info = call.Info(i);
+                    int detail = info.Kind switch
+                    {
+                        ArgKind.Int => info.IntFitMask(),
+                        ArgKind.Str => info.StringLength == 1 ? 1 : 0,
+                        ArgKind.Clr when info.From == typeof(string) => info.StringLength == 1 ? 1 : 0,
+                        _ => 0,
+                    };
+                    _args[i] = (info.Kind, info.From, detail);
+                    hash = (hash * 31) ^ info.From.GetHashCode() ^ ((int)info.Kind << 24) ^ detail;
+                }
+                foreach (string name in _kwNames)
+                {
+                    hash = (hash * 31) ^ name.GetHashCode();
+                }
+                _hash = hash;
+            }
+
+            public override int GetHashCode() => _hash;
+
+            public override bool Equals(object obj) => obj is CallKey other && Equals(other);
+
+            public bool Equals(CallKey other)
+            {
+                if (_hash != other._hash || _variant != other._variant
+                        || _args.Length != other._args.Length || _kwNames.Length != other._kwNames.Length)
+                {
+                    return false;
+                }
+
+                for (int i = 0; i < _args.Length; i++)
+                {
+                    if (_args[i] != other._args[i])
+                    {
+                        return false;
+                    }
+                }
+
+                for (int i = 0; i < _kwNames.Length; i++)
+                {
+                    if (_kwNames[i] != other._kwNames[i])
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+
+        // An earlier pick, and whether its params[] parameter took a passed array as-is.
+        private readonly struct Choice
+        {
+            public readonly MethodBase Method;
+            public readonly bool AsArray;
+
+            public Choice(BindSpec spec)
+            {
+                Method = spec.Method;
+                AsArray = Array.Exists(spec.Parameters, p => p.Kind == BindParamKind.Params && p.AsArray);
+            }
+        }
+
+        // Earlier picks for one method list. Safe across threads; emptied once it holds 64.
+        private sealed class ChoiceCache
+        {
+            const int Limit = 64;
+
+            readonly ConcurrentDictionary<CallKey, Choice> _choices = new();
+
+            public bool TryGetValue(CallKey key, out Choice choice) => _choices.TryGetValue(key, out choice);
+
+            public void Add(CallKey key, Choice choice)
+            {
+                // counting is slow, but this only runs after a full pick
+                if (_choices.Count >= Limit)
+                {
+                    _choices.Clear();
+                }
+                _choices[key] = choice;
+            }
+        }
+
+        #endregion
+
         #region Call arguments
 
         // Python args and kwargs of one call. Lives for that call only.
@@ -113,6 +273,22 @@ namespace Python.Runtime
             // what kind of value an argument is; worked out once per call
             public readonly ArgInfo Info(int index)
                 => _infos[index] ??= ArgInfo.Of(this[index]);
+
+            // true when picking looked at an argument's value, not just its type
+            public readonly bool ReadValues
+            {
+                get
+                {
+                    foreach (ArgInfo? info in _infos)
+                    {
+                        if (info is { ValueDependent: true })
+                        {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+            }
 
             public readonly int KwIndex(string name)
             {
@@ -168,6 +344,9 @@ namespace Python.Runtime
             public long Signed;                // for Int, when it fits a long
             public ulong Unsigned;             // for Int, when it only fits a ulong
             public IntRange Range;             // for Int
+
+            // picking looked at this argument's value, so the pick can't be reused for other values
+            public bool ValueDependent;
 
             public static ArgInfo Of(BorrowedReference arg)
             {
@@ -287,6 +466,20 @@ namespace Python.Runtime
                     _ => false,
                 };
             }
+
+            // one bit for each integer type this int fits
+            public int IntFitMask()
+            {
+                int mask = 0;
+                for (TypeCode code = TypeCode.Char; code <= TypeCode.UInt64; code++)
+                {
+                    if (IntFits(code))
+                    {
+                        mask |= 1 << (int)code;
+                    }
+                }
+                return mask;
+            }
         }
 
         private enum IntRange : byte
@@ -316,110 +509,140 @@ namespace Python.Runtime
         {
             spec = null;
 
-            ParameterInfo[] mparams = method.GetParameters();
+            MethodShape shape = MethodShape.Of(method);
+            ParameterInfo[] mparams = shape.Parameters;
 
-            BindParam[] argSpecs;
-            uint required = 0;
-            uint optional = 0;
-            uint returns = 0;
-            bool expands = false;
-
-            if (OperatorMethod.IsOperatorMethod(method))
+            if (shape.IsOperator)
             {
-                bool isReverse = OperatorMethod.IsReverse(method);
-                if (isReverse && OperatorMethod.IsComparisonOp(method))
+                if (shape.NeverMatches || call.Total != shape.Required)
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                // a keyword that names no parameter of this method
+                int kwLeft = call.KwNames.Length;
+                for (int i = 0; i < mparams.Length && kwLeft > 0; i++)
+                {
+                    if (call.KwIndex(mparams[i].Name) >= 0)
+                    {
+                        kwLeft--;
+                    }
+                }
+                if (kwLeft > 0)
                 {
                     return false;
                 }
 
-                if (mparams.Length == 2)
-                {
-                    required = 1;
-                    argSpecs = isReverse
-                        ? new[] { new BindParam(mparams[0], BindParamKind.Default), new BindParam(mparams[1], BindParamKind.Self) }
-                        : new[] { new BindParam(mparams[0], BindParamKind.Self), new BindParam(mparams[1], BindParamKind.Default) };
-                }
-                else
-                {
-                    // operators always have at least one operand
-                    argSpecs = new[] { new BindParam(mparams[0], BindParamKind.Self) };
-                }
-
-                if (call.Total != required)
+                uint given = (uint)call.Total;
+                uint required = shape.Required;
+                bool fits = given == required
+                         || (required < given && (given <= required + shape.Optional + shape.Returns || shape.Expands));
+                if (!fits)
                 {
                     return false;
                 }
-
-                spec = new BindSpec(method, argSpecs, required, optional, returns, expands);
-                return true;
             }
 
-            int kwLeft = call.KwNames.Length;
-            argSpecs = new BindParam[mparams.Length];
-
-            if (mparams.Length > 0)
+            var argSpecs = new BindParam[shape.Kinds.Length];
+            for (int i = 0; i < argSpecs.Length; i++)
             {
+                argSpecs[i] = new BindParam(mparams[i], shape.Kinds[i]);
+            }
+
+            spec = new BindSpec(method, argSpecs, shape.Required, shape.Optional, shape.Returns, shape.Expands);
+            return true;
+        }
+
+        // A method's parameters, read once per method because reflection is slow.
+        private sealed class MethodShape
+        {
+            static readonly ConditionalWeakTable<MethodBase, MethodShape> s_cache = new();
+            static readonly ConditionalWeakTable<MethodBase, MethodShape>.CreateValueCallback s_create = m => new MethodShape(m);
+
+            public static MethodShape Of(MethodBase method) => s_cache.GetValue(method, s_create);
+
+            public readonly ParameterInfo[] Parameters;
+            public readonly BindParamKind[] Kinds;
+            public readonly uint Required;
+            public readonly uint Optional;
+            public readonly uint Returns;
+            public readonly bool Expands;
+            public readonly bool IsOperator;
+            public readonly bool NeverMatches;  // reversed comparison operators are never picked
+            public readonly bool IsRedirected;
+            public readonly bool IsExtension;
+
+            MethodShape(MethodBase method)
+            {
+                Parameters = method.GetParameters();
+                Kinds = new BindParamKind[Parameters.Length];
+                IsRedirected = method.GetCustomAttribute<RedirectedMethod>() != null;
+                IsExtension = method.IsDefined(typeof(ExtensionAttribute), false);
+
+                ParameterInfo[] mparams = Parameters;
+
+                if (OperatorMethod.IsOperatorMethod(method))
+                {
+                    IsOperator = true;
+                    bool isReverse = OperatorMethod.IsReverse(method);
+                    NeverMatches = isReverse && OperatorMethod.IsComparisonOp(method);
+
+                    if (mparams.Length == 2)
+                    {
+                        Required = 1;
+                        Kinds[0] = isReverse ? BindParamKind.Default : BindParamKind.Self;
+                        Kinds[1] = isReverse ? BindParamKind.Self : BindParamKind.Default;
+                    }
+                    else
+                    {
+                        // operators always have at least one operand
+                        Kinds = new[] { BindParamKind.Self };
+                    }
+                    return;
+                }
+
+                if (mparams.Length == 0)
+                {
+                    return;
+                }
+
                 int last = mparams.Length - 1;
-                expands = Attribute.IsDefined(mparams[last], typeof(ParamArrayAttribute));
+                Expands = Attribute.IsDefined(mparams[last], typeof(ParamArrayAttribute));
 
                 for (int i = 0; i < mparams.Length; i++)
                 {
                     ParameterInfo param = mparams[i];
 
-                    if (kwLeft > 0 && call.KwIndex(param.Name) >= 0)
-                    {
-                        kwLeft--;
-                    }
-
                     // `.IsOut` is false for `ref`. [In][Out] arrays (e.g. Stream.Read) are inputs.
                     if (param.IsOut && param.GetCustomAttribute<InAttribute>() is null)
                     {
-                        argSpecs[i] = new BindParam(param, BindParamKind.BoxedReturn);
-                        returns++;
+                        Kinds[i] = BindParamKind.BoxedReturn;
+                        Returns++;
                     }
                     else if (param.ParameterType.IsByRef)
                     {
-                        argSpecs[i] = new BindParam(param, param.IsOut ? BindParamKind.BoxedReturn : BindParamKind.Return);
-                        returns++;
-                        required++;
+                        Kinds[i] = param.IsOut ? BindParamKind.BoxedReturn : BindParamKind.Return;
+                        Returns++;
+                        Required++;
                     }
                     else if (param.IsOptional)
                     {
-                        argSpecs[i] = new BindParam(param, BindParamKind.Option);
-                        optional++;
+                        Kinds[i] = BindParamKind.Option;
+                        Optional++;
                     }
-                    else if (expands && i == last)
+                    else if (Expands && i == last)
                     {
-                        argSpecs[i] = new BindParam(param, BindParamKind.Params);
+                        Kinds[i] = BindParamKind.Params;
                     }
                     else
                     {
-                        argSpecs[i] = new BindParam(param, BindParamKind.Default);
-                        required++;
+                        Kinds[i] = BindParamKind.Default;
+                        Required++;
                     }
                 }
-
-                // a keyword that names no parameter of this method
-                if (kwLeft > 0)
-                {
-                    return false;
-                }
             }
-            else if (kwLeft > 0)
-            {
-                return false;
-            }
-
-            uint given = (uint)call.Total;
-            bool fits = given == required
-                     || (required < given && (given <= required + optional + returns || expands));
-            if (!fits)
-            {
-                return false;
-            }
-
-            spec = new BindSpec(method, argSpecs, required, optional, returns, expands);
-            return true;
         }
 
         #endregion
@@ -829,11 +1052,12 @@ namespace Python.Runtime
                 case ArgKind.Bool:
                 case ArgKind.Int:
                     // only a codec can take an int the type rules refused
-                    return PyObjectConversions.TryDecode(value, Runtime.PyObject_TYPE(value), to, out _)
-                        ? Narrowing.All
-                        : Narrowing.Never;
+                    bool decoded = PyObjectConversions.TryDecode(value, Runtime.PyObject_TYPE(value), to, out _, out bool hasDecoder);
+                    arg.ValueDependent |= hasDecoder;
+                    return decoded ? Narrowing.All : Narrowing.Never;
 
                 case ArgKind.Bytes:
+                    arg.ValueDependent = true;
                     if (arg.StringLength == 1 && (to == typeof(byte) || to == typeof(sbyte) || to == typeof(char)))
                     {
                         return Narrowing.IndexOperator;
@@ -841,6 +1065,7 @@ namespace Python.Runtime
                     goto case ArgKind.Sequence;
 
                 case ArgKind.Sequence:
+                    arg.ValueDependent = true;
                     if (TryGetElementType(to, out _))
                     {
                         return GetCollectionNarrowing(value, to, readItems: true);
@@ -852,6 +1077,9 @@ namespace Python.Runtime
                     // never handed to the converter here: that could read it
                     return GetCollectionNarrowing(value, to, readItems: false);
             }
+
+            // whether it can be called, and what the converter or a codec makes of it, depend on the value
+            arg.ValueDependent = true;
 
             if (typeof(Delegate).IsAssignableFrom(to))
             {
@@ -967,6 +1195,7 @@ namespace Python.Runtime
             }
 
             // a .NET number: check its value
+            arg.ValueDependent = true;
             try
             {
                 Convert.ChangeType(arg.Value, to, CultureInfo.InvariantCulture);
@@ -1418,16 +1647,16 @@ namespace Python.Runtime
             }
 
             // a regular method beats an extension method
-            bool extA = ma.IsDefined(typeof(System.Runtime.CompilerServices.ExtensionAttribute), false);
-            bool extB = mb.IsDefined(typeof(System.Runtime.CompilerServices.ExtensionAttribute), false);
+            bool extA = MethodShape.Of(ma).IsExtension;
+            bool extB = MethodShape.Of(mb).IsExtension;
             if (extA != extB)
             {
                 return extA ? Preference.Second : Preference.First;
             }
 
             // pythonnet's own: a Python override beats the .NET method it redirects
-            bool redirA = BindSpec.IsRedirected(ma);
-            bool redirB = BindSpec.IsRedirected(mb);
+            bool redirA = MethodShape.Of(ma).IsRedirected;
+            bool redirB = MethodShape.Of(mb).IsRedirected;
             if (redirA != redirB)
             {
                 return redirA ? Preference.First : Preference.Second;
@@ -1723,9 +1952,6 @@ namespace Python.Runtime
         // The chosen method, with its parameter slots filled.
         private sealed class BindSpec
         {
-            public static bool IsRedirected(MethodBase method) =>
-                method.GetCustomAttribute<RedirectedMethod>() != null;
-
             public readonly MethodBase Method;
             public readonly BindParam[] Parameters;
             public readonly uint Required;

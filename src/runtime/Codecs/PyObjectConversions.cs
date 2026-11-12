@@ -75,6 +75,10 @@ namespace Python.Runtime
         #region Decoding
         static readonly ConcurrentDictionary<TypePair, (PyType, Converter.TryConvertFromPythonDelegate?)> pythonToClr = new();
         internal static bool TryDecode(BorrowedReference pyHandle, BorrowedReference pyType, Type targetType, out object? result)
+            => TryDecode(pyHandle, pyType, targetType, out result, out _);
+
+        // `hasDecoder` false: no codec handles these two types, and that stays so until shutdown
+        internal static bool TryDecode(BorrowedReference pyHandle, BorrowedReference pyType, Type targetType, out object? result, out bool hasDecoder)
         {
             if (pyHandle == null) throw new ArgumentNullException(nameof(pyHandle));
             if (pyType == null) throw new ArgumentNullException(nameof(pyType));
@@ -83,6 +87,7 @@ namespace Python.Runtime
             var key = new TypePair(pyType.DangerousGetAddress(), targetType);
             var (_, decoder) = pythonToClr.GetOrAdd(key, pair => GetDecoder(pair.PyType, pair.ClrType));
             result = null;
+            hasDecoder = decoder != null;
             if (decoder == null) return false;
             return decoder.Invoke(pyHandle, out result);
         }
