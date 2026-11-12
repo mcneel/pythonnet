@@ -146,3 +146,30 @@ def test_interface_property():
     mapping = Hashtable()
     coll = ICollection(mapping)
     assert coll.Count == 0
+
+
+def test_simple_type_properties():
+    """Small number types and char read back as Python int and str at their limits."""
+    from Python.Test import SimpleTypePropertyTest
+
+    ob = SimpleTypePropertyTest()
+    assert ob.Int16Max == 32767 and type(ob.Int16Max) is int
+    assert ob.Int16Min == -32768
+    assert ob.ByteMax == 255
+    assert ob.SByteMin == -128
+    assert ob.UInt16Max == 65535
+    assert ob.UInt32Max == 4294967295
+    assert ob.UInt64Max == 18446744073709551615
+    assert ob.CharMax == chr(65535)
+    assert ob.CharA == "A" and type(ob.CharA) is str
+
+
+def test_property_read_on_wrong_object():
+    """A property read through its descriptor on another class's object fails, and still works after."""
+    from Python.Test.RhinoLike import Point3d, Vector3d
+
+    desc = Point3d.__dict__['X']
+    with pytest.raises(Exception):
+        desc.__get__(Vector3d(1.0, 2.0, 3.0), Vector3d)
+
+    assert desc.__get__(Point3d(4.0, 5.0, 6.0), Point3d) == 4.0

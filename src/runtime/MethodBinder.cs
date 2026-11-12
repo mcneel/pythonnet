@@ -304,6 +304,9 @@ namespace Python.Runtime
         // volatile + lock: first-time GetMethods() races would otherwise sort `list`
         // concurrently and publish a partial methods array (free-threaded Python)
         [NonSerialized] volatile bool methodsInit = false;
+        // the overloads Invoke picks from, with its remembered picks;
+        // dropped whenever `list` changes or is re-sorted
+        [NonSerialized] volatile Overloads? callable;
         readonly List<MaybeMethodBase> list;
 
         public bool AllowRedirected = true;
@@ -327,6 +330,7 @@ namespace Python.Runtime
             {
                 list.Add(m);
                 methodsInit = false;
+                callable = null;
             }
         }
 
@@ -336,6 +340,7 @@ namespace Python.Runtime
             {
                 list.AddRange(methods.Select(m => new MaybeMethodBase(m)));
                 methodsInit = false;
+                callable = null;
             }
         }
 
@@ -354,39 +359,82 @@ namespace Python.Runtime
                 list.Sort(new Sorter());
                 methods = (from method in list where method.Valid select method.Value).ToArray();
                 methodsInit = true;
+                callable = null;
                 return methods!;
             }
         }
 
+        sealed class Overloads
+        {
+            public readonly MethodBase[] Methods;
+            public readonly ChoiceCache Choices = new();
+
+            // the overloads a call on the class itself picks from; `this` when those are no different
+            public readonly Overloads Static;
+
+            public Overloads(MethodBase[] methods)
+            {
+                Methods = methods;
+                MethodBase[] statics = GetStaticallyCallableMethods(methods);
+                Static = statics == methods ? this : new Overloads(statics);
+            }
+        }
+
+        Overloads GetOverloads()
+        {
+            Overloads? result = callable;
+            if (result is not null)
+            {
+                return result;
+            }
+
+            lock (list)
+            {
+                return callable ??= new Overloads((from m in list where m.Valid select m.Value).ToArray());
+            }
+        }
+
         #region Invoke
+        // the first `skip` items of `args` are not arguments
         internal NewReference Invoke(BorrowedReference inst,
                                      BorrowedReference args,
                                      BorrowedReference kwargs,
-                                     MethodBase? targetMethod)
+                                     MethodBase? targetMethod,
+                                     int skip = 0)
         {
             if (targetMethod is null)
             {
-                return Invoke(inst, args, kwargs);
+                return Invoke(inst, args, kwargs, skip);
             }
             else
             {
                 MethodBase[] methods = new MethodBase[] { targetMethod };
-                return Invoke(inst, args, kwargs, methods);
+                return Invoke(inst, args, kwargs, methods, null, skip);
             }
         }
 
         internal NewReference Invoke(BorrowedReference inst,
                                      BorrowedReference args,
-                                     BorrowedReference kwargs)
+                                     BorrowedReference kwargs,
+                                     int skip = 0)
         {
-            MethodBase[] methods = (from m in list where m.Valid select m.Value).ToArray();
-            return Invoke(inst, args, kwargs, methods);
+            Overloads overloads = GetOverloads();
+
+            // called on the class itself, not on an object, so only
+            // static methods can run. do not let the others compete.
+            if (inst == null)
+            {
+                overloads = overloads.Static;
+            }
+            return Invoke(inst, args, kwargs, overloads.Methods, overloads.Choices, skip);
         }
 
         NewReference Invoke(BorrowedReference inst,
                             BorrowedReference args,
                             BorrowedReference kwargs,
-                            MethodBase[] methods)
+                            MethodBase[] methods,
+                            ChoiceCache? choices,
+                            int skip)
         {
             if (methods.Length == 0)
             {
@@ -401,7 +449,7 @@ namespace Python.Runtime
                 return Exceptions.RaiseTypeError(msg.ToString());
             }
 
-            if (TryBind(methods, args, kwargs, AllowRedirected, out BindSpec? spec, out BindError? error))
+            if (TryBind(methods, args, kwargs, skip, AllowRedirected, choices, out BindSpec? spec, out BindError? error))
             {
                 MethodBase match = spec!.Method;
                 BindParam[] bindParams = spec.Parameters;
@@ -416,13 +464,13 @@ namespace Python.Runtime
                 if (match.IsSpecialName &&
                         (match.Name.StartsWith("add_") || match.Name.StartsWith("remove_")))
                 {
-                    if (Runtime.PyTuple_Size(args) != 1)
+                    if (Runtime.PyTuple_Size(args) != skip + 1)
                     {
                         throw new Exception("Event handler methods only accept one Delegate argument");
                     }
 
                     // if argument type is not a CLR Delegate, throw an exception
-                    BorrowedReference darg = Runtime.PyTuple_GetItem(args, 0);
+                    BorrowedReference darg = Runtime.PyTuple_GetItem(args, skip);
                     if (ManagedType.GetManagedObject(darg) is not CLRObject clrObj
                             || !typeof(System.Delegate).IsAssignableFrom(clrObj.inst.GetType()))
                     {
@@ -594,14 +642,51 @@ namespace Python.Runtime
                 msg.Append('.');
                 msg.Append(m.Name);
                 msg.Append("{}' takes '");
-                msg.Append(args == null ? 0 : (int)Runtime.PyTuple_Size(args));
+                msg.Append(args == null ? 0 : (int)Runtime.PyTuple_Size(args) - skip);
                 msg.Append("' arguments");
 
                 Runtime.PyErr_Fetch(out var errType, out var errVal, out var errTrace);
-                AppendArgumentTypes(msg: msg, args);
+                AppendArgumentTypes(msg: msg, args, skip);
                 Runtime.PyErr_Restore(errType.StealNullable(), errVal.StealNullable(), errTrace.StealNullable());
                 return Exceptions.RaiseTypeError(msg.ToString());
             }
+        }
+
+        /// <summary>
+        /// Use when a method is called on the class itself, e.g. `Foo.Bar()`.
+        /// Gives back only the static methods and constructors, or the same
+        /// array when all of them, or none of them, are.
+        /// </summary>
+        /// <param name="methods">All overloads sharing the called name.</param>
+        /// <returns>The overloads that can run without an object.</returns>
+        static MethodBase[] GetStaticallyCallableMethods(MethodBase[] methods)
+        {
+            int callable = 0;
+            foreach (MethodBase m in methods)
+            {
+                if (m.IsStatic || m.IsConstructor)
+                {
+                    callable++;
+                }
+            }
+
+            // only copy when there is a mix. the usual case is all static.
+            if (callable == 0 || callable == methods.Length)
+            {
+                return methods;
+            }
+
+            var statics = new MethodBase[callable];
+            int index = 0;
+            foreach (MethodBase m in methods)
+            {
+                if (m.IsStatic || m.IsConstructor)
+                {
+                    statics[index++] = m;
+                }
+            }
+
+            return statics;
         }
 
         static bool TryGetManagedValue(BorrowedReference op, out object? value, bool setError = true)
@@ -687,14 +772,14 @@ namespace Python.Runtime
             return null;
         }
 
-        static void AppendArgumentTypes(StringBuilder msg, BorrowedReference args)
+        static void AppendArgumentTypes(StringBuilder msg, BorrowedReference args, int skip)
         {
             Runtime.AssertNoErorSet();
 
             nint argCount = Runtime.PyTuple_Size(args);
             msg.Append('(');
 
-            for (nint argIndex = 0; argIndex < argCount; argIndex++)
+            for (nint argIndex = skip; argIndex < argCount; argIndex++)
             {
                 BorrowedReference arg = Runtime.PyTuple_GetItem(args, argIndex);
                 if (arg != null)

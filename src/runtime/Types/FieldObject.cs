@@ -11,6 +11,8 @@ namespace Python.Runtime
     internal class FieldObject : ExtensionType
     {
         private MaybeFieldInfo info;
+        [NonSerialized]
+        private DirectReader? reader;
 
         public FieldObject(FieldInfo info)
         {
@@ -67,6 +69,11 @@ namespace Python.Runtime
                 {
                     Exceptions.SetError(Exceptions.TypeError, "instance is not a clr object");
                     return default;
+                }
+                self.reader ??= DirectReader.ForField(info);
+                if (self.reader.TryRead(co.inst, out NewReference value))
+                {
+                    return value;
                 }
                 result = info.GetValue(co.inst);
                 return Converter.ToPython(result, info.FieldType);

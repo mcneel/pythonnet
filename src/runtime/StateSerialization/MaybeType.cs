@@ -7,7 +7,7 @@ using System.IO;
 namespace Python.Runtime
 {
     [Serializable]
-    internal struct MaybeType : ISerializable
+    internal struct MaybeType : ISerializable, IEquatable<MaybeType>
     {
         public static implicit operator MaybeType (Type ob) => new(ob);
 
@@ -52,6 +52,14 @@ namespace Python.Runtime
         {
             return (type != null ? type.ToString() : $"missing type: {name}");
         }
+
+        // Same result as the default field-by-field comparison; that one is slow and
+        // allocates, and this struct keys the type caches hit on every call.
+        public bool Equals(MaybeType other) => Equals(type, other.type) && name == other.name;
+
+        public override bool Equals(object obj) => obj is MaybeType other && Equals(other);
+
+        public override int GetHashCode() => type?.GetHashCode() ?? name?.GetHashCode() ?? 0;
 
         public MaybeType(Type tp)
         {

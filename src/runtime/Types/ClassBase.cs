@@ -94,16 +94,28 @@ namespace Python.Runtime
         /// <summary>
         /// Standard comparison implementation for instances of reflected types.
         /// </summary>
+        // comparison operators declared on a base type apply to derived types too
+        static MethodObject? FindRichCompare(BorrowedReference type, int op)
+        {
+            for (BorrowedReference t = type; t != null; t = Util.ReadRef(t, TypeOffset.tp_base))
+            {
+                if (GetManagedObject(t) is ClassBase cls && cls.richcompare.TryGetValue(op, out var method))
+                {
+                    return method;
+                }
+            }
+            return null;
+        }
+
         public static NewReference tp_richcompare(BorrowedReference ob, BorrowedReference other, int op)
         {
             CLRObject co1;
             CLRObject? co2;
             BorrowedReference tp = Runtime.PyObject_TYPE(ob);
-            var cls = (ClassBase)GetManagedObject(tp)!;
             // C# operator methods take precedence over IComparable.
             // We first check if there's a comparison operator by looking up the richcompare table,
             // otherwise fallback to checking if an IComparable interface is handled.
-            if (cls.richcompare.TryGetValue(op, out var methodObject))
+            if (FindRichCompare(tp, op) is MethodObject methodObject)
             {
                 // Wrap the `other` argument of a binary comparison operator in a PyTuple.
                 using var args = Runtime.PyTuple_New(1);
@@ -112,6 +124,7 @@ namespace Python.Runtime
                 {
                     return result;
                 }
+                result.Dispose();
             }
 
             switch (op)
@@ -155,14 +168,10 @@ namespace Python.Runtime
                 case Runtime.Py_GE:
                     co1 = (CLRObject)GetManagedObject(ob)!;
                     co2 = GetManagedObject(other) as CLRObject;
-                    if (co1 == null || co2 == null)
+                    // not comparable: Python then tries the other operand or raises its usual TypeError
+                    if (co1?.inst is not IComparable co1Comp || co2 == null)
                     {
-                        return Exceptions.RaiseTypeError("Cannot get managed object");
-                    }
-                    if (co1.inst is not IComparable co1Comp)
-                    {
-                        Type co1Type = co1.GetType();
-                        return Exceptions.RaiseTypeError($"Cannot convert object of type {co1Type} to IComparable");
+                        return new NewReference(Runtime.PyNotImplemented);
                     }
                     try
                     {
@@ -204,9 +213,10 @@ namespace Python.Runtime
                         }
                         return new NewReference(pyCmp);
                     }
-                    catch (ArgumentException e)
+                    // CompareTo refuses an object of another type
+                    catch (ArgumentException)
                     {
-                        return Exceptions.RaiseTypeError(e.Message);
+                        return new NewReference(Runtime.PyNotImplemented);
                     }
                 default:
                     return new NewReference(Runtime.PyNotImplemented);
@@ -737,7 +747,35 @@ namespace Python.Runtime
                 // initialization must be done in tp_new
                 return true;
 
+            // the class's own .NET constructor: call it directly, rather than
+            // binding `obj.__init__` into a temporary object for every new instance
+            if (GetOwnConstructor(obj) is MethodObject ctor)
+            {
+                using var result = ctor.Invoke(obj, args, kw, null);
+                return !result.IsNull();
+            }
+
             return base.Init(obj, args, kw);
+        }
+
+        // The constructor `obj.__init__` would bind to, when binding would add nothing:
+        // a plain .NET object whose `__init__` is its own class's constructor.
+        // Python subclasses with their own `__init__`, and IPythonDerivedType
+        // objects (bound to their base class), return null and take the usual route.
+        static MethodObject? GetOwnConstructor(BorrowedReference obj)
+        {
+            if (GetManagedObject(obj) is not CLRObject { inst: object inst } || inst is IPythonDerivedType)
+            {
+                return null;
+            }
+
+            BorrowedReference init = Runtime._PyType_Lookup(Runtime.PyObject_TYPE(obj), PyIdentifier.__init__);
+            return init != null
+                    && GetManagedObject(init) is MethodObject { IsInstanceConstructor: true } ctor
+                    && ctor.type.Valid
+                    && ctor.type.Value == inst.GetType()
+                ? ctor
+                : null;
         }
 
         protected virtual void OnDeserialization(object sender)

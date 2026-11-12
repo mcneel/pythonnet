@@ -16,6 +16,8 @@ namespace Python.Runtime
         private MethodInfo? getter;
         [NonSerialized]
         private MethodInfo? setter;
+        [NonSerialized]
+        private DirectReader? reader;
 
         public PropertyObject(PropertyInfo md)
         {
@@ -75,6 +77,20 @@ namespace Python.Runtime
             if (co == null)
             {
                 return Exceptions.RaiseTypeError("invalid target");
+            }
+
+            self.reader ??= DirectReader.ForProperty(getter);
+            try
+            {
+                if (self.reader.TryRead(co.inst, out NewReference value))
+                {
+                    return value;
+                }
+            }
+            catch (Exception e)
+            {
+                Exceptions.SetError(e);
+                return default;
             }
 
             try

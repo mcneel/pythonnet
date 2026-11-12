@@ -76,6 +76,8 @@ namespace Python.Runtime
         HasClrInstance = (1 << 15),
         /// <remarks>PythonNet specific</remarks>
         Subclass = (1 << 16),
+        /// <summary>Python may call <c>m(obj, *args)</c> instead of binding <c>obj.m</c> first.</summary>
+        MethodDescriptor = (1 << 17),
         /* Objects support nb_index in PyNumberMethods */
         HaveVersionTag = (1 << 18),
         ValidVersionTag = (1 << 19),

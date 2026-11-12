@@ -1432,3 +1432,17 @@ def test_method_overload_multiple_outs():
 
     with pytest.raises(ValueError):
         _0, _1, _2 = MethodTest.TryGetMultipleOutsOverloaded()
+
+
+def test_method_on_class_after_subclass_use():
+    """A method reached through its class keeps working for that class and for a Python subclass."""
+    from Python.Test import ResolverStatic
+
+    class Sub(ResolverStatic):
+        __namespace__ = "test_method_on_class_after_subclass_use"
+
+    assert ResolverStatic.OnlyStatic(5) == "static:int"
+    assert Sub.OnlyStatic(5) == "static:int"
+    assert ResolverStatic.OnlyStatic(1.5) == "static:double"
+    assert ResolverStatic.Mix(1, 2) == "static:int,int"
+    assert ResolverStatic().Mix(1) == "instance:int"

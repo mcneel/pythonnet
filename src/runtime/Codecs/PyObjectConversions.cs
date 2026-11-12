@@ -80,11 +80,20 @@ namespace Python.Runtime
             if (pyType == null) throw new ArgumentNullException(nameof(pyType));
             if (targetType == null) throw new ArgumentNullException(nameof(targetType));
 
-            var key = new TypePair(pyType.DangerousGetAddress(), targetType);
-            var (_, decoder) = pythonToClr.GetOrAdd(key, pair => GetDecoder(pair.PyType, pair.ClrType));
+            var decoder = FindDecoder(pyType, targetType);
             result = null;
             if (decoder == null) return false;
             return decoder.Invoke(pyHandle, out result);
+        }
+
+        // false: no codec handles these two types, and that stays so until shutdown
+        internal static bool HasDecoder(BorrowedReference pyType, Type targetType)
+            => FindDecoder(pyType, targetType) != null;
+
+        static Converter.TryConvertFromPythonDelegate? FindDecoder(BorrowedReference pyType, Type targetType)
+        {
+            var key = new TypePair(pyType.DangerousGetAddress(), targetType);
+            return pythonToClr.GetOrAdd(key, pair => GetDecoder(pair.PyType, pair.ClrType)).Item2;
         }
 
         static (PyType, Converter.TryConvertFromPythonDelegate?) GetDecoder(IntPtr sourceType, Type targetType)

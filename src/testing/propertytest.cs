@@ -81,4 +81,17 @@ namespace Python.Test
             set { _enum_property = value; }
         }
     }
+
+    public class SimpleTypePropertyTest
+    {
+        public short Int16Max => short.MaxValue;
+        public short Int16Min => short.MinValue;
+        public byte ByteMax => byte.MaxValue;
+        public sbyte SByteMin => sbyte.MinValue;
+        public ushort UInt16Max => ushort.MaxValue;
+        public uint UInt32Max => uint.MaxValue;
+        public ulong UInt64Max => ulong.MaxValue;
+        public char CharMax => char.MaxValue;
+        public char CharA => 'A';
+    }
 }

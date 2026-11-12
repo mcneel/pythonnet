@@ -130,8 +130,11 @@ namespace Python.Runtime
             const BindingFlags flags = BindingFlags.Public | BindingFlags.Static;
             if (clrType.IsEnum)
             {
-                return typeof(EnumOps<>).MakeGenericType(clrType).GetMethods(flags)
-                    .Concat(typeof(FlagEnumOps<>).MakeGenericType(clrType).GetMethods(flags));
+                // must match ClassManager: a slot without its method recurses forever
+                IEnumerable<MethodInfo> ops = typeof(EnumOps<>).MakeGenericType(clrType).GetMethods(flags);
+                return clrType.IsFlagsEnum()
+                    ? ops.Concat(typeof(FlagEnumOps<>).MakeGenericType(clrType).GetMethods(flags))
+                    : ops;
             }
 
             return clrType.GetMethods(flags);
