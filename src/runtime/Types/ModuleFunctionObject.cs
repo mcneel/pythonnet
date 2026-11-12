@@ -22,7 +22,7 @@ namespace Python.Runtime
         /// <summary>
         /// __call__ implementation.
         /// </summary>
-        public static NewReference tp_call(BorrowedReference ob, BorrowedReference args, BorrowedReference kw)
+        public new static NewReference tp_call(BorrowedReference ob, BorrowedReference args, BorrowedReference kw)
         {
             var self = (ModuleFunctionObject)GetManagedObject(ob)!;
             return self.Invoke(ob, args, kw);

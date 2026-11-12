@@ -215,6 +215,42 @@ namespace Python.Runtime
         /// Descriptor __get__ implementation. Accessing a CLR method returns
         /// a "bound" method similar to a Python bound method.
         /// </summary>
+        /// <summary>
+        /// Calls the method on the first argument: <c>m(obj, *args)</c> does what <c>obj.m(*args)</c> does.
+        /// </summary>
+        // Python calls this for `obj.m(...)` and operators instead of binding first, because the
+        // type has TypeFlags.MethodDescriptor; it must match tp_descr_get + MethodBinding.tp_call.
+        public static NewReference tp_call(BorrowedReference ds, BorrowedReference args, BorrowedReference kw)
+        {
+            var self = (MethodObject)GetManagedObject(ds)!;
+
+            if (!self.type.Valid)
+            {
+                return Exceptions.RaiseTypeError(self.type.DeletedMessage);
+            }
+
+            nint count = Runtime.PyTuple_Size(args);
+            if (count < 1)
+            {
+                return Exceptions.RaiseTypeError("not enough arguments");
+            }
+
+            BorrowedReference ob = Runtime.PyTuple_GetItem(args, 0);
+            BorrowedReference tp = Runtime.PyObject_TYPE(ob);
+
+            // as tp_descr_get: super(Derived, self).method(...) binds to the base class
+            if (GetManagedObject(ob) is CLRObject obj
+                && obj.inst.GetType() != self.type.Value
+                && obj.inst is IPythonDerivedType
+                && self.type.Value.IsInstanceOfType(obj.inst))
+            {
+                tp = ReflectedClrType.GetOrCreate(self.type.Value).Reference;
+            }
+
+            using NewReference rest = Runtime.PyTuple_GetSlice(args, 1, count);
+            return MethodBinding.Call(self, null, ob, tp, rest.Borrow(), kw);
+        }
+
         public static NewReference tp_descr_get(BorrowedReference ds, BorrowedReference ob, BorrowedReference tp)
         {
             var self = (MethodObject)GetManagedObject(ds)!;

@@ -183,16 +183,28 @@ namespace Python.Runtime
                 }
             }
 
+            return Call(self.m, self.info.UnsafeValue,
+                        self.target is null ? BorrowedReference.Null : self.target.Reference,
+                        self.targetType.Reference, args, kw);
+        }
+
+        /// <summary>
+        /// Calls <paramref name="m"/> bound to <paramref name="target"/> (null when unbound),
+        /// as reached through <paramref name="targetType"/>.
+        /// </summary>
+        // MethodObject.tp_call uses this too, to call without creating the bound object.
+        internal static NewReference Call(MethodObject m, MethodBase? info,
+                                          BorrowedReference target, BorrowedReference targetType,
+                                          BorrowedReference args, BorrowedReference kw)
+        {
             // This supports calling a method 'unbound', passing the instance
             // as the first argument. Note that this is not supported if any
             // of the overloads are static since we can't know if the intent
             // was to call the static method or the unbound instance method.
-            var disposeList = new List<PyObject>();
+            NewReference unboundArgs = default;
             try
             {
-                PyObject? target = self.target;
-
-                if (target is null && !self.m.IsStatic())
+                if (target == null && !m.IsStatic())
                 {
                     var len = Runtime.PyTuple_Size(args);
                     if (len < 1)
@@ -200,27 +212,25 @@ namespace Python.Runtime
                         Exceptions.SetError(Exceptions.TypeError, "not enough arguments");
                         return default;
                     }
-                    target = new PyObject(Runtime.PyTuple_GetItem(args, 0));
-                    disposeList.Add(target);
+                    target = Runtime.PyTuple_GetItem(args, 0);
 
-                    var unboundArgs = Runtime.PyTuple_GetSlice(args, 1, len).MoveToPyObject();
-                    disposeList.Add(unboundArgs);
-                    args = unboundArgs;
+                    unboundArgs = Runtime.PyTuple_GetSlice(args, 1, len);
+                    args = unboundArgs.Borrow();
                 }
 
-                // if the class is a IPythonDerivedClass and target is not the same as self.targetType
+                // if the class is a IPythonDerivedClass and target is not the same as targetType
                 // (eg if calling the base class method) then call the original base class method instead
                 // of the target method.
-                if (target is not null && Runtime.PyObject_TYPE(target) != self.targetType!)
+                if (target != null && Runtime.PyObject_TYPE(target) != targetType)
                 {
                     var inst = GetManagedObject(target) as CLRObject;
                     if (inst?.inst is IPythonDerivedType)
                     {
-                        if (GetManagedObject(self.targetType!) is ClassBase baseType && baseType.type.Valid)
+                        if (GetManagedObject(targetType) is ClassBase baseType && baseType.type.Valid)
                         {
                             foreach (string possibleMethodName in new string[] {
-                                 ClassDerivedObject.CreateDerivedVirtualName(baseType.type.Value, self.m.name),
-                                 ClassDerivedObject.CreateDerivedVirtualName(self.m.name),
+                                 ClassDerivedObject.CreateDerivedVirtualName(baseType.type.Value, m.name),
+                                 ClassDerivedObject.CreateDerivedVirtualName(m.name),
                             })
                             {
                                 using var baseMethod = Runtime.PyObject_GetAttrString(target, possibleMethodName);
@@ -228,7 +238,8 @@ namespace Python.Runtime
                                 {
                                     if (GetManagedObject(baseMethod.Borrow()) is MethodBinding baseSelf)
                                     {
-                                        self = baseSelf;
+                                        m = baseSelf.m;
+                                        info = baseSelf.info.UnsafeValue;
                                         break;
                                     }
                                 }
@@ -242,14 +253,11 @@ namespace Python.Runtime
                     }
                 }
 
-                return self.m.Invoke(target is null ? BorrowedReference.Null : target, args, kw, self.info.UnsafeValue);
+                return m.Invoke(target, args, kw, info);
             }
             finally
             {
-                foreach (var ptr in disposeList)
-                {
-                    ptr.Dispose();
-                }
+                unboundArgs.Dispose();
             }
         }
 

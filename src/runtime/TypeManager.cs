@@ -338,6 +338,12 @@ namespace Python.Runtime
             type.Flags = TypeFlags.Default | TypeFlags.HasClrInstance |
                            TypeFlags.HeapType | TypeFlags.HaveGC;
 
+            // lets Python call .NET methods without creating a bound method object first
+            if (impl == typeof(MethodObject))
+            {
+                type.Flags |= TypeFlags.MethodDescriptor;
+            }
+
             if (Runtime.PyType_Ready(type) != 0)
             {
                 throw PythonException.ThrowLastAsClrException();
