@@ -387,35 +387,39 @@ namespace Python.Runtime
         }
 
         #region Invoke
+        // the first `skip` items of `args` are not arguments
         internal NewReference Invoke(BorrowedReference inst,
                                      BorrowedReference args,
                                      BorrowedReference kwargs,
-                                     MethodBase? targetMethod)
+                                     MethodBase? targetMethod,
+                                     int skip = 0)
         {
             if (targetMethod is null)
             {
-                return Invoke(inst, args, kwargs);
+                return Invoke(inst, args, kwargs, skip);
             }
             else
             {
                 MethodBase[] methods = new MethodBase[] { targetMethod };
-                return Invoke(inst, args, kwargs, methods, null);
+                return Invoke(inst, args, kwargs, methods, null, skip);
             }
         }
 
         internal NewReference Invoke(BorrowedReference inst,
                                      BorrowedReference args,
-                                     BorrowedReference kwargs)
+                                     BorrowedReference kwargs,
+                                     int skip = 0)
         {
             Overloads overloads = GetOverloads();
-            return Invoke(inst, args, kwargs, overloads.Methods, overloads.Choices);
+            return Invoke(inst, args, kwargs, overloads.Methods, overloads.Choices, skip);
         }
 
         NewReference Invoke(BorrowedReference inst,
                             BorrowedReference args,
                             BorrowedReference kwargs,
                             MethodBase[] methods,
-                            ChoiceCache? choices)
+                            ChoiceCache? choices,
+                            int skip)
         {
             if (methods.Length == 0)
             {
@@ -439,7 +443,7 @@ namespace Python.Runtime
 
             // calls through the class see only static methods, and AllowRedirected hides some
             int variant = (inst == null ? 1 : 0) | (AllowRedirected ? 2 : 0);
-            if (TryBind(methods, args, kwargs, AllowRedirected, choices, variant, out BindSpec? spec, out BindError? error))
+            if (TryBind(methods, args, kwargs, skip, AllowRedirected, choices, variant, out BindSpec? spec, out BindError? error))
             {
                 MethodBase match = spec!.Method;
                 BindParam[] bindParams = spec.Parameters;
@@ -454,13 +458,13 @@ namespace Python.Runtime
                 if (match.IsSpecialName &&
                         (match.Name.StartsWith("add_") || match.Name.StartsWith("remove_")))
                 {
-                    if (Runtime.PyTuple_Size(args) != 1)
+                    if (Runtime.PyTuple_Size(args) != skip + 1)
                     {
                         throw new Exception("Event handler methods only accept one Delegate argument");
                     }
 
                     // if argument type is not a CLR Delegate, throw an exception
-                    BorrowedReference darg = Runtime.PyTuple_GetItem(args, 0);
+                    BorrowedReference darg = Runtime.PyTuple_GetItem(args, skip);
                     if (ManagedType.GetManagedObject(darg) is not CLRObject clrObj
                             || !typeof(System.Delegate).IsAssignableFrom(clrObj.inst.GetType()))
                     {
@@ -632,11 +636,11 @@ namespace Python.Runtime
                 msg.Append('.');
                 msg.Append(m.Name);
                 msg.Append("{}' takes '");
-                msg.Append(args == null ? 0 : (int)Runtime.PyTuple_Size(args));
+                msg.Append(args == null ? 0 : (int)Runtime.PyTuple_Size(args) - skip);
                 msg.Append("' arguments");
 
                 Runtime.PyErr_Fetch(out var errType, out var errVal, out var errTrace);
-                AppendArgumentTypes(msg: msg, args);
+                AppendArgumentTypes(msg: msg, args, skip);
                 Runtime.PyErr_Restore(errType.StealNullable(), errVal.StealNullable(), errTrace.StealNullable());
                 return Exceptions.RaiseTypeError(msg.ToString());
             }
@@ -762,14 +766,14 @@ namespace Python.Runtime
             return null;
         }
 
-        static void AppendArgumentTypes(StringBuilder msg, BorrowedReference args)
+        static void AppendArgumentTypes(StringBuilder msg, BorrowedReference args, int skip)
         {
             Runtime.AssertNoErorSet();
 
             nint argCount = Runtime.PyTuple_Size(args);
             msg.Append('(');
 
-            for (nint argIndex = 0; argIndex < argCount; argIndex++)
+            for (nint argIndex = skip; argIndex < argCount; argIndex++)
             {
                 BorrowedReference arg = Runtime.PyTuple_GetItem(args, argIndex);
                 if (arg != null)

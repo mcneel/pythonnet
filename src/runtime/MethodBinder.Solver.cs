@@ -33,16 +33,18 @@ namespace Python.Runtime
 
         // `choices` holds earlier picks for this `methods` list; null means don't remember.
         // `variant` keeps apart calls on the same list that can pick differently.
+        // The first `skip` items of `args` are not arguments.
         static bool TryBind(MethodBase[] methods,
                             BorrowedReference args,
                             BorrowedReference kwargs,
+                            int skip,
                             bool allowRedirected,
                             ChoiceCache? choices,
                             int variant,
                             out BindSpec? spec,
                             out BindError? error)
         {
-            var call = new CallArgs(args, kwargs);
+            var call = new CallArgs(args, kwargs, skip);
 
             // with a single method there is nothing to choose, so nothing to remember
             if (choices is null || methods.Length < 2)
@@ -251,15 +253,17 @@ namespace Python.Runtime
             readonly BorrowedReference _args;
             readonly BorrowedReference _kwargs;
             readonly ArgInfo?[] _infos;
+            readonly int _skip;   // leading items of args that are not arguments
 
             public readonly int Count;
             public readonly string[] KwNames;
 
-            public CallArgs(BorrowedReference args, BorrowedReference kwargs)
+            public CallArgs(BorrowedReference args, BorrowedReference kwargs, int skip)
             {
                 _args = args;
                 _kwargs = kwargs;
-                Count = args == null ? 0 : Math.Max(0, (int)Runtime.PyTuple_Size(args));
+                _skip = skip;
+                Count = args == null ? 0 : Math.Max(0, (int)Runtime.PyTuple_Size(args) - skip);
                 KwNames = kwargs == null ? Array.Empty<string>() : GetKeywordNames(kwargs);
                 _infos = new ArgInfo?[Count + KwNames.Length];
             }
@@ -268,7 +272,7 @@ namespace Python.Runtime
 
             public readonly BorrowedReference this[int index]
                 => index < Count
-                    ? Runtime.PyTuple_GetItem(_args, index)
+                    ? Runtime.PyTuple_GetItem(_args, index + _skip)
                     : Runtime.PyDict_GetItemString(_kwargs, KwNames[index - Count]);
 
             // what kind of value an argument is; worked out once per call

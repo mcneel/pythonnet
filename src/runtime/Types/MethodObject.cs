@@ -58,9 +58,9 @@ namespace Python.Runtime
         public MethodObject WithOverloads(MethodBase[] overloads)
             => new(type, name, overloads, allow_threads: binder.AllowThreads);
 
-        public bool TryInvoke(BorrowedReference inst, BorrowedReference args, BorrowedReference kw, out NewReference result)
+        public bool TryInvoke(BorrowedReference inst, BorrowedReference args, BorrowedReference kw, out NewReference result, int skip = 0)
         {
-            result = InvokeMethod(inst, args, kw, null);
+            result = InvokeMethod(inst, args, kw, null, skip);
 
             // NOTE:
             // (in)equality checks in dotnet have typed arguments.
@@ -99,20 +99,21 @@ namespace Python.Runtime
             }
         }
 
-        public NewReference Invoke(BorrowedReference target, BorrowedReference args, BorrowedReference kw, MethodBase? info)
+        // the first `skip` items of `args` are not arguments
+        public NewReference Invoke(BorrowedReference target, BorrowedReference args, BorrowedReference kw, MethodBase? info, int skip = 0)
         {
             if (SkipTypeErrors)
             {
-                TryInvoke(target, args, kw, out NewReference result);
+                TryInvoke(target, args, kw, out NewReference result, skip);
                 return result;
             }
             else
             {
-                return InvokeMethod(target, args, kw, info);
+                return InvokeMethod(target, args, kw, info, skip);
             }
         }
 
-        NewReference InvokeMethod(BorrowedReference target, BorrowedReference args, BorrowedReference kw, MethodBase? info)
+        NewReference InvokeMethod(BorrowedReference target, BorrowedReference args, BorrowedReference kw, MethodBase? info, int skip = 0)
         {
             // NOTE: do nothing on struct default ctor
             // do nothing and return 'void' when runtime is attempting
@@ -120,13 +121,13 @@ namespace Python.Runtime
             // ManagedType.GetManagedObject(target) returns the instance
             if (name == "__init__"
                     && !type.Value.IsClass
-                    && Runtime.PyTuple_Size(args) == 0
+                    && Runtime.PyTuple_Size(args) == skip
                     && (kw.IsNull || (!kw.IsNull && Runtime.PyDict_Size(kw) == 0)))
             {
                 return new NewReference(Runtime.PyNone);
             }
 
-            return binder.Invoke(target, args, kw, info);
+            return binder.Invoke(target, args, kw, info, skip);
         }
 
         /// <summary>
@@ -212,10 +213,6 @@ namespace Python.Runtime
         }
 
         /// <summary>
-        /// Descriptor __get__ implementation. Accessing a CLR method returns
-        /// a "bound" method similar to a Python bound method.
-        /// </summary>
-        /// <summary>
         /// Calls the method on the first argument: <c>m(obj, *args)</c> does what <c>obj.m(*args)</c> does.
         /// </summary>
         // Python calls this for `obj.m(...)` and operators instead of binding first, because the
@@ -229,28 +226,31 @@ namespace Python.Runtime
                 return Exceptions.RaiseTypeError(self.type.DeletedMessage);
             }
 
-            nint count = Runtime.PyTuple_Size(args);
-            if (count < 1)
+            if (Runtime.PyTuple_Size(args) < 1)
             {
                 return Exceptions.RaiseTypeError("not enough arguments");
             }
 
             BorrowedReference ob = Runtime.PyTuple_GetItem(args, 0);
-            BorrowedReference tp = Runtime.PyObject_TYPE(ob);
+            BorrowedReference tp = self.IsBaseClassCall(ob)
+                ? ReflectedClrType.GetOrCreate(self.type.Value).Reference
+                : Runtime.PyObject_TYPE(ob);
 
-            // as tp_descr_get: super(Derived, self).method(...) binds to the base class
-            if (GetManagedObject(ob) is CLRObject obj
-                && obj.inst.GetType() != self.type.Value
-                && obj.inst is IPythonDerivedType
-                && self.type.Value.IsInstanceOfType(obj.inst))
-            {
-                tp = ReflectedClrType.GetOrCreate(self.type.Value).Reference;
-            }
-
-            using NewReference rest = Runtime.PyTuple_GetSlice(args, 1, count);
-            return MethodBinding.Call(self, null, ob, tp, rest.Borrow(), kw);
+            return MethodBinding.Call(self, null, ob, tp, args, kw, skip: 1);
         }
 
+        // super(Derived, self).method(...): a Python subclass object reaching the method
+        // of the .NET class it derives from. Such calls bind to that base class.
+        bool IsBaseClassCall(BorrowedReference ob)
+            => GetManagedObject(ob) is CLRObject obj
+                && obj.inst.GetType() != type.Value
+                && obj.inst is IPythonDerivedType
+                && type.Value.IsInstanceOfType(obj.inst);
+
+        /// <summary>
+        /// Descriptor __get__ implementation. Accessing a CLR method returns
+        /// a "bound" method similar to a Python bound method.
+        /// </summary>
         public static NewReference tp_descr_get(BorrowedReference ds, BorrowedReference ob, BorrowedReference tp)
         {
             var self = (MethodObject)GetManagedObject(ds)!;
@@ -275,14 +275,7 @@ namespace Python.Runtime
                 return Exceptions.RaiseTypeError("invalid argument");
             }
 
-            // If the object this descriptor is being called with is a subclass of the type
-            // this descriptor was defined on then it will be because the base class method
-            // is being called via super(Derived, self).method(...).
-            // In which case create a MethodBinding bound to the base class.
-            if (GetManagedObject(ob) is CLRObject obj
-                && obj.inst.GetType() != self.type.Value
-                && obj.inst is IPythonDerivedType
-                && self.type.Value.IsInstanceOfType(obj.inst))
+            if (self.IsBaseClassCall(ob))
             {
                 var basecls = ReflectedClrType.GetOrCreate(self.type.Value);
                 return new MethodBinding(self, new PyObject(ob), basecls.NewReference()).Alloc();
