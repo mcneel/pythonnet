@@ -100,3 +100,17 @@ def test_string_constructor():
 
     ob = String(arr, 5, 4)
     assert ob == "5678"
+
+
+def test_params_string_constructor_single_string():
+    """A lone string fills params string[] as one item, not one per character (RH-90887)."""
+    from Python.Test import ParamsStringConstructorTest
+
+    ob = ParamsStringConstructorTest("ThisIsMetaKey")
+    assert list(ob.keys) == ["ThisIsMetaKey"]
+
+    ob = ParamsStringConstructorTest("a", "b")
+    assert list(ob.keys) == ["a", "b"]
+
+    ob = ParamsStringConstructorTest(["ThisIsMetaKey"])
+    assert list(ob.keys) == ["ThisIsMetaKey"]

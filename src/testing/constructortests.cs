@@ -77,6 +77,13 @@ namespace Python.Test
         }
     }
 
+    // Mirrors Grasshopper 2 MetaName(params string[] keys) (RH-90887)
+    public class ParamsStringConstructorTest
+    {
+        public string[] keys;
+        public ParamsStringConstructorTest(params string[] keys) { this.keys = keys; }
+    }
+
     public class DefaultConstructorMatching
     {
         public double a;

@@ -220,6 +220,11 @@ def test_string_params_args():
     assert result[3] == "tail"
 
 
+def test_string_params_args_single_string():
+    """A lone string fills params string[] as one item, not one per character (RH-90887)."""
+    result = MethodTest.TestStringParamsArg("one")
+    assert list(result) == ["one", "tail"]
+
 def test_object_params_args():
     """Test use of object params."""
     result = MethodTest.TestObjectParamsArg("one", "two", "three")
