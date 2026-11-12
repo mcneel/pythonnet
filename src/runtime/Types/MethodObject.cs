@@ -30,6 +30,22 @@ namespace Python.Runtime
         internal PyString? doc;
         internal MaybeType type;
 
+        // what `Class.method` gives, kept so calls on the class don't build it every time
+        [NonSerialized]
+        private UnboundBinding? unbound;
+
+        private sealed class UnboundBinding
+        {
+            public readonly IntPtr Type;
+            public readonly PyObject Binding;
+
+            public UnboundBinding(IntPtr type, PyObject binding)
+            {
+                Type = type;
+                Binding = binding;
+            }
+        }
+
         protected MethodObject(MaybeType type, string name, MethodBase[] info, bool allow_threads)
         {
             this.type = type;
@@ -261,13 +277,25 @@ namespace Python.Runtime
             }
 
             // If the method is accessed through its type (rather than via
-            // an instance) we return an 'unbound' MethodBinding that will
-            // cached for future accesses through the type.
+            // an instance) we return an 'unbound' MethodBinding.
 
             if (ob == null)
             {
+                if (self.unbound is { } kept && kept.Type == tp.DangerousGetAddress())
+                {
+                    return new NewReference(kept.Binding);
+                }
+
                 var binding = new MethodBinding(self, target: null, targetType: new PyType(tp));
-                return binding.Alloc();
+                NewReference result = binding.Alloc();
+
+                // kept only for the method's own .NET class: that lives as long as the runtime,
+                // while keeping a binding to a Python subclass would keep that subclass alive
+                if (ReflectedClrType.GetOrCreate(self.type.Value).Reference == tp)
+                {
+                    self.unbound = new UnboundBinding(tp.DangerousGetAddress(), new PyObject(result.Borrow()));
+                }
+                return result;
             }
 
             if (Runtime.PyObject_IsInstance(ob, tp) < 1)
