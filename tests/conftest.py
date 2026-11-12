@@ -97,11 +97,17 @@ def pytest_configure(config):
 
 
 def pytest_collection_modifyitems(config, items):
-    perf = config.getoption("perf")
-    reason = "--perf runs only timing tests" if perf else "timing test, run with --perf"
+    if config.getoption("perf"):
+        # leave out everything else so the output is just the timings
+        others = [item for item in items if item.get_closest_marker("perf") is None]
+        if others:
+            config.hook.pytest_deselected(items=others)
+            items[:] = [item for item in items if item.get_closest_marker("perf") is not None]
+        return
+    skip = pytest.mark.skip(reason="timing test, run with --perf")
     for item in items:
-        if (item.get_closest_marker("perf") is not None) != perf:
-            item.add_marker(pytest.mark.skip(reason=reason))
+        if item.get_closest_marker("perf") is not None:
+            item.add_marker(skip)
 
 
 _perf_results = {}
