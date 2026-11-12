@@ -747,7 +747,35 @@ namespace Python.Runtime
                 // initialization must be done in tp_new
                 return true;
 
+            // the class's own .NET constructor: call it directly, rather than
+            // binding `obj.__init__` into a temporary object for every new instance
+            if (GetOwnConstructor(obj) is MethodObject ctor)
+            {
+                using var result = ctor.Invoke(obj, args, kw, null);
+                return !result.IsNull();
+            }
+
             return base.Init(obj, args, kw);
+        }
+
+        // The constructor `obj.__init__` would bind to, when binding would add nothing:
+        // a plain .NET object whose `__init__` is its own class's constructor.
+        // Python subclasses with their own `__init__`, and IPythonDerivedType
+        // objects (bound to their base class), return null and take the usual route.
+        static MethodObject? GetOwnConstructor(BorrowedReference obj)
+        {
+            if (GetManagedObject(obj) is not CLRObject { inst: object inst } || inst is IPythonDerivedType)
+            {
+                return null;
+            }
+
+            BorrowedReference init = Runtime._PyType_Lookup(Runtime.PyObject_TYPE(obj), PyIdentifier.__init__);
+            return init != null
+                    && GetManagedObject(init) is MethodObject { IsInstanceConstructor: true } ctor
+                    && ctor.type.Valid
+                    && ctor.type.Value == inst.GetType()
+                ? ctor
+                : null;
         }
 
         protected virtual void OnDeserialization(object sender)
