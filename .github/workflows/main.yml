@@ -25,7 +25,14 @@ jobs:
             platform: x64
             instance: ubuntu-22.04
 
-          # macOS dropped for now: macos-13 runners are retired
+          # Rhino for Mac is universal, so test both architectures
+          - category: macos
+            platform: arm64
+            instance: macos-latest
+
+          - category: macos
+            platform: x64
+            instance: macos-15-intel
 
         # Rhino 9 ships Python 3.13
         python: ["3.13.13"]
