@@ -26,6 +26,11 @@ def pytest_addoption(parser):
         default="default",
         help="Must be one of default, coreclr, netfx and mono",
     )
+    parser.addoption(
+        "--perf",
+        action="store_true",
+        help="Run only the timing tests, against a Release build",
+    )
 
 
 collect_ignore = []
@@ -33,6 +38,7 @@ collect_ignore = []
 
 def pytest_configure(config):
     global bin_path
+    config.addinivalue_line("markers", "perf: timing test, runs only with --perf")
     if "clr" in sys.modules:
         # Already loaded (e.g. by the C# test runner), skip build
         import clr
@@ -73,9 +79,11 @@ def pytest_configure(config):
             build_cmd += ["/p:Prefer32Bit=True"]
         check_call(build_cmd)
 
-    check_call(
-        ["dotnet", "publish", "-f", fw, "-o", str(bin_path), str(test_proj_path)]
-    )
+    publish_cmd = ["dotnet", "publish", "-f", fw, "-o", str(bin_path), str(test_proj_path)]
+    if config.getoption("perf"):
+        # Debug builds are several times slower and would skew the timings
+        publish_cmd += ["-c", "Release"]
+    check_call(publish_cmd)
 
     import os
     os.environ["PYTHONNET_RUNTIME"] = runtime_opt
@@ -86,6 +94,32 @@ def pytest_configure(config):
 
     sys.path.append(str(bin_path))
     clr.AddReference("Python.Test")
+
+
+def pytest_collection_modifyitems(config, items):
+    perf = config.getoption("perf")
+    reason = "--perf runs only timing tests" if perf else "timing test, run with --perf"
+    for item in items:
+        if (item.get_closest_marker("perf") is not None) != perf:
+            item.add_marker(pytest.mark.skip(reason=reason))
+
+
+_perf_results = {}
+
+
+@pytest.fixture(scope="session")
+def perf_results():
+    """Collects nanoseconds per call by name, printed at the end of the run."""
+    return _perf_results
+
+
+def pytest_terminal_summary(terminalreporter):
+    if not _perf_results:
+        return
+    terminalreporter.section("perf (ns per call, best of runs)")
+    width = max(len(name) for name in _perf_results)
+    for name, ns in _perf_results.items():
+        terminalreporter.write_line(f"{name:<{width}}  {ns:8.0f}")
 
 
 def pytest_unconfigure(config):
