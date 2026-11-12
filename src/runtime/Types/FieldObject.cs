@@ -12,9 +12,7 @@ namespace Python.Runtime
     {
         private MaybeFieldInfo info;
         [NonSerialized]
-        private DirectReader.Reader? reader;
-        [NonSerialized]
-        private bool readerBuilt;
+        private DirectReader? reader;
 
         public FieldObject(FieldInfo info)
         {
@@ -72,15 +70,10 @@ namespace Python.Runtime
                     Exceptions.SetError(Exceptions.TypeError, "instance is not a clr object");
                     return default;
                 }
-                if (!self.readerBuilt)
+                self.reader ??= DirectReader.ForField(info);
+                if (self.reader.TryRead(co.inst, out NewReference value))
                 {
-                    self.reader = DirectReader.ForField(info);
-                    self.readerBuilt = true;
-                }
-                // only when the target fits; otherwise reflection reports the mismatch as before
-                if (self.reader is { } read && info.DeclaringType!.IsInstanceOfType(co.inst))
-                {
-                    return read(co.inst);
+                    return value;
                 }
                 result = info.GetValue(co.inst);
                 return Converter.ToPython(result, info.FieldType);

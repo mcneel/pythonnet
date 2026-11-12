@@ -389,3 +389,14 @@ def test_nullable_field():
 
     with pytest.raises(TypeError):
         FieldTest().EnumField = None
+
+
+def test_field_read_on_wrong_object():
+    """A field read through its descriptor on another class's object fails, and still works after."""
+    from Python.Test.RhinoLike import Point3d, Vector3d
+
+    desc = Vector3d.__dict__['X']
+    with pytest.raises(TypeError):
+        desc.__get__(Point3d(1.0, 2.0, 3.0), Point3d)
+
+    assert desc.__get__(Vector3d(4.0, 5.0, 6.0), Vector3d) == 4.0

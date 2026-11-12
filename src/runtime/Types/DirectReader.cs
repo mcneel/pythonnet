@@ -4,23 +4,58 @@ using System.Reflection;
 
 namespace Python.Runtime
 {
-    /// <summary>Reads an instance property or field straight into a Python value.</summary>
-    // Skips reflection's boxing and the general converter for the common simple types;
-    // anything else returns null and keeps the regular path.
-    internal static class DirectReader
+    /// <summary>
+    /// Reads an instance property or field straight into a Python value.
+    /// <c>TryRead</c> gives false when the regular path must be used instead.
+    /// </summary>
+    // Skips reflection's boxing and the general converter for the common simple types.
+    internal sealed class DirectReader
     {
-        internal delegate NewReference Reader(object target);
+        delegate NewReference Reader(object target);
 
-        internal static Reader? ForProperty(MethodInfo getter)
+        static readonly DirectReader s_unsupported = new(typeof(object), null);
+
+        readonly Type _owner;
+        readonly Reader? _read;
+
+        DirectReader(Type owner, Reader? read)
         {
-            if (getter.IsStatic || getter.GetParameters().Length != 0) return null;
+            _owner = owner;
+            _read = read;
+        }
+
+        internal static DirectReader ForProperty(MethodInfo getter)
+        {
+            if (getter.IsStatic || getter.GetParameters().Length != 0) return s_unsupported;
             return Build(getter.DeclaringType, getter.ReturnType, t => Expression.Call(t, getter));
         }
 
-        internal static Reader? ForField(FieldInfo field)
+        internal static DirectReader ForField(FieldInfo field)
         {
-            if (field.IsStatic || field.IsLiteral) return null;
+            if (field.IsStatic || field.IsLiteral) return s_unsupported;
             return Build(field.DeclaringType, field.FieldType, t => Expression.Field(t, field));
+        }
+
+        internal bool TryRead(object target, out NewReference value)
+        {
+            if (_read is null)
+            {
+                value = default;
+                return false;
+            }
+
+            try
+            {
+                value = _read(target);
+                return true;
+            }
+            // checking the target only once the read fails keeps the check off the usual path;
+            // the regular path then reports the mismatch
+            catch (Exception e) when (e is InvalidCastException or NullReferenceException && !_owner.IsInstanceOfType(target))
+            {
+                value = default;
+                return false;
+            }
         }
 
         // NOTE: only types that the regular converter (Converter.ToPython) always turns into a plain
@@ -28,89 +63,52 @@ namespace Python.Runtime
         // exactly the same. That is every simple number type, char, bool and string. Enums, DateTime,
         // decimal, structs like Point3d and other objects are left out: user converters may handle
         // them or they get wrapped as .NET objects.
-        static Reader? Build(Type? owner, Type valueType, Func<Expression, Expression> read)
+        static DirectReader Build(Type? owner, Type valueType, Func<Expression, Expression> read)
         {
-            if (owner is null || owner.ContainsGenericParameters) return null;
+            if (owner is null || owner.ContainsGenericParameters || valueType.IsEnum) return s_unsupported;
             try
             {
-                if (valueType == typeof(double))
+                Reader? reader = Type.GetTypeCode(valueType) switch
                 {
-                    var f = Compile<double>(owner, read);
-                    return o => Runtime.PyFloat_FromDouble(f(o));
-                }
-                if (valueType == typeof(float))
-                {
-                    var f = Compile<float>(owner, read);
-                    return o => Runtime.PyFloat_FromDouble(f(o));
-                }
-                if (valueType == typeof(int))
-                {
-                    var f = Compile<int>(owner, read);
-                    return o => Runtime.PyInt_FromInt32(f(o));
-                }
-                if (valueType == typeof(long))
-                {
-                    var f = Compile<long>(owner, read);
-                    return o => Runtime.PyLong_FromLongLong(f(o));
-                }
-                if (valueType == typeof(short))
-                {
-                    var f = Compile<short>(owner, read);
-                    return o => Runtime.PyInt_FromInt32(f(o));
-                }
-                if (valueType == typeof(byte))
-                {
-                    var f = Compile<byte>(owner, read);
-                    return o => Runtime.PyInt_FromInt32(f(o));
-                }
-                if (valueType == typeof(sbyte))
-                {
-                    var f = Compile<sbyte>(owner, read);
-                    return o => Runtime.PyInt_FromInt32(f(o));
-                }
-                if (valueType == typeof(ushort))
-                {
-                    var f = Compile<ushort>(owner, read);
-                    return o => Runtime.PyInt_FromInt32(f(o));
-                }
-                if (valueType == typeof(uint))
-                {
-                    var f = Compile<uint>(owner, read);
-                    return o => Runtime.PyLong_FromUnsignedLongLong(f(o));
-                }
-                if (valueType == typeof(ulong))
-                {
-                    var f = Compile<ulong>(owner, read);
-                    return o => Runtime.PyLong_FromUnsignedLongLong(f(o));
-                }
-                if (valueType == typeof(char))
-                {
-                    var f = Compile<char>(owner, read);
-                    return o => Runtime.PyUnicode_FromOrdinal(f(o));
-                }
-                if (valueType == typeof(bool))
-                {
-                    var f = Compile<bool>(owner, read);
-                    return o => new NewReference(f(o) ? Runtime.PyTrue : Runtime.PyFalse);
-                }
-                if (valueType == typeof(string))
-                {
-                    var f = Compile<string?>(owner, read);
-                    return o => f(o) is { } s ? Runtime.PyString_FromString(s) : new NewReference(Runtime.PyNone);
-                }
+                    TypeCode.Double or TypeCode.Single => Floats(Compile<double>(owner, read)),
+                    TypeCode.Int32 or TypeCode.Int16 or TypeCode.UInt16 or TypeCode.Byte or TypeCode.SByte
+                        => Ints(Compile<int>(owner, read)),
+                    TypeCode.Int64 => Longs(Compile<long>(owner, read)),
+                    TypeCode.UInt32 or TypeCode.UInt64 => UnsignedLongs(Compile<ulong>(owner, read)),
+                    TypeCode.Char => Chars(Compile<int>(owner, read)),
+                    TypeCode.Boolean => Bools(Compile<bool>(owner, read)),
+                    TypeCode.String => Strings(Compile<string?>(owner, read)),
+                    _ => null,
+                };
+                return reader is null ? s_unsupported : new DirectReader(owner, reader);
             }
             catch (Exception)
             {
                 // e.g. no runtime code generation available: the regular path still works
+                return s_unsupported;
             }
-            return null;
         }
 
+        static Reader Floats(Func<object, double> f) => o => Runtime.PyFloat_FromDouble(f(o));
+        static Reader Ints(Func<object, int> f) => o => Runtime.PyInt_FromInt32(f(o));
+        static Reader Longs(Func<object, long> f) => o => Runtime.PyLong_FromLongLong(f(o));
+        static Reader UnsignedLongs(Func<object, ulong> f) => o => Runtime.PyLong_FromUnsignedLongLong(f(o));
+        static Reader Chars(Func<object, int> f) => o => Runtime.PyUnicode_FromOrdinal(f(o));
+        static Reader Bools(Func<object, bool> f) => o => new NewReference(f(o) ? Runtime.PyTrue : Runtime.PyFalse);
+        static Reader Strings(Func<object, string?> f)
+            => o => f(o) is { } s ? Runtime.PyString_FromString(s) : new NewReference(Runtime.PyNone);
+
+        // The value is widened to T as part of the read, so one T serves several value types.
         static Func<object, T> Compile<T>(Type owner, Func<Expression, Expression> read)
         {
             var target = Expression.Parameter(typeof(object));
             Expression typed = owner.IsValueType ? Expression.Unbox(target, owner) : Expression.Convert(target, owner);
-            return Expression.Lambda<Func<object, T>>(read(typed), target).Compile();
+            Expression value = read(typed);
+            if (value.Type != typeof(T))
+            {
+                value = Expression.Convert(value, typeof(T));
+            }
+            return Expression.Lambda<Func<object, T>>(value, target).Compile();
         }
     }
 }
