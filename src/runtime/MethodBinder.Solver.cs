@@ -64,7 +64,7 @@ namespace Python.Runtime
 
             if (!call.AnyValueRead)
             {
-                choices.Add(key, new Choice(spec!));
+                choices.Add(key.Detached(), new Choice(spec!));
             }
             return true;
         }
@@ -72,7 +72,7 @@ namespace Python.Runtime
         // Fits this call's arguments to an overload picked earlier, skipping the comparison.
         static bool TryReuse(Choice choice, ref CallArgs call, out BindSpec? spec)
         {
-            if (!TryShape(choice.Method, ref call, out spec) || !TryMatch(spec!, ref call, grade: false, out _))
+            if (!TryShape(choice.Method, ref call, out spec) || !TryAssign(spec!, ref call))
             {
                 spec = null;
                 return false;
@@ -142,33 +142,39 @@ namespace Python.Runtime
 
         // What the pick depends on when no argument's value was read: the keyword names
         // and, for each argument, everything ArgInfo tells without reading the value.
-        private sealed class CallKey : IEquatable<CallKey>
+        // Made per call around that call's own arguments; `Detached` gives one that can be kept.
+        private readonly struct CallKey : IEquatable<CallKey>
         {
             readonly int _variant;
             readonly string[] _kwNames;
-            readonly (ArgKind Kind, Type From, IntPtr PyType, int Detail)[] _args;
+            readonly ArgInfo[] _args;
             readonly int _hash;
 
             public CallKey(ref CallArgs call, int variant)
+                : this(variant, call.KwNames, call.Infos())
+            {
+            }
+
+            CallKey(int variant, string[] kwNames, ArgInfo[] args)
             {
                 _variant = variant;
-                _kwNames = call.KwNames;
-                _args = new (ArgKind, Type, IntPtr, int)[call.Total];
+                _kwNames = kwNames;
+                _args = args;
 
                 int hash = variant;
-                for (int i = 0; i < _args.Length; i++)
+                foreach (ArgInfo arg in args)
                 {
-                    ArgInfo info = call.Info(i);
-                    int detail = info.Detail;
-                    _args[i] = (info.Kind, info.From, info.PyType, detail);
-                    hash = (hash * 31) ^ info.From.GetHashCode() ^ info.PyType.GetHashCode() ^ ((int)info.Kind << 24) ^ detail;
+                    hash = (hash * 31) ^ arg.FactsHash;
                 }
-                foreach (string name in _kwNames)
+                foreach (string name in kwNames)
                 {
                     hash = (hash * 31) ^ name.GetHashCode();
                 }
                 _hash = hash;
             }
+
+            // a copy that does not hold on to the call's argument values
+            public CallKey Detached() => new(_variant, _kwNames, Array.ConvertAll(_args, a => a.FactsOnly()));
 
             public override int GetHashCode() => _hash;
 
@@ -184,7 +190,7 @@ namespace Python.Runtime
 
                 for (int i = 0; i < _args.Length; i++)
                 {
-                    if (_args[i] != other._args[i])
+                    if (!_args[i].SameFacts(other._args[i]))
                     {
                         return false;
                     }
@@ -269,6 +275,16 @@ namespace Python.Runtime
             public readonly ArgInfo Info(int index)
                 => _infos[index] ??= ArgInfo.Of(this[index]);
 
+            // every argument's Info; the array belongs to this call
+            public readonly ArgInfo[] Infos()
+            {
+                for (int i = 0; i < _infos.Length; i++)
+                {
+                    _infos[i] ??= ArgInfo.Of(this[i]);
+                }
+                return _infos!;
+            }
+
             // true when picking looked at an argument's value, not just its type
             public readonly bool AnyValueRead
             {
@@ -331,7 +347,7 @@ namespace Python.Runtime
 
         // A Python argument, classified once so each overload can grade it cheaply.
         // NOTE: whatever is public here, other than the Read methods, must be part of
-        // Detail or CallKey; otherwise a remembered pick is reused for calls it does not fit.
+        // SameFacts and FactsHash; otherwise a remembered pick is reused for calls it does not fit.
         private sealed class ArgInfo
         {
             public ArgKind Kind { get; private set; }
@@ -341,8 +357,7 @@ namespace Python.Runtime
 
             IntPtr _python;
             object? _clr;      // for Clr: the .NET object
-            long _signed;      // for Int, when it fits a long
-            IntRange _range;   // for Int
+            int _intFits;      // for Int: one bit per integer TypeCode it fits
 
             // a rule read this argument's value, so the pick can't be reused for other values
             public bool ValueRead { get; private set; }
@@ -359,8 +374,22 @@ namespace Python.Runtime
                 return _clr;
             }
 
-            // the facts beyond Kind, From and PyType that rules use without reading the value
-            public int Detail => Kind == ArgKind.Int ? IntFitMask() : IsSingle ? 1 : 0;
+            // Equality over what rules use without reading the value.
+            public bool SameFacts(ArgInfo other)
+                => Kind == other.Kind && From == other.From && PyType == other.PyType
+                    && IsSingle == other.IsSingle && _intFits == other._intFits;
+
+            public int FactsHash
+                => From.GetHashCode() ^ PyType.GetHashCode() ^ ((int)Kind << 24) ^ _intFits ^ (IsSingle ? 1 : 0);
+
+            // a copy without the value, safe to keep after the call
+            public ArgInfo FactsOnly()
+            {
+                var copy = (ArgInfo)MemberwiseClone();
+                copy._python = IntPtr.Zero;
+                copy._clr = null;
+                return copy;
+            }
 
             public static ArgInfo Of(BorrowedReference arg)
             {
@@ -435,8 +464,7 @@ namespace Python.Runtime
                 // stands in as the smallest of Int32, Int64, UInt64 or BigInteger that holds it
                 if (Runtime.PyLong_AsLongLong(arg) is long signed)
                 {
-                    info._signed = signed;
-                    info._range = IntRange.Signed;
+                    info._intFits = FitsOf(signed);
                     info.From = signed >= int.MinValue && signed <= int.MaxValue ? typeof(int) : typeof(long);
                     return;
                 }
@@ -444,65 +472,30 @@ namespace Python.Runtime
 
                 if (Runtime.PyLong_AsUnsignedLongLong(arg) is ulong unsigned)
                 {
-                    info._range = IntRange.Unsigned;
+                    info._intFits = 1 << (int)TypeCode.UInt64;
                     info.From = typeof(ulong);
                     return;
                 }
                 Exceptions.Clear();
 
-                info._range = IntRange.Big;
                 info.From = typeof(System.Numerics.BigInteger);
             }
 
             // whether a Python int fits an integer type
-            public bool IntFits(TypeCode code)
+            public bool IntFits(TypeCode code) => (_intFits & (1 << (int)code)) != 0;
+
+            static int FitsOf(long v)
             {
-                if (_range == IntRange.Big)
-                {
-                    return false;
-                }
-
-                if (_range == IntRange.Unsigned)
-                {
-                    return code == TypeCode.UInt64;
-                }
-
-                long v = _signed;
-                return code switch
-                {
-                    TypeCode.SByte => v >= sbyte.MinValue && v <= sbyte.MaxValue,
-                    TypeCode.Byte => v >= byte.MinValue && v <= byte.MaxValue,
-                    TypeCode.Int16 => v >= short.MinValue && v <= short.MaxValue,
-                    TypeCode.UInt16 => v >= ushort.MinValue && v <= ushort.MaxValue,
-                    TypeCode.Char => v >= char.MinValue && v <= char.MaxValue,
-                    TypeCode.Int32 => v >= int.MinValue && v <= int.MaxValue,
-                    TypeCode.UInt32 => v >= uint.MinValue && v <= uint.MaxValue,
-                    TypeCode.Int64 => true,
-                    TypeCode.UInt64 => v >= 0,
-                    _ => false,
-                };
+                int fits = 1 << (int)TypeCode.Int64;
+                if (v >= 0) fits |= 1 << (int)TypeCode.UInt64;
+                if (v >= int.MinValue && v <= int.MaxValue) fits |= 1 << (int)TypeCode.Int32;
+                if (v >= uint.MinValue && v <= uint.MaxValue) fits |= 1 << (int)TypeCode.UInt32;
+                if (v >= short.MinValue && v <= short.MaxValue) fits |= 1 << (int)TypeCode.Int16;
+                if (v >= ushort.MinValue && v <= ushort.MaxValue) fits |= (1 << (int)TypeCode.UInt16) | (1 << (int)TypeCode.Char);
+                if (v >= sbyte.MinValue && v <= sbyte.MaxValue) fits |= 1 << (int)TypeCode.SByte;
+                if (v >= byte.MinValue && v <= byte.MaxValue) fits |= 1 << (int)TypeCode.Byte;
+                return fits;
             }
-
-            // one bit for each integer type this int fits
-            int IntFitMask()
-            {
-                int mask = 0;
-                for (TypeCode code = TypeCode.Char; code <= TypeCode.UInt64; code++)
-                {
-                    if (IntFits(code))
-                    {
-                        mask |= 1 << (int)code;
-                    }
-                }
-                return mask;
-            }
-        }
-
-        private enum IntRange : byte
-        {
-            Signed,     // fits a long
-            Unsigned,   // fits only a ulong
-            Big,        // fits neither
         }
 
         #endregion
@@ -709,12 +702,45 @@ namespace Python.Runtime
             }
         }
 
-        // Assigns args and kwargs to the method's slots, then grades them when
-        // `grade` is set. Returns false when the arguments cannot be assigned
-        // or one of them cannot fit.
+        // Assigns the arguments (TryAssign), then grades them when `grade` is set.
+        // Returns false when they cannot be assigned or one of them cannot fit.
         static bool TryMatch(BindSpec spec, ref CallArgs call, bool grade, out Candidate? candidate)
         {
             candidate = null;
+            if (!TryAssign(spec, ref call))
+            {
+                return false;
+            }
+
+            var result = new Candidate(spec, call.Total);
+            if (grade)
+            {
+                foreach (BindParam slot in spec.Parameters)
+                {
+                    if (!TryGrade(slot, ref call, result))
+                    {
+                        return false;
+                    }
+                }
+
+                if (spec.IsOperator && !IsSafeOperand(result, ref call))
+                {
+                    return false;
+                }
+
+                if (!SatisfiesGenericRules(spec, ref call))
+                {
+                    return false;
+                }
+            }
+
+            candidate = result;
+            return true;
+        }
+
+        // Assigns args and kwargs to the method's slots. False when they don't fit the slots.
+        static bool TryAssign(BindSpec spec, ref CallArgs call)
+        {
             BindParam[] slots = spec.Parameters;
 
             // keywords take their slots first; positional arguments fill the rest
@@ -767,31 +793,13 @@ namespace Python.Runtime
                 return false;
             }
 
-            var result = new Candidate(spec, call.Total);
             foreach (BindParam slot in slots)
             {
                 if (!slot.IsAssigned && (slot.Kind == BindParamKind.Default || slot.Kind == BindParamKind.Return))
                 {
                     return false;
                 }
-
-                if (grade && !TryGrade(slot, ref call, result))
-                {
-                    return false;
-                }
             }
-
-            if (grade && spec.IsOperator && !IsSafeOperand(result, ref call))
-            {
-                return false;
-            }
-
-            if (grade && !SatisfiesGenericRules(spec, ref call))
-            {
-                return false;
-            }
-
-            candidate = result;
             return true;
         }
 
