@@ -25,6 +25,8 @@ namespace Python.Runtime
     //   - MATCH + SELECT: each method list remembers which overload it picked for
     //     the argument types of a call (CallKey). When picking had to look at an
     //     argument's value, not just its type, the pick is not remembered.
+    //     ArgInfo enforces this: a rule can only reach a value through its Read
+    //     methods, and everything else it offers is part of CallKey.
     partial class MethodBinder
     {
         #region Entry
@@ -60,7 +62,7 @@ namespace Python.Runtime
                 return false;
             }
 
-            if (!call.ReadValues)
+            if (!call.AnyValueRead)
             {
                 choices.Add(key, new Choice(spec!));
             }
@@ -138,35 +140,28 @@ namespace Python.Runtime
 
         #region Cache
 
-        // What the pick depends on when only argument types were looked at: the keyword
-        // names, each argument's type, which integer types an int fits, and whether a
-        // string is one character long.
+        // What the pick depends on when no argument's value was read: the keyword names
+        // and, for each argument, everything ArgInfo tells without reading the value.
         private sealed class CallKey : IEquatable<CallKey>
         {
             readonly int _variant;
             readonly string[] _kwNames;
-            readonly (ArgKind Kind, Type From, int Detail)[] _args;
+            readonly (ArgKind Kind, Type From, IntPtr PyType, int Detail)[] _args;
             readonly int _hash;
 
             public CallKey(ref CallArgs call, int variant)
             {
                 _variant = variant;
                 _kwNames = call.KwNames;
-                _args = new (ArgKind, Type, int)[call.Total];
+                _args = new (ArgKind, Type, IntPtr, int)[call.Total];
 
                 int hash = variant;
                 for (int i = 0; i < _args.Length; i++)
                 {
                     ArgInfo info = call.Info(i);
-                    int detail = info.Kind switch
-                    {
-                        ArgKind.Int => info.IntFitMask(),
-                        ArgKind.Str => info.StringLength == 1 ? 1 : 0,
-                        ArgKind.Clr when info.From == typeof(string) => info.StringLength == 1 ? 1 : 0,
-                        _ => 0,
-                    };
-                    _args[i] = (info.Kind, info.From, detail);
-                    hash = (hash * 31) ^ info.From.GetHashCode() ^ ((int)info.Kind << 24) ^ detail;
+                    int detail = info.Detail;
+                    _args[i] = (info.Kind, info.From, info.PyType, detail);
+                    hash = (hash * 31) ^ info.From.GetHashCode() ^ info.PyType.GetHashCode() ^ ((int)info.Kind << 24) ^ detail;
                 }
                 foreach (string name in _kwNames)
                 {
@@ -275,13 +270,13 @@ namespace Python.Runtime
                 => _infos[index] ??= ArgInfo.Of(this[index]);
 
             // true when picking looked at an argument's value, not just its type
-            public readonly bool ReadValues
+            public readonly bool AnyValueRead
             {
                 get
                 {
                     foreach (ArgInfo? info in _infos)
                     {
-                        if (info is { ValueDependent: true })
+                        if (info is { ValueRead: true })
                         {
                             return true;
                         }
@@ -335,18 +330,37 @@ namespace Python.Runtime
         }
 
         // A Python argument, classified once so each overload can grade it cheaply.
+        // NOTE: whatever is public here, other than the Read methods, must be part of
+        // Detail or CallKey; otherwise a remembered pick is reused for calls it does not fit.
         private sealed class ArgInfo
         {
-            public ArgKind Kind;
-            public Type From = typeof(object); // .NET type it counts as; for Python values, its stand-in
-            public object? Value;              // for Clr: the .NET object
-            public int StringLength;           // for Str, Bytes, and .NET strings
-            public long Signed;                // for Int, when it fits a long
-            public ulong Unsigned;             // for Int, when it only fits a ulong
-            public IntRange Range;             // for Int
+            public ArgKind Kind { get; private set; }
+            public Type From { get; private set; } = typeof(object); // .NET type it counts as; for Python values, its stand-in
+            public IntPtr PyType { get; private set; }               // its Python type: codecs go by it
+            public bool IsSingle { get; private set; }               // Str, Bytes and .NET strings: exactly one long
 
-            // picking looked at this argument's value, so the pick can't be reused for other values
-            public bool ValueDependent;
+            IntPtr _python;
+            object? _clr;      // for Clr: the .NET object
+            long _signed;      // for Int, when it fits a long
+            IntRange _range;   // for Int
+
+            // a rule read this argument's value, so the pick can't be reused for other values
+            public bool ValueRead { get; private set; }
+
+            public BorrowedReference ReadPython()
+            {
+                ValueRead = true;
+                return new BorrowedReference(_python);
+            }
+
+            public object? ReadClr()
+            {
+                ValueRead = true;
+                return _clr;
+            }
+
+            // the facts beyond Kind, From and PyType that rules use without reading the value
+            public int Detail => Kind == ArgKind.Int ? IntFitMask() : IsSingle ? 1 : 0;
 
             public static ArgInfo Of(BorrowedReference arg)
             {
@@ -358,18 +372,21 @@ namespace Python.Runtime
                     return info;
                 }
 
+                info._python = arg.DangerousGetAddress();
+                info.PyType = Runtime.PyObject_TYPE(arg).DangerousGetAddress();
+
                 switch (ManagedType.GetManagedObject(arg))
                 {
                     case CLRObject co:
                         info.Kind = ArgKind.Clr;
-                        info.Value = co.inst;
+                        info._clr = co.inst;
                         info.From = co.inst?.GetType() ?? typeof(object);
-                        info.StringLength = co.inst is string text ? text.Length : 0;
+                        info.IsSingle = co.inst is string { Length: 1 };
                         return info;
 
                     case ClassBase cb when cb.type.Valid:
                         info.Kind = ArgKind.Clr;
-                        info.Value = cb.type.Value;
+                        info._clr = cb.type.Value;
                         info.From = cb.type.Value.GetType();
                         return info;
                 }
@@ -394,12 +411,12 @@ namespace Python.Runtime
                 {
                     info.Kind = ArgKind.Str;
                     info.From = typeof(string);
-                    info.StringLength = (int)Runtime.PyUnicode_GetLength(arg);
+                    info.IsSingle = Runtime.PyUnicode_GetLength(arg) == 1;
                 }
                 else if (Runtime.PyObject_TypeCheck(arg, Runtime.PyBytesType))
                 {
                     info.Kind = ArgKind.Bytes;
-                    info.StringLength = (int)Runtime.PyBytes_Size(arg);
+                    info.IsSingle = Runtime.PyBytes_Size(arg) == 1;
                 }
                 else if (Runtime.PySequence_Check(arg))
                 {
@@ -418,8 +435,8 @@ namespace Python.Runtime
                 // stands in as the smallest of Int32, Int64, UInt64 or BigInteger that holds it
                 if (Runtime.PyLong_AsLongLong(arg) is long signed)
                 {
-                    info.Signed = signed;
-                    info.Range = IntRange.Signed;
+                    info._signed = signed;
+                    info._range = IntRange.Signed;
                     info.From = signed >= int.MinValue && signed <= int.MaxValue ? typeof(int) : typeof(long);
                     return;
                 }
@@ -427,31 +444,30 @@ namespace Python.Runtime
 
                 if (Runtime.PyLong_AsUnsignedLongLong(arg) is ulong unsigned)
                 {
-                    info.Unsigned = unsigned;
-                    info.Range = IntRange.Unsigned;
+                    info._range = IntRange.Unsigned;
                     info.From = typeof(ulong);
                     return;
                 }
                 Exceptions.Clear();
 
-                info.Range = IntRange.Big;
+                info._range = IntRange.Big;
                 info.From = typeof(System.Numerics.BigInteger);
             }
 
             // whether a Python int fits an integer type
             public bool IntFits(TypeCode code)
             {
-                if (Range == IntRange.Big)
+                if (_range == IntRange.Big)
                 {
                     return false;
                 }
 
-                if (Range == IntRange.Unsigned)
+                if (_range == IntRange.Unsigned)
                 {
                     return code == TypeCode.UInt64;
                 }
 
-                long v = Signed;
+                long v = _signed;
                 return code switch
                 {
                     TypeCode.SByte => v >= sbyte.MinValue && v <= sbyte.MaxValue,
@@ -468,7 +484,7 @@ namespace Python.Runtime
             }
 
             // one bit for each integer type this int fits
-            public int IntFitMask()
+            int IntFitMask()
             {
                 int mask = 0;
                 for (TypeCode code = TypeCode.Char; code <= TypeCode.UInt64; code++)
@@ -870,7 +886,7 @@ namespace Python.Runtime
             if (slot.Kind != BindParamKind.Params)
             {
                 ArgInfo info = call.Info(index);
-                Narrowing level = GetNarrowing(info, call[index], slot.ParameterType);
+                Narrowing level = GetNarrowing(info, slot.ParameterType);
 
                 // a bare T becomes the argument's own type, so Echo<T>(Int16) beats Echo(int)
                 Type target = slot.ParameterType.IsGenericParameter && info.Kind != ArgKind.None
@@ -886,7 +902,7 @@ namespace Python.Runtime
                 ArgInfo info = call.Info(index);
                 if (slot.ByKeyword || info.Kind is ArgKind.Sequence or ArgKind.Clr)
                 {
-                    Narrowing asArray = GetNarrowing(info, call[index], slot.ParameterType);
+                    Narrowing asArray = GetNarrowing(info, slot.ParameterType);
                     if (asArray != Narrowing.Never || slot.ByKeyword)
                     {
                         slot.AsArray = true;
@@ -899,7 +915,7 @@ namespace Python.Runtime
             slot.AsArray = false;
             for (int i = 0; i < slot.ItemCount; i++)
             {
-                Narrowing level = GetNarrowing(call.Info(index + i), call[index + i], slot.Type);
+                Narrowing level = GetNarrowing(call.Info(index + i), slot.Type);
                 candidate.Grade(index + i, level, slot.Type);
                 if (level == Narrowing.Never)
                 {
@@ -911,7 +927,7 @@ namespace Python.Runtime
         }
 
         // Least narrowing at which one argument fits one parameter type.
-        static Narrowing GetNarrowing(ArgInfo arg, BorrowedReference value, Type to)
+        static Narrowing GetNarrowing(ArgInfo arg, Type to)
         {
             if (to.IsByRef)
             {
@@ -940,7 +956,7 @@ namespace Python.Runtime
             Narrowing level = GetTypeNarrowing(arg, to);
             if (level == Narrowing.Never && arg.Kind != ArgKind.Clr)
             {
-                level = GetPythonNarrowing(arg, value, to);
+                level = GetPythonNarrowing(arg, to);
             }
 
             // pythonnet passes anything as a PyObject
@@ -1013,7 +1029,7 @@ namespace Python.Runtime
 
             if (to == typeof(char) && from == typeof(string))
             {
-                return arg.StringLength == 1 ? Narrowing.IndexOperator : Narrowing.Never;
+                return arg.IsSingle ? Narrowing.IndexOperator : Narrowing.Never;
             }
 
             if (to == typeof(string) && from == typeof(char))
@@ -1035,7 +1051,7 @@ namespace Python.Runtime
         }
 
         // Conversions only Python values have: collections, delegates, and pythonnet's own.
-        static Narrowing GetPythonNarrowing(ArgInfo arg, BorrowedReference value, Type to)
+        static Narrowing GetPythonNarrowing(ArgInfo arg, Type to)
         {
             switch (arg.Kind)
             {
@@ -1051,35 +1067,36 @@ namespace Python.Runtime
 
                 case ArgKind.Bool:
                 case ArgKind.Int:
-                    // only a codec can take an int the type rules refused
-                    bool decoded = PyObjectConversions.TryDecode(value, Runtime.PyObject_TYPE(value), to, out _, out bool hasDecoder);
-                    arg.ValueDependent |= hasDecoder;
-                    return decoded ? Narrowing.All : Narrowing.Never;
+                    // only a codec can take an int the type rules refused; whether one
+                    // exists goes by type, so the value is read only when it does
+                    var pyType = new BorrowedReference(arg.PyType);
+                    return PyObjectConversions.HasDecoder(pyType, to)
+                            && PyObjectConversions.TryDecode(arg.ReadPython(), pyType, to, out _)
+                        ? Narrowing.All
+                        : Narrowing.Never;
 
                 case ArgKind.Bytes:
-                    arg.ValueDependent = true;
-                    if (arg.StringLength == 1 && (to == typeof(byte) || to == typeof(sbyte) || to == typeof(char)))
+                    if (arg.IsSingle && (to == typeof(byte) || to == typeof(sbyte) || to == typeof(char)))
                     {
                         return Narrowing.IndexOperator;
                     }
                     goto case ArgKind.Sequence;
 
                 case ArgKind.Sequence:
-                    arg.ValueDependent = true;
                     if (TryGetElementType(to, out _))
                     {
-                        return GetCollectionNarrowing(value, to, readItems: true);
+                        return GetCollectionNarrowing(arg, to, readItems: true);
                     }
                     // not a collection type: a codec may still take it, e.g. tuple to ValueTuple
                     break;
 
                 case ArgKind.Iterator:
                     // never handed to the converter here: that could read it
-                    return GetCollectionNarrowing(value, to, readItems: false);
+                    return GetCollectionNarrowing(arg, to, readItems: false);
             }
 
             // whether it can be called, and what the converter or a codec makes of it, depend on the value
-            arg.ValueDependent = true;
+            BorrowedReference value = arg.ReadPython();
 
             if (typeof(Delegate).IsAssignableFrom(to))
             {
@@ -1097,7 +1114,7 @@ namespace Python.Runtime
 
         // A Python iterable to an array (pythonnet's own; IronPython takes only tuples),
         // IList<T>, or IEnumerable. Items are graded too, so [1.0] fits double[] but not int[].
-        static Narrowing GetCollectionNarrowing(BorrowedReference value, Type to, bool readItems)
+        static Narrowing GetCollectionNarrowing(ArgInfo arg, Type to, bool readItems)
         {
             if (!TryGetElementType(to, out Type? element))
             {
@@ -1114,6 +1131,7 @@ namespace Python.Runtime
 
             Narrowing level = listLike ? Narrowing.BinaryOperator : Narrowing.IndexOperator;
 
+            BorrowedReference value = arg.ReadPython();
             nint size = Runtime.PySequence_Size(value);
             if (size < 0)
             {
@@ -1131,7 +1149,7 @@ namespace Python.Runtime
                     return Narrowing.Never;
                 }
 
-                Narrowing itemLevel = GetNarrowing(ArgInfo.Of(item.Borrow()), item.Borrow(), element!);
+                Narrowing itemLevel = GetNarrowing(ArgInfo.Of(item.Borrow()), element!);
                 if (itemLevel == Narrowing.Never)
                 {
                     return Narrowing.Never;
@@ -1189,16 +1207,15 @@ namespace Python.Runtime
                 return arg.IntFits(code);
             }
 
-            if (arg.Kind == ArgKind.Bool || arg.Value is bool)
+            if (arg.From == typeof(bool))
             {
                 return true;
             }
 
             // a .NET number: check its value
-            arg.ValueDependent = true;
             try
             {
-                Convert.ChangeType(arg.Value, to, CultureInfo.InvariantCulture);
+                Convert.ChangeType(arg.ReadClr(), to, CultureInfo.InvariantCulture);
                 return true;
             }
             catch (Exception ex) when (ex is OverflowException or InvalidCastException or FormatException)

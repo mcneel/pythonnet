@@ -75,21 +75,25 @@ namespace Python.Runtime
         #region Decoding
         static readonly ConcurrentDictionary<TypePair, (PyType, Converter.TryConvertFromPythonDelegate?)> pythonToClr = new();
         internal static bool TryDecode(BorrowedReference pyHandle, BorrowedReference pyType, Type targetType, out object? result)
-            => TryDecode(pyHandle, pyType, targetType, out result, out _);
-
-        // `hasDecoder` false: no codec handles these two types, and that stays so until shutdown
-        internal static bool TryDecode(BorrowedReference pyHandle, BorrowedReference pyType, Type targetType, out object? result, out bool hasDecoder)
         {
             if (pyHandle == null) throw new ArgumentNullException(nameof(pyHandle));
             if (pyType == null) throw new ArgumentNullException(nameof(pyType));
             if (targetType == null) throw new ArgumentNullException(nameof(targetType));
 
-            var key = new TypePair(pyType.DangerousGetAddress(), targetType);
-            var (_, decoder) = pythonToClr.GetOrAdd(key, pair => GetDecoder(pair.PyType, pair.ClrType));
+            var decoder = FindDecoder(pyType, targetType);
             result = null;
-            hasDecoder = decoder != null;
             if (decoder == null) return false;
             return decoder.Invoke(pyHandle, out result);
+        }
+
+        // false: no codec handles these two types, and that stays so until shutdown
+        internal static bool HasDecoder(BorrowedReference pyType, Type targetType)
+            => FindDecoder(pyType, targetType) != null;
+
+        static Converter.TryConvertFromPythonDelegate? FindDecoder(BorrowedReference pyType, Type targetType)
+        {
+            var key = new TypePair(pyType.DangerousGetAddress(), targetType);
+            return pythonToClr.GetOrAdd(key, pair => GetDecoder(pair.PyType, pair.ClrType)).Item2;
         }
 
         static (PyType, Converter.TryConvertFromPythonDelegate?) GetDecoder(IntPtr sourceType, Type targetType)
