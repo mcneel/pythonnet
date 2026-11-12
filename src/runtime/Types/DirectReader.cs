@@ -25,9 +25,9 @@ namespace Python.Runtime
 
         // NOTE: only types that the regular converter (Converter.ToPython) always turns into a plain
         // Python value in one step (number, bool, str or None) are handled here, so the result is
-        // exactly the same. short, byte, sbyte, ushort, uint, ulong and char also qualify and can be
-        // added. Enums, DateTime, decimal, structs like Point3d and other objects are left out: user
-        // converters may handle them or they get wrapped as .NET objects.
+        // exactly the same. That is every simple number type, char, bool and string. Enums, DateTime,
+        // decimal, structs like Point3d and other objects are left out: user converters may handle
+        // them or they get wrapped as .NET objects.
         static Reader? Build(Type? owner, Type valueType, Func<Expression, Expression> read)
         {
             if (owner is null || owner.ContainsGenericParameters) return null;
@@ -52,6 +52,41 @@ namespace Python.Runtime
                 {
                     var f = Compile<long>(owner, read);
                     return o => Runtime.PyLong_FromLongLong(f(o));
+                }
+                if (valueType == typeof(short))
+                {
+                    var f = Compile<short>(owner, read);
+                    return o => Runtime.PyInt_FromInt32(f(o));
+                }
+                if (valueType == typeof(byte))
+                {
+                    var f = Compile<byte>(owner, read);
+                    return o => Runtime.PyInt_FromInt32(f(o));
+                }
+                if (valueType == typeof(sbyte))
+                {
+                    var f = Compile<sbyte>(owner, read);
+                    return o => Runtime.PyInt_FromInt32(f(o));
+                }
+                if (valueType == typeof(ushort))
+                {
+                    var f = Compile<ushort>(owner, read);
+                    return o => Runtime.PyInt_FromInt32(f(o));
+                }
+                if (valueType == typeof(uint))
+                {
+                    var f = Compile<uint>(owner, read);
+                    return o => Runtime.PyLong_FromUnsignedLongLong(f(o));
+                }
+                if (valueType == typeof(ulong))
+                {
+                    var f = Compile<ulong>(owner, read);
+                    return o => Runtime.PyLong_FromUnsignedLongLong(f(o));
+                }
+                if (valueType == typeof(char))
+                {
+                    var f = Compile<char>(owner, read);
+                    return o => Runtime.PyUnicode_FromOrdinal(f(o));
                 }
                 if (valueType == typeof(bool))
                 {
