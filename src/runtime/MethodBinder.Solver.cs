@@ -32,7 +32,6 @@ namespace Python.Runtime
         #region Entry
 
         // `choices` holds earlier picks for this `methods` list; null means don't remember.
-        // `variant` keeps apart calls on the same list that can pick differently.
         // The first `skip` items of `args` are not arguments.
         static bool TryBind(MethodBase[] methods,
                             BorrowedReference args,
@@ -40,7 +39,6 @@ namespace Python.Runtime
                             int skip,
                             bool allowRedirected,
                             ChoiceCache? choices,
-                            int variant,
                             out BindSpec? spec,
                             out BindError? error)
         {
@@ -52,7 +50,7 @@ namespace Python.Runtime
                 return TrySolve(methods, ref call, allowRedirected, out spec, out error);
             }
 
-            var key = new CallKey(ref call, variant);
+            var key = new CallKey(ref call, allowRedirected);
             if (choices.TryGetValue(key, out Choice choice) && TryReuse(choice, ref call, out spec))
             {
                 error = null;
@@ -142,28 +140,29 @@ namespace Python.Runtime
 
         #region Cache
 
-        // What the pick depends on when no argument's value was read: the keyword names
-        // and, for each argument, everything ArgInfo tells without reading the value.
+        // What the pick depends on when no argument's value was read: whether redirected
+        // methods may compete, the keyword names and, for each argument, everything
+        // ArgInfo tells without reading the value.
         // Made per call around that call's own arguments; `Detached` gives one that can be kept.
         private readonly struct CallKey : IEquatable<CallKey>
         {
-            readonly int _variant;
+            readonly bool _allowRedirected;
             readonly string[] _kwNames;
             readonly ArgInfo[] _args;
             readonly int _hash;
 
-            public CallKey(ref CallArgs call, int variant)
-                : this(variant, call.KwNames, call.Infos())
+            public CallKey(ref CallArgs call, bool allowRedirected)
+                : this(allowRedirected, call.KwNames, call.Infos())
             {
             }
 
-            CallKey(int variant, string[] kwNames, ArgInfo[] args)
+            CallKey(bool allowRedirected, string[] kwNames, ArgInfo[] args)
             {
-                _variant = variant;
+                _allowRedirected = allowRedirected;
                 _kwNames = kwNames;
                 _args = args;
 
-                int hash = variant;
+                int hash = allowRedirected ? 1 : 0;
                 foreach (ArgInfo arg in args)
                 {
                     hash = (hash * 31) ^ arg.FactsHash;
@@ -176,7 +175,7 @@ namespace Python.Runtime
             }
 
             // a copy that does not hold on to the call's argument values
-            public CallKey Detached() => new(_variant, _kwNames, Array.ConvertAll(_args, a => a.FactsOnly()));
+            public CallKey Detached() => new(_allowRedirected, _kwNames, Array.ConvertAll(_args, a => a.FactsOnly()));
 
             public override int GetHashCode() => _hash;
 
@@ -184,7 +183,7 @@ namespace Python.Runtime
 
             public bool Equals(CallKey other)
             {
-                if (_hash != other._hash || _variant != other._variant
+                if (_hash != other._hash || _allowRedirected != other._allowRedirected
                         || _args.Length != other._args.Length || _kwNames.Length != other._kwNames.Length)
                 {
                     return false;

@@ -14,7 +14,7 @@ import timeit
 import pytest
 from Python.Test import (
     ResolverArity, ResolverCtor, ResolverDerived, ResolverGeneric, ResolverHierarchy,
-    ResolverParams, ResolverPrimitives, ResolverSequences, ResolverVec,
+    ResolverParams, ResolverPrimitives, ResolverSequences, ResolverStatic, ResolverVec,
 )
 from Python.Test.RhinoLike import Point3d, Vector3d
 
@@ -46,6 +46,8 @@ SHAPES = {
     "constructor: ResolverCtor(1, 'x')": lambda: ResolverCtor(1, "x"),
     "operator: vec + vec": lambda: v1 + v2,
     "operator: vec * 2.0": lambda: v1 * 2.0,
+    "static: OnlyStatic(5)": lambda: ResolverStatic.OnlyStatic(5),
+    "static among instance: Mix(1, 2)": lambda: ResolverStatic.Mix(1, 2),
     "params: Ints(1, 2, 3)": lambda: par.Ints(1, 2, 3),
     "params: Prefer(1, 2, 3)": lambda: par.Prefer(1, 2, 3),
     "generic: Echo(5.0)": lambda: gen.Echo(5.0),

@@ -369,7 +369,15 @@ namespace Python.Runtime
             public readonly MethodBase[] Methods;
             public readonly ChoiceCache Choices = new();
 
-            public Overloads(MethodBase[] methods) => Methods = methods;
+            // the overloads a call on the class itself picks from; `this` when those are no different
+            public readonly Overloads Static;
+
+            public Overloads(MethodBase[] methods)
+            {
+                Methods = methods;
+                MethodBase[] statics = GetStaticallyCallableMethods(methods);
+                Static = statics == methods ? this : new Overloads(statics);
+            }
         }
 
         Overloads GetOverloads()
@@ -411,6 +419,13 @@ namespace Python.Runtime
                                      int skip = 0)
         {
             Overloads overloads = GetOverloads();
+
+            // called on the class itself, not on an object, so only
+            // static methods can run. do not let the others compete.
+            if (inst == null)
+            {
+                overloads = overloads.Static;
+            }
             return Invoke(inst, args, kwargs, overloads.Methods, overloads.Choices, skip);
         }
 
@@ -434,16 +449,7 @@ namespace Python.Runtime
                 return Exceptions.RaiseTypeError(msg.ToString());
             }
 
-            // called on the class itself, not on an object, so only
-            // static methods can run. do not let the others compete.
-            if (inst == null)
-            {
-                methods = GetStaticallyCallableMethods(methods);
-            }
-
-            // calls through the class see only static methods, and AllowRedirected hides some
-            int variant = (inst == null ? 1 : 0) | (AllowRedirected ? 2 : 0);
-            if (TryBind(methods, args, kwargs, skip, AllowRedirected, choices, variant, out BindSpec? spec, out BindError? error))
+            if (TryBind(methods, args, kwargs, skip, AllowRedirected, choices, out BindSpec? spec, out BindError? error))
             {
                 MethodBase match = spec!.Method;
                 BindParam[] bindParams = spec.Parameters;
