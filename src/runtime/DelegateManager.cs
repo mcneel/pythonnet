@@ -211,6 +211,13 @@ namespace Python.Runtime
             {
                 return TrueDispatch(args);
             }
+            // .NET may call this from a native UI loop, where a thrown error takes the host down (RH-100238)
+            catch (Exception ex) when (PythonEngine.CheckSwallowDelegateException(ex))
+            {
+                // the emitted Invoke unboxes this, so value types need a real default
+                Type rtype = dtype.GetMethod("Invoke").ReturnType;
+                return rtype.IsValueType && rtype != typeof(void) ? Activator.CreateInstance(rtype) : null;
+            }
             finally
             {
                 PythonEngine.ReleaseLock(gs);

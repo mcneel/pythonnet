@@ -611,6 +611,23 @@ namespace Python.Runtime
             }
         }
 
+        /// <summary>
+        /// Binds a handler for errors raised in script callbacks called from .NET (event handlers, delegates, overrides).
+        /// It gets a <see cref="PyException"/> when a traceback is available; return true to swallow the error.
+        /// </summary>
+        public void BindDelegateExceptionHandler(Func<Exception, bool> handler)
+        {
+            if (handler is null)
+            {
+                throw new ArgumentNullException(nameof(handler));
+            }
+
+            PythonEngine.BindDelegateExceptionHandler(ex => handler(ParseException(ex)));
+        }
+
+        /// <summary>Removes the bound handler; errors are rethrown again.</summary>
+        public void BindDefaultDelegateExceptionHandler() => PythonEngine.BindDefaultDelegateExceptionHandler();
+
         public Exception ParseException(Exception exception)
         {
             if (exception is PythonException pyEx)

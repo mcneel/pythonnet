@@ -22,6 +22,7 @@ namespace Python.Runtime
         private static IntPtr _programName = IntPtr.Zero;
         private static IntPtr _pythonPath = IntPtr.Zero;
         private static InteropConfiguration interopConfiguration = InteropConfiguration.MakeDefault();
+        private static Func<Exception, bool>? _delegateExceptionHandler = default;
 
         public PythonEngine()
         {
@@ -58,6 +59,21 @@ namespace Python.Runtime
 
         /// <summary>Set to <c>true</c> to enable GIL debugging assistance.</summary>
         public static bool DebugGIL { get; set; } = false;
+
+        /// <summary>
+        /// Binds a handler for errors raised by Python code that .NET called back into (delegates, events, overrides).
+        /// Return true to swallow the error (the callback returns default); false rethrows it.
+        /// </summary>
+        internal static void BindDelegateExceptionHandler(Func<Exception, bool> handler) => _delegateExceptionHandler = handler;
+
+        /// <summary>Removes the bound handler; errors are rethrown again.</summary>
+        internal static void BindDefaultDelegateExceptionHandler() => _delegateExceptionHandler = default;
+
+        // Called with the GIL held so the handler can still read the Python traceback.
+        internal static bool CheckSwallowDelegateException(Exception error)
+        {
+            return _delegateExceptionHandler?.Invoke(error) == true;
+        }
 
         internal static DelegateManager DelegateManager
         {

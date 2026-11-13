@@ -1075,6 +1075,11 @@ namespace Python.Runtime
                         }
                     }
                 }
+                // overrides are called by .NET (often a native UI loop), not by the script (RH-100238)
+                catch (Exception ex) when (PythonEngine.CheckSwallowDelegateException(ex))
+                {
+                    return default;
+                }
                 finally
                 {
                     foreach (PyObject x in disposeList)
@@ -1163,6 +1168,10 @@ namespace Python.Runtime
                 using var pyvalue = pyself.GetAttr(propertyName);
                 return pyvalue.As<T>();
             }
+            catch (Exception ex) when (PythonEngine.CheckSwallowDelegateException(ex))
+            {
+                return default;
+            }
             finally
             {
                 Runtime.PyGILState_Release(gs);
@@ -1184,6 +1193,9 @@ namespace Python.Runtime
                 using var pyself = new PyObject(self.CheckRun());
                 using var pyvalue = Converter.ToPythonImplicit(value).MoveToPyObject();
                 pyself.SetAttr(propertyName, pyvalue);
+            }
+            catch (Exception ex) when (PythonEngine.CheckSwallowDelegateException(ex))
+            {
             }
             finally
             {
