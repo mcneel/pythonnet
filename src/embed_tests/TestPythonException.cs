@@ -39,6 +39,27 @@ namespace Python.EmbeddingTest
             Assert.IsNull(currentError);
         }
 
+        // RH-80604, RH-81920: a .NET error raised in a script must keep its type
+        // and still point at the script line that caused it
+        [Test]
+        public void TestDotNetErrorKeepsPythonTraceback()
+        {
+            const string code = "import System\n\nSystem.Int32.Parse('x')\n";
+            using var scope = Py.CreateScope();
+            using var compiled = PythonEngine.Compile(code, "script.py");
+
+            var ex = Assert.Throws<FormatException>(() => scope.Execute(compiled));
+
+            Assert.That(ex.Data[PythonException.TracebackDataKey], Is.InstanceOf<string>());
+            var traceback = (string)ex.Data[PythonException.TracebackDataKey];
+            StringAssert.Contains("File \"script.py\", line 3", traceback);
+
+            var pyEx = new PythonEngineWrapper.PyException(ex, traceback);
+            Assert.That(pyEx.LineNumber, Is.EqualTo(3));
+            Assert.That(pyEx.InnerException, Is.SameAs(ex));
+            StringAssert.Contains("FormatException", pyEx.ToString());
+        }
+
         [Test]
         public void TestNestedExceptions()
         {
