@@ -510,6 +510,8 @@ namespace Python.Runtime
 
             public override string Message => _message;
 
+            public string FileName { get; } = string.Empty;
+
             public int LineNumber { get; } = -1;
 
             public PyException(PythonException pyEx)
@@ -547,21 +549,20 @@ namespace Python.Runtime
                 // first we need the file path. lets grab that from the first
                 // line of the traceback. see notes above.
                 string scriptTraceback = traceback;
-                string scriptPath = string.Empty;
                 Match um = s_pathParser.Match(traceback);
                 if (um.Success
                         && um.Groups["path"].Value is string path)
                 {
-                    scriptPath = path;
+                    FileName = path;
                 }
                 // if file path is found, iterate over traceback lines,
                 // and find the last line that references the executing script
                 // before the stack dives outside, into imported modules
-                if (!string.IsNullOrEmpty(scriptPath))
+                if (!string.IsNullOrEmpty(FileName))
                 {
                     foreach (string tbl in traceback.Split('\n'))
                     {
-                        if (tbl.Contains(scriptPath))
+                        if (tbl.Contains(FileName))
                             scriptTraceback = tbl;
                         else
                             break;
@@ -638,12 +639,18 @@ namespace Python.Runtime
             return exception;
         }
 
-        public bool TryGetExeptionLineNumber(object exception, out int linenum)
+        /// <summary>
+        /// Gets the script file name (as the script was compiled) and line a Python error was raised on.
+        /// File name is empty when unknown, e.g. for some syntax errors.
+        /// </summary>
+        public bool TryGetExceptionReference(object exception, out string fileName, out int linenum)
         {
+            fileName = string.Empty;
             linenum = default;
             if (exception is Exception ex
                     && ParseException(ex) is PyException pyex)
             {
+                fileName = pyex.FileName;
                 linenum = pyex.LineNumber;
                 return true;
             }
