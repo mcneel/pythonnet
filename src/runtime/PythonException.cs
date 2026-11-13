@@ -35,6 +35,12 @@ namespace Python.Runtime
             : this(type, value, traceback, innerException: null) { }
 
         /// <summary>
+        /// Key in <see cref="Exception.Data"/> holding the Python traceback text (frames only)
+        /// of a .NET exception that passed through Python code.
+        /// </summary>
+        public const string TracebackDataKey = "Python.Runtime.PythonException.Traceback";
+
+        /// <summary>
         /// Rethrows the last Python exception as corresponding CLR exception.
         /// It is recommended to call this as <code>throw ThrowLastAsClrException()</code>
         /// to assist control flow checks.
@@ -182,11 +188,13 @@ namespace Python.Runtime
             exceptionDispatchInfo = TryGetDispatchInfo(valRef);
             if (exceptionDispatchInfo != null)
             {
+                AttachTraceback(exceptionDispatchInfo.SourceException, traceback);
                 return exceptionDispatchInfo.SourceException;
             }
 
             if (ManagedType.GetManagedObject(valRef) is CLRObject { inst: Exception e })
             {
+                AttachTraceback(e, traceback);
                 return e;
             }
 
@@ -204,6 +212,23 @@ namespace Python.Runtime
             using var cause = Runtime.PyException_GetCause(valRef);
             Exception? inner = FromCause(cause.BorrowNullable());
             return new PythonException(type, value, traceback, inner);
+        }
+
+        // The original .NET exception is rethrown as-is so callers can catch it by type,
+        // but the Python frames it crossed would be lost, so keep them as text.
+        private static void AttachTraceback(Exception e, PyObject? traceback)
+        {
+            if (traceback is null) return;
+
+            try
+            {
+                e.Data[TracebackDataKey] = TracebackToString(traceback);
+            }
+            catch
+            {
+                // never let traceback formatting hide the original error
+                Runtime.PyErr_Clear();
+            }
         }
 
         private static PyDict ToPyErrArgs(BorrowedReference typeRef, BorrowedReference valRef, BorrowedReference tbRef)

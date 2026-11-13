@@ -512,13 +512,22 @@ namespace Python.Runtime
 
             public int LineNumber { get; } = -1;
 
-            public PyException(PythonException pyEx) : base()
+            public PyException(PythonException pyEx)
+                : this(pyEx.Traceback is null ? string.Empty : PythonException.TracebackToString(pyEx.Traceback),
+                       pyEx.Type.Name, ParseMessage(pyEx), hasTraceback: pyEx.Traceback is not null, inner: null)
             {
-                string traceback = pyEx.Traceback is null ?
-                    string.Empty
-                  : PythonException.TracebackToString(pyEx.Traceback);
+            }
 
-                _message = ParseMessage(pyEx);
+            // .NET error raised inside the script; keeps the original as inner exception
+            public PyException(Exception netEx, string traceback)
+                : this(traceback, netEx.GetType().Name, netEx.Message, hasTraceback: true, inner: netEx)
+            {
+            }
+
+            PyException(string traceback, string typeName, string message, bool hasTraceback, Exception? inner)
+                : base(message, inner)
+            {
+                _message = message;
 
                 // NOTE:
                 // assumes the first line in traceback is pointing to a line
@@ -576,11 +585,11 @@ namespace Python.Runtime
                     }
                 }
 
-                _pyStackTrace = pyEx.Traceback is null ? string.Empty : string.Join(
+                _pyStackTrace = !hasTraceback ? string.Empty : string.Join(
                     Environment.NewLine,
                     "Traceback (most recent call last):",
                     traceback,
-                    $"{pyEx.Type.Name}: {_message}"
+                    $"{typeName}: {_message}"
                 );
             }
 
@@ -606,13 +615,17 @@ namespace Python.Runtime
         {
             if (exception is PythonException pyEx)
                 return new PyException(pyEx);
+            if (exception is not PyException
+                    && exception.Data[PythonException.TracebackDataKey] is string traceback)
+                return new PyException(exception, traceback);
             return exception;
         }
 
         public bool TryGetExeptionLineNumber(object exception, out int linenum)
         {
             linenum = default;
-            if (exception is PyException pyex)
+            if (exception is Exception ex
+                    && ParseException(ex) is PyException pyex)
             {
                 linenum = pyex.LineNumber;
                 return true;
