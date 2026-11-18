@@ -1121,8 +1121,17 @@ namespace Python.Runtime
 
             if (castMethod != null)
             {
-                cast = castMethod.Invoke(null, new[] { source });
-                return true;
+                // operators may throw (e.g. decimal -> sbyte overflow); a failed cast must only rule out this overload
+                try
+                {
+                    cast = castMethod.Invoke(null, new[] { source });
+                    return true;
+                }
+                catch (TargetInvocationException)
+                {
+                    cast = default;
+                    return false;
+                }
             }
 
             return false;
