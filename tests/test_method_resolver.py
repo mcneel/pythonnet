@@ -372,6 +372,13 @@ def test_implicit_conversion_operator_is_used():
     assert HIER.Convertible(1.5) == "double:1.5"
 
 
+def test_throwing_conversion_operator_skips_overload():
+    # RH-100408: decimal -> sbyte overflows; that must rule out the sbyte overload, not crash
+    assert PRIM.SignedOrUnsigned(Decimal(200)) == "byte"
+    with pytest.raises(TypeError):
+        PRIM.SignedOrUnsigned(Decimal(1000))
+
+
 def test_none_is_passed_as_null_reference():
     assert PRIM.OnlyString(None) == "string:<null>"
     assert PRIM.OnlyObject(None) == "object:<null>"
